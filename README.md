@@ -45,10 +45,24 @@ opencode 启动时会自动经 Bun 安装并加载该 npm 包，无需其他步�
 git clone https://github.com/mrzturn/opencode-switchman.git
 cd opencode-switchman
 bun install
-bun run deploy   # 构建单文件 bundle 并部署到 ~/.config/opencode/plugins/opencode-switchman.js
+bun run build   # 生成 dist/opencode-switchman.js
 ```
 
-`~/.config/opencode/plugins/` 为全局插件目录，文件放置后自动加载；桌面端内嵌核心跑 Node 运行时，`deploy` 产出的单文件 bundle 即为此设计。重启 opencode 生效。
+然后二选一：
+
+**a) 配置引用（推荐，随仓库更新）**——在 opencode 配置的 `plugin` 数组中用 `file://` 指向仓库目录：
+
+```json
+{
+  "plugin": ["file:///absolute/path/to/opencode-switchman"]
+}
+```
+
+插件直接加载仓库内的 `dist` 产物；`git pull` 后重跑 `bun run build` 并重启 opencode 即完成升级。此方式与 plugins 目录部署**二选一**，同时使用会双重注入。
+
+**b) 部署单文件**——`bun run deploy` 构建并复制到全局插件目录 `~/.config/opencode/plugins/opencode-switchman.js`，自动加载。桌面端内嵌核心跑 Node 运行时，`deploy` 产出的单文件 bundle 即为此设计。
+
+> **注意**：`plugin` 数组中的 `file://` 引用与 plugins 目录部署不可并存（同名插件会加载两份）；发布 npm 后，把 `file://...` 换成 `"opencode-switchman"` 即可切换为 npm 安装。重启 opencode 生效。
 
 > **从旧版（switchman.js）升级**：请删除旧的 `~/.config/opencode/plugins/switchman.js`，避免新旧两份插件同时注入；状态目录已迁移至 `~/.config/opencode/opencode-switchman/`（旧目录可删，全部状态自动重建）。
 

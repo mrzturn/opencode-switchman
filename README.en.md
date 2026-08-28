@@ -45,10 +45,24 @@ Use the tuple form to pass options:
 git clone https://github.com/mrzturn/opencode-switchman.git
 cd opencode-switchman
 bun install
-bun run deploy   # builds a single-file bundle into ~/.config/opencode/plugins/opencode-switchman.js
+bun run build   # produces dist/opencode-switchman.js
 ```
 
-Files in the global plugin directory `~/.config/opencode/plugins/` are auto-loaded. The desktop app's embedded core runs on Node, which is exactly what the single-file `deploy` bundle targets. Restart opencode to take effect.
+Then pick one of two loading methods:
+
+**a) Config reference (recommended, follows the repo)** — point the `plugin` array at the repo directory via `file://`:
+
+```json
+{
+  "plugin": ["file:///absolute/path/to/opencode-switchman"]
+}
+```
+
+The plugin loads the repo's `dist` bundle directly; after `git pull`, re-run `bun run build` and restart opencode to upgrade. **Choose either this or the plugins-directory deployment** — using both double-loads the plugin.
+
+**b) Single-file deploy** — `bun run deploy` builds and copies into the global plugin directory `~/.config/opencode/plugins/opencode-switchman.js`, which is auto-loaded. The desktop app's embedded core runs on Node, which is exactly what the single-file `deploy` bundle targets.
+
+> **Note**: a `file://` entry in the `plugin` array and a plugins-directory deployment must not coexist (the same plugin loads twice). Once published to npm, replace the `file://...` entry with `"opencode-switchman"` to switch to npm installation. Restart opencode to take effect.
 
 > **Upgrading from the pre-rename plugin (switchman.js)**: delete the old `~/.config/opencode/plugins/switchman.js` to avoid double injection. The state directory has moved to `~/.config/opencode/opencode-switchman/` (the old one can be removed; all state self-heals).
 
