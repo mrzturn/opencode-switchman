@@ -2,6 +2,10 @@
 
 **[English](./README.en.md)** | 中文
 
+> **🎬 [在线演示文稿 · 能力全览](https://mrzturn.github.io/opencode-switchman/)**（GitHub Pages，支持手机滑动翻页）
+>
+> [![opencode-switchman 能力介绍演示](docs/assets/preview.png)](https://mrzturn.github.io/opencode-switchman/)
+
 OpenCode 六档壳矩阵编排插件——让主模型成为调度员，把任务按「认知档位」委派给跨三大模型池的子代理空壳，插件层做确定性拦截与配额感知路由。
 
 如果你同时持有多个模型订阅（GitHub Copilot premium 积分、智谱 GLM Coding Plan、DeepSeek 按量余额），却总是一个模型用到天荒地老、水位盲飞、高峰全价硬扛——opencode-switchman 就是为你准备的。
