@@ -42,9 +42,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);font
 .dots i.on{background:var(--cyan);box-shadow:0 0 10px var(--cyan);height:18px;border-radius:3px}
 
 /* ===== slides ===== */
-.slide{position:fixed;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;padding:6vh 7vw;opacity:0;visibility:hidden;transform:translateY(26px) scale(.985);transition:opacity .55s ease,transform .55s cubic-bezier(.7,0,.3,1),visibility .55s}
+.slide{position:fixed;inset:0;z-index:1;display:flex;padding:6vh 7vw;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:none;opacity:0;visibility:hidden;transform:translateY(26px) scale(.985);transition:opacity .55s ease,transform .55s cubic-bezier(.7,0,.3,1),visibility .55s}
+.slide::-webkit-scrollbar{display:none}
 .slide.on{opacity:1;visibility:visible;transform:none;z-index:2}
-.slide .inner{width:100%;max-width:1240px}
+.slide .inner{width:100%;max-width:1240px;margin:auto}
 
 .kicker{display:inline-flex;align-items:center;gap:10px;font-family:var(--mono);font-size:12px;letter-spacing:.32em;color:var(--cyan);text-transform:uppercase;margin-bottom:18px}
 .kicker::before{content:"";width:34px;height:1px;background:linear-gradient(90deg,var(--cyan),transparent)}
@@ -223,9 +224,57 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
   .quad,.layers,.lanes,.brain,.heal,.mxwrap,.codewrap{grid-template-columns:1fr}
   .hookflow{grid-template-columns:repeat(2,1fr)}
   .hookflow::before{display:none}
-  .gate{grid-template-columns:50px 1fr;gap:8px}
-  .gate .gact{text-align:left}
   .dots{display:none}
+}
+@media (max-width:640px){
+  .slide{padding:7vh 6vw 64px}
+  .kicker{font-size:10.5px;letter-spacing:.22em;margin-bottom:12px}
+  .kicker::before{width:22px}
+  h2.title{font-size:clamp(24px,7vw,30px);margin-bottom:8px}
+  .sub{font-size:13.5px;margin-bottom:22px}
+  .quad,.layers,.lanes,.brain,.heal{gap:12px}
+  .pain{padding:20px 18px}.pain h3{font-size:17px}.pain p{font-size:13px}
+  .layer{padding:22px 18px;min-height:0}
+  .lane{padding:18px 16px;min-height:0}
+  .decision{padding:20px 18px}
+  .healc{padding:20px 18px;min-height:0}
+  .mxwrap{gap:20px}
+  .mxstats{gap:10px}
+  .stat{padding:14px 16px}.stat .n{font-size:26px}
+  .mxnaming{font-size:11px;padding:14px;line-height:1.9}
+  .mgrid{gap:4px;padding:16px}
+  .mlegend{gap:12px;font-size:9.5px;padding:0 16px 14px;flex-wrap:wrap}
+  .mcap{font-size:10px;padding-bottom:14px}
+  .hookflow{grid-template-columns:1fr;gap:12px}
+  .hook{padding:18px 16px}
+  .hook .dot{display:none}
+  .hook .api,.hook h3{text-align:left}
+  .hook .api{margin-bottom:8px}
+  .hooknote{padding:14px 16px;gap:10px;margin-top:14px}
+  .hooknote .bolt{font-size:18px}
+  .hooknote p{font-size:12.5px}
+  .gate{grid-template-columns:40px 1fr;grid-template-areas:"gn name" "gn test" "gn act";gap:4px 14px;padding:13px 16px;border-radius:12px}
+  .gate .gn{grid-area:gn;font-size:20px;align-self:center}
+  .gate .gname{grid-area:name;font-size:14.5px}
+  .gate .gtest{grid-area:test}
+  .gate .gact{grid-area:act;text-align:left;font-size:11.5px}
+  .codewrap{gap:18px}
+  .codebox pre{font-size:11px;padding:16px;line-height:1.95}
+  .checklist li{font-size:13px}
+  .brow{grid-template-columns:64px 1fr}
+  .brow .bl{font-size:11px}
+  .brow .bt{font-size:10.5px;padding:12px 14px}
+  .banner-cap{font-size:12px}
+  .cover .badge{font-size:10px;letter-spacing:.25em;padding:7px 16px;margin-bottom:22px}
+  .cover h1{font-size:clamp(30px,10.5vw,52px)}
+  .cover .tagline{font-size:13px;margin-top:16px}
+  .cover .chips{margin-top:24px;gap:8px}
+  .chip{font-size:10.5px;padding:7px 11px}
+  .close h2{font-size:clamp(26px,8vw,40px)}
+  .close .sub{font-size:13px;margin-bottom:26px}
+  .cmd{font-size:11px;padding:12px 16px;gap:8px;flex-wrap:wrap;justify-content:center}
+  .brand,.hint{display:none}
+  .counter{right:14px;bottom:12px;font-size:10.5px}
 }
 </style>
 </head>
@@ -480,10 +529,11 @@ addEventListener('keydown',e=>{
   if(['ArrowLeft','ArrowUp','PageUp'].includes(e.key)){e.preventDefault();go(i-1)}
   if(e.key==='Home')go(0); if(e.key==='End')go(slides.length-1);
 });
-addEventListener('click',e=>{if(!e.target.closest('.dots'))go(i+1)});
-let sx=0;
-addEventListener('touchstart',e=>sx=e.touches[0].clientX);
-addEventListener('touchend',e=>{const dx=e.changedTouches[0].clientX-sx;if(Math.abs(dx)>60)go(i+(dx<0?1:-1))});
+const coarse=matchMedia('(pointer:coarse)').matches;
+if(!coarse)addEventListener('click',e=>{if(!e.target.closest('.dots'))go(i+1)});
+let sx=0,sy=0;
+addEventListener('touchstart',e=>{sx=e.touches[0].clientX;sy=e.touches[0].clientY},{passive:true});
+addEventListener('touchend',e=>{const dx=e.changedTouches[0].clientX-sx,dy=e.changedTouches[0].clientY-sy;if(Math.abs(dx)>60&&Math.abs(dx)>Math.abs(dy)*1.2)go(i+(dx<0?1:-1))},{passive:true});
 /* matrix cells */
 const mg=document.getElementById('mgrid');
 for(let k=0;k<52;k++){const c=document.createElement('div');c.className='mcell'+(Math.random()>.24?' live':'');c.style.animationDelay=(-Math.random()*3)+'s';mg.appendChild(c)}
