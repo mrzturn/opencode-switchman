@@ -21,6 +21,7 @@ export interface BannerInput {
   billing: BillingWindow
   advice?: string | null
   update?: string | null
+  dsLowWarnCny?: number
 }
 
 function routeLine(lanes: Record<string, LaneResult> | null): string {
@@ -74,9 +75,31 @@ function copilotBrief(data: CopilotQuota | null): string | null {
   return `Copilot ${body}`
 }
 
-function dsBrief(data: DeepseekQuota | null): string | null {
+function dsBalanceCny(data: DeepseekQuota | null): number | null {
+  const bal = data?.balances
+  if (!Array.isArray(bal) || bal.length === 0) return null
+  let sum = 0
+  let any = false
+  for (const b of bal) {
+    if (b.currency !== "CNY") continue
+    const v = Number.parseFloat(b.total_balance)
+    if (Number.isFinite(v)) {
+      sum += v
+      any = true
+    }
+  }
+  return any ? sum : null
+}
+
+function dsBrief(data: DeepseekQuota | null, lowWarnCny?: number): string | null {
   if (!data || data.status !== "ok") return null
   if (data.exhausted) return "DeepSeek 余额已耗尽"
+  // [2026-08-28]-[余额预警：低于阈值横幅提示，仅预警不硬拦（按量计费）]
+  const cny = dsBalanceCny(data)
+  const thr = typeof lowWarnCny === "number" && lowWarnCny >= 0 ? lowWarnCny : 10
+  if (typeof cny === "number" && cny < thr) {
+    return `DeepSeek 余额 ¥${cny.toFixed(2)}（<¥${thr} 预警）`
+  }
   return null // 按量正常不打扰
 }
 
@@ -86,7 +109,7 @@ function levelLine(input: BannerInput): string {
   if (glm) segs.push(glm)
   const cp = copilotBrief(input.quota.copilot)
   if (cp) segs.push(cp)
-  const ds = dsBrief(input.quota.deepseek ?? null)
+  const ds = dsBrief(input.quota.deepseek ?? null, input.dsLowWarnCny)
   if (ds) segs.push(ds)
   if (input.quota.glm === null && input.quota.copilot === null) segs.push("配额未知(查询关闭或不可用)")
   segs.push(`${input.billing.glmLabel} · ${input.billing.dsLabel}`)

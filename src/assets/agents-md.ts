@@ -29,7 +29,7 @@ export const AGENTS_MD = `# 全局规程（主调度员守则；opencode-switchm
 | vision | observer 看图（image） |
 | review | reviewer/planner 审案、专家席 |
 
-**③ 选型规则**：系统提示横幅候选链优先（＝插件按矩阵/水位/熔断/成本实时算出的最优，照链首派发）；套餐池优先、deepseek 仅链尾兜底（常设授权；认知降级须声明「已降级」）；水位只影响排序（用满不浪费），唯一硬拦＝额度确定耗尽（插件自动改派）；GLM 高峰机械/高频任务换 copilot 同档，immediate 只按延迟排序不避峰不看成本；deepseek 兜底的大批量非紧急排空闲窗；复审＝review 链先删与产出者同 family 壳，同族只算自审；同档全不可用＝铁律 6 终端失败协议，禁静默降质。**deny 的 task 工具报错里附的首候选就是当前最优落点，直接改派，不要重试被拒壳。**点名模型时 source=user。
+**③ 选型规则**：系统提示横幅候选链优先（＝插件按矩阵/水位/熔断/成本实时算出的最优，照链首派发）；套餐池优先、deepseek 仅链尾兜底（常设授权；认知降级须声明「已降级」）；水位只影响排序（周额度用满不浪费），硬拦＝额度确定耗尽或 GLM 5 小时窗达预留水位（默认 90%，可配置，插件自动改派）；GLM 高峰机械/高频任务换 copilot 同档，immediate 只按延迟排序不避峰不看成本；deepseek 兜底的大批量非紧急排空闲窗；复审＝review 链先删与产出者同 family 壳，同族只算自审；同档全不可用＝铁律 6 终端失败协议，禁静默降质。**deny 的 task 工具报错里附的首候选就是当前最优落点，直接改派，不要重试被拒壳。**点名模型时 source=user。
 
 **④ 委派格式**：DELEGATION_V1 顺序＝守则→角色 contract→ROUTE_META→任务块→输出格式（可变后置吃前缀缓存）；模板与 14 角色 contract 表见 \`~/.config/opencode/opencode-switchman/delegation-template.md\`。壳名委派必带 ROUTE_META（role/capability/source 必填；producer_family＝自己真实模型族，copilot/glm 是池不是族、与 main 同禁），缺/坏被插件 deny 附样例：
 \`ROUTE_META {"lane":"main","role":"programmer","producer_family":"glm","capability":"rw","modality":"text","source":"auto"}\`

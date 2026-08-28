@@ -83,6 +83,8 @@ The log also shows `[opencode-switchman] injected 52 model shells (agents)`.
 | Option | Default | Description |
 |---|---|---|
 | `quota.glm / quota.deepseek / quota.copilot.enabled` | `true` | Per-pool quota probing switches (skipped without credentials) |
+| `quota.glm.fiveHourReservePct` | `90` | GLM 5-hour window reserve water level (%): hard-block GLM shells once reached (avoid 429); weekly still only blocks at 100% |
+| `quota.deepseek.lowBalanceWarnCny` | `10` | DeepSeek balance warning threshold (CNY): banner [水位] warns below it (warning only, no hard block) |
 | `cost.enabled` | `true` | models.dev pricing snapshot as chain tiebreaker |
 | `billingWindow.glmPeakHours / dsPeakRanges` | GLM weekdays 14–18 | Peak window definitions (affect pool ordering) |
 | `providers.glm / providers.deepseek` | `["zhipuai-coding-plan","glm","zai"]` / `["deepseek"]` | Provider-id lists per pool (for credential collection) |

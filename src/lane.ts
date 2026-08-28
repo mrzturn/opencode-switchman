@@ -29,17 +29,26 @@ export function billingWindow(now = new Date(), cfg: BillingWindowCfg = {}): {
 }
 
 // ---- 池耗尽判定（只认调用必失败）----
-export function glmExhausted(data: GlmQuota | null): [boolean, string] {
+function fmtReset(reset: number | null | undefined): string {
+  if (typeof reset !== "number") return "稍后"
+  const d = new Date(reset * 1000)
+  return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`
+}
+
+// [2026-08-28]-[GLM 5 小时窗改为可配置预留水位（默认 90%）：达到即硬拦，避免用满触发 429；
+// 周额度大窗口仍只认 100%「用满不浪费」]
+export function glmExhausted(data: GlmQuota | null, fiveHourReservePct = 90): [boolean, string] {
   if (!data || data.status !== "ok") return [false, ""]
-  for (const [scope, key] of [["周额度", "weekly"], ["5小时窗", "five_hour"]] as const) {
-    const d = (data as any)[key]
-    if (d && typeof d.used_pct === "number" && d.used_pct >= 100) {
-      const reset = typeof d.reset_at === "number" ? new Date(d.reset_at * 1000) : null
-      const hint = reset
-        ? `${String(reset.getMonth() + 1).padStart(2, "0")}-${String(reset.getDate()).padStart(2, "0")} ${String(reset.getHours()).padStart(2, "0")}:${String(reset.getMinutes()).padStart(2, "0")}`
-        : "稍后"
-      return [true, `GLM ${scope}已用尽（最早 ${hint} 恢复）`]
-    }
+  const weekly = data.weekly
+  if (weekly && typeof weekly.used_pct === "number" && weekly.used_pct >= 100) {
+    return [true, `GLM 周额度已用尽（最早 ${fmtReset(weekly.reset_at)} 恢复）`]
+  }
+  const five = data.five_hour
+  const thr = typeof fiveHourReservePct === "number" && fiveHourReservePct > 0 && fiveHourReservePct <= 100
+    ? fiveHourReservePct
+    : 100
+  if (five && typeof five.used_pct === "number" && five.used_pct >= thr) {
+    return [true, `GLM 5小时窗已用 ${five.used_pct}%（≥预留水位 ${thr}%，最早 ${fmtReset(five.reset_at)} 恢复）`]
   }
   return [false, ""]
 }
@@ -50,7 +59,13 @@ export function copilotExhausted(data: CopilotQuota | null): [boolean, string] {
     return [true, `Copilot 月度池网关已拒（额度类错误，信任至 ${data.reset_date || "重置日"}）`]
   }
   const p = data.premium
-  if (!p || p.unlimited) return [false, ""]
+  if (!p) return [false, ""]
+  // [2026-08-28]-[修复误判：业务席快照 unlimited:true 但 has_quota:false（premium 交互配额不存在），
+  // 网关实测 402 monthly exceeded——has_quota=false 判为无 premium 配额、耗尽]
+  if (p.has_quota === false) {
+    return [true, `Copilot 无 premium 交互配额（has_quota=false，业务席不含 premium；${data.reset_date || "重置日"} 重置）`]
+  }
+  if (p.unlimited) return [false, ""]
   const usedUp =
     (typeof p.remaining === "number" && p.remaining <= 0) ||
     (typeof p.percent_remaining === "number" && p.percent_remaining <= 0)
@@ -114,7 +129,10 @@ export function poolStates(quota: {
     const rem = p?.remaining ?? null
     const used = p?.used ?? null
     const dl = daysUntil(c.reset_date)
-    if (p?.unlimited || typeof rem !== "number" || dl === null) {
+    if (p?.has_quota === false) {
+      // [2026-08-28]-[业务席无 premium 交互配额：水位判 strained，抑制"优先 copilot"建议（与 copilotExhausted 同源）]
+      out.copilot = { state: "strained", remaining: rem, days_left: dl }
+    } else if (p?.unlimited || typeof rem !== "number" || dl === null) {
       out.copilot = { state: "healthy", remaining: rem, days_left: dl }
     } else {
       const daysElapsed = Math.max(30 - dl, 1)

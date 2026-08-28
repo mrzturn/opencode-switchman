@@ -83,6 +83,8 @@ bun run build   # 生成 dist/opencode-switchman.js
 | 选项 | 默认 | 说明 |
 |---|---|---|
 | `quota.glm / quota.deepseek / quota.copilot.enabled` | `true` | 三池配额感知逐池开关（无凭证自动跳过） |
+| `quota.glm.fiveHourReservePct` | `90` | GLM 5 小时窗预留水位（%）：达到即硬拦 GLM 壳避免用满 429；周额度仍只认 100% |
+| `quota.deepseek.lowBalanceWarnCny` | `10` | DeepSeek 余额预警阈值（元）：低于该值横幅 [水位] 提示（仅预警不硬拦） |
 | `cost.enabled` | `true` | models.dev 计价快照参与选链 tiebreaker |
 | `billingWindow.glmPeakHours / dsPeakRanges` | GLM 工作日 14–18 | 高峰窗口定义（影响选池排序） |
 | `providers.glm / providers.deepseek` | `["zhipuai-coding-plan","glm","zai"]` / `["deepseek"]` | 池对应的 provider id 清单（凭证收集用） |

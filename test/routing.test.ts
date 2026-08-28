@@ -309,9 +309,9 @@ describe("端到端与配额判定", () => {
     expect(glmExhausted({ status: "ok", fetched_at: 0, weekly: { used_pct: 99 } })[0]).toBe(false)
     expect(glmExhausted(null)[0]).toBe(false)
   })
-  test("31 Copilot 坑位：unlimited/字段缺失不判耗尽；remaining<=0 且禁超额才拦", () => {
-    // 实测坑位形态：entitlement 缺失 + quota_remaining 0 + unlimited true + has_quota false
-    expect(copilotExhausted({ status: "ok", fetched_at: 0, reset_date: "2026-09-01", premium: { quota_id: "premium_interactions", entitlement: null, used: null, remaining: 0, percent_remaining: 100, unlimited: true, overage_permitted: false, has_quota: false, timestamp_utc: null } })[0]).toBe(false)
+  test("31 Copilot 判定：has_quota=false 判耗尽；unlimited+有配额不判；remaining<=0 且禁超额才拦", () => {
+    // 实测坑位形态：entitlement 缺失 + remaining 0 + unlimited true + has_quota false（业务席无 premium）
+    expect(copilotExhausted({ status: "ok", fetched_at: 0, reset_date: "2026-09-01", premium: { quota_id: "premium_interactions", entitlement: null, used: null, remaining: 0, percent_remaining: 100, unlimited: true, overage_permitted: false, has_quota: false, timestamp_utc: null } })[0]).toBe(true)
     expect(copilotExhausted({ status: "ok", fetched_at: 0, premium: null })[0]).toBe(false)
     const [dead, why] = copilotExhausted({ status: "ok", fetched_at: 0, reset_date: "2026-09-01", premium: { quota_id: "p", entitlement: 0, used: 100, remaining: 0, percent_remaining: 0, unlimited: false, overage_permitted: false, has_quota: true, timestamp_utc: null } })
     expect(dead).toBe(true)
@@ -334,5 +334,35 @@ describe("端到端与配额判定", () => {
     expect(states.copilot?.state).toBe("strained")
     const advice = routingAdvice(states)
     expect(advice).toContain("Copilot月积分吃紧")
+  })
+  test("34 GLM 5 小时窗预留水位：默认 90% 硬拦、可配置；周额度仍只认 100%", () => {
+    expect(glmExhausted({ status: "ok", fetched_at: 0, five_hour: { used_pct: 90 } })[0]).toBe(true)
+    expect(glmExhausted({ status: "ok", fetched_at: 0, five_hour: { used_pct: 89 } })[0]).toBe(false)
+    expect(glmExhausted({ status: "ok", fetched_at: 0, five_hour: { used_pct: 80 } }, 85)[0]).toBe(false)
+    expect(glmExhausted({ status: "ok", fetched_at: 0, five_hour: { used_pct: 86 } }, 85)[0]).toBe(true)
+    expect(glmExhausted({ status: "ok", fetched_at: 0, five_hour: { used_pct: 90 }, weekly: { used_pct: 95 } })[0]).toBe(true)
+    expect(glmExhausted({ status: "ok", fetched_at: 0, weekly: { used_pct: 95 } })[0]).toBe(false)
+    expect(glmExhausted({ status: "ok", fetched_at: 0, five_hour: { used_pct: 90 } }, 0)[0]).toBe(false) // 阈值越界回退 100%
+  })
+  test("35 DeepSeek 余额预警：低于阈值横幅提示，高于/耗尽不误报", () => {
+    const warn = buildBanner({
+      lanes: null, down: [],
+      quota: { glm: null, copilot: null, deepseek: { status: "ok", fetched_at: 0, balances: [{ currency: "CNY", total_balance: "8.5" }] } },
+      states: {}, billing: billingWindow(), dsLowWarnCny: 10,
+    })
+    expect(warn[1]).toContain("余额 ¥8.50")
+    expect(warn[1]).toContain("预警")
+    const ok = buildBanner({
+      lanes: null, down: [],
+      quota: { glm: null, copilot: null, deepseek: { status: "ok", fetched_at: 0, balances: [{ currency: "CNY", total_balance: "37.86" }] } },
+      states: {}, billing: billingWindow(), dsLowWarnCny: 10,
+    })
+    expect(ok[1]).not.toContain("余额")
+    const exhausted = buildBanner({
+      lanes: null, down: [],
+      quota: { glm: null, copilot: null, deepseek: { status: "ok", fetched_at: 0, balances: [{ currency: "CNY", total_balance: "0" }], exhausted: true } },
+      states: {}, billing: billingWindow(), dsLowWarnCny: 10,
+    })
+    expect(exhausted[1]).toContain("余额已耗尽")
   })
 })

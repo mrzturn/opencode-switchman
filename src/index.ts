@@ -30,8 +30,14 @@ function normalizeOptions(raw: unknown): SwitchmanOptions {
   const o = (raw ?? {}) as SwitchmanOptions
   return {
     quota: {
-      glm: { enabled: o.quota?.glm?.enabled ?? true },
-      deepseek: { enabled: o.quota?.deepseek?.enabled ?? true },
+      glm: {
+        enabled: o.quota?.glm?.enabled ?? true,
+        fiveHourReservePct: o.quota?.glm?.fiveHourReservePct ?? 90,
+      },
+      deepseek: {
+        enabled: o.quota?.deepseek?.enabled ?? true,
+        lowBalanceWarnCny: o.quota?.deepseek?.lowBalanceWarnCny ?? 10,
+      },
       copilot: { enabled: o.quota?.copilot?.enabled ?? true },
     },
     cost: { enabled: o.cost?.enabled ?? true },
@@ -130,7 +136,7 @@ export const SwitchmanPlugin: Plugin = async (_input, rawOptions) => {
         copilot: options.quota!.copilot!.enabled!,
       } })
       return {
-        glm: glmExhausted(qv.glm)[0],
+        glm: glmExhausted(qv.glm, options.quota!.glm!.fiveHourReservePct)[0],
         copilot: copilotExhausted(qv.copilot)[0],
         deepseek: deepseekExhausted(qv.deepseek)[0],
       }
@@ -192,6 +198,7 @@ export const SwitchmanPlugin: Plugin = async (_input, rawOptions) => {
         states,
         billing: peak,
         advice: routingAdvice(states),
+        dsLowWarnCny: options.quota!.deepseek!.lowBalanceWarnCny,
       })
       bannerCache = { at: Date.now(), lines: lines2 }
       return lines2

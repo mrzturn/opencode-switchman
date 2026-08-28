@@ -127,7 +127,8 @@ export async function refreshMatrix(eps: ProbeEndpoints): Promise<number | null>
     // （/user 快照 unlimited:true 与网关实况背离，已实测坐实；429 是并发限流噪音，不计入）
     const cpKeys = keys.filter((k) => k.startsWith("github-copilot|"))
     const cp402 = cpKeys.filter((k) => /402|exceeded.*monthly|monthly.*quota/i.test(String(combos[k]?.reason ?? "")))
-    if (cpKeys.length > 0 && cp402.length >= Math.max(3, Math.ceil(cpKeys.length * 0.5))) {
+    // [2026-08-28]-[402 是月度池耗尽真值（429 为并发限流噪音），阈值从 50% 降到 ≥3 个组合即置耗尽]
+    if (cpKeys.length > 0 && cp402.length >= 3) {
       markCopilotGatewayExhausted(`探针 ${cp402.length}/${cpKeys.length} 组合 402 月度池耗尽`)
       console.log(`[opencode-switchman] Copilot 月度池耗尽（网关第二真值源），信任至 reset_date`)
     }

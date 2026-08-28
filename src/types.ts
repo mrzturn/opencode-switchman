@@ -185,8 +185,19 @@ export interface GateSnapshot {
 }
 
 // 插件 options（["opencode-switchman", {...}] 元组形式）
+export interface GlmQuotaOptions {
+  enabled?: boolean
+  /** 5 小时窗预留水位（%）：达到即硬拦 GLM 壳，避免用满触发 429；默认 90，周额度仍只认 100% */
+  fiveHourReservePct?: number
+}
+export interface DeepseekQuotaOptions {
+  enabled?: boolean
+  /** 余额预警阈值（CNY 元）：低于该值在横幅 [水位] 提示，默认 10；仅预警不硬拦（按量计费） */
+  lowBalanceWarnCny?: number
+}
+export interface CopilotQuotaOptions { enabled?: boolean }
 export interface SwitchmanOptions {
-  quota?: Partial<Record<"glm" | "deepseek" | "copilot", { enabled?: boolean }>>
+  quota?: { glm?: GlmQuotaOptions; deepseek?: DeepseekQuotaOptions; copilot?: CopilotQuotaOptions }
   cost?: { enabled?: boolean }
   billingWindow?: BillingWindowConfig
   providers?: { glm?: string[]; deepseek?: string[] }
