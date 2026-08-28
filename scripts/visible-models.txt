@@ -1,0 +1,16 @@
+# opencode-switchman 权威启用面：opencode 桌面端「模型管理」中打开（可见）的模型，每行 provider/model-id。
+# 本文件是全量矩阵生成的第一真源（gen-shells.ts 优先读取）；模型管理开关变化后手动同步此文件再重跑 bun run gen:shells。
+# 以 # 开头的行为注释。
+github-copilot/claude-haiku-4.5
+github-copilot/claude-opus-5
+github-copilot/claude-sonnet-5
+github-copilot/gemini-3.1-pro-preview
+github-copilot/gemini-3.7-flash
+github-copilot/gpt-5.6-luna
+github-copilot/gpt-5.6-sol
+github-copilot/gpt-5.6-terra
+github-copilot/grok-4.6
+deepseek/deepseek-v4-flash-vision-exp
+deepseek/deepseek-v4-pro
+zhipuai-coding-plan/glm-5.3
+zhipuai-coding-plan/glm-5.3-flash

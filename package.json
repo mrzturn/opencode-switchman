@@ -1,0 +1,45 @@
+{
+  "name": "opencode-switchman",
+  "version": "0.0.1",
+  "description": "OpenCode 编排插件：六档壳矩阵调度（ROUTE_META 硬校验 / 熔断自愈 / 探针 / 三池配额感知 / 成本感知 tiebreaker）",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mrzturn/opencode-switchman.git"
+  },
+  "homepage": "https://github.com/mrzturn/opencode-switchman#readme",
+  "bugs": {
+    "url": "https://github.com/mrzturn/opencode-switchman/issues"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "multi-model",
+    "orchestration",
+    "subagent",
+    "routing",
+    "quota-aware"
+  ],
+  "type": "module",
+  "main": "./dist/opencode-switchman.js",
+  "exports": {
+    ".": "./dist/opencode-switchman.js",
+    "./server": "./dist/opencode-switchman.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "gen:shells": "bun scripts/gen-shells.ts",
+    "build": "bun run gen:shells && bun build src/index.ts --target=node --format=esm --outfile=dist/opencode-switchman.js",
+    "pack": "bun run build && npm pack",
+    "deploy": "bun run build && cp dist/opencode-switchman.js ~/.config/opencode/plugins/opencode-switchman.js"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "latest",
+    "@types/bun": "latest",
+    "typescript": "latest"
+  }
+}
