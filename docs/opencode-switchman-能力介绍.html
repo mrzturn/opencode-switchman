@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>opencode-switchman · 六档壳矩阵编排插件</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;700&family=Noto+Sans+SC:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#04060e; --bg2:#0a0f1f;
+  --cyan:#22d3ee; --violet:#a78bfa; --emerald:#34d399; --amber:#fbbf24; --rose:#fb7185; --blue:#60a5fa;
+  --ink:#e8edf7; --dim:#8b95ad; --faint:#3d465e;
+  --glass:rgba(148,180,255,.055); --stroke:rgba(148,180,255,.14);
+  --mono:'JetBrains Mono',ui-monospace,monospace;
+  --disp:'Space Grotesk','Noto Sans SC',sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);font-family:'Noto Sans SC','Space Grotesk',sans-serif;-webkit-font-smoothing:antialiased}
+
+/* ===== ambient background ===== */
+.bg{position:fixed;inset:0;z-index:0;pointer-events:none}
+.bg .orb{position:absolute;border-radius:50%;filter:blur(110px);opacity:.32;animation:drift 26s ease-in-out infinite alternate}
+.orb.o1{width:52vw;height:52vw;left:-14vw;top:-18vw;background:radial-gradient(circle,#0e7490,transparent 70%)}
+.orb.o2{width:44vw;height:44vw;right:-12vw;bottom:-16vw;background:radial-gradient(circle,#4c1d95,transparent 70%);animation-delay:-9s}
+.orb.o3{width:30vw;height:30vw;left:38vw;top:52vh;background:radial-gradient(circle,#065f46,transparent 70%);animation-delay:-16s;opacity:.2}
+@keyframes drift{from{transform:translate(0,0) scale(1)}to{transform:translate(6vw,-5vh) scale(1.15)}}
+.bg .grid{position:absolute;inset:0;background-image:linear-gradient(rgba(120,160,255,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(120,160,255,.05) 1px,transparent 1px);background-size:56px 56px;mask-image:radial-gradient(ellipse 90% 80% at 50% 40%,#000 30%,transparent 100%)}
+.bg .scan{position:absolute;left:0;right:0;height:180px;top:-200px;background:linear-gradient(180deg,transparent,rgba(34,211,238,.045),transparent);animation:scan 9s linear infinite}
+@keyframes scan{to{transform:translateY(calc(100vh + 400px))}}
+
+/* ===== deck chrome ===== */
+.progress{position:fixed;top:0;left:0;height:2px;background:linear-gradient(90deg,var(--cyan),var(--violet));z-index:50;transition:width .45s cubic-bezier(.7,0,.3,1);box-shadow:0 0 12px rgba(34,211,238,.7)}
+.counter{position:fixed;right:28px;bottom:22px;z-index:50;font-family:var(--mono);font-size:12px;color:var(--dim);letter-spacing:.15em}
+.counter b{color:var(--cyan)}
+.brand{position:fixed;left:28px;bottom:22px;z-index:50;font-family:var(--mono);font-size:11px;color:var(--faint);letter-spacing:.2em}
+.brand em{color:var(--violet);font-style:normal}
+.hint{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:50;font-size:11px;color:var(--faint);letter-spacing:.25em;animation:pulse 2.4s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.35}}
+.dots{position:fixed;left:26px;top:50%;transform:translateY(-50%);z-index:50;display:flex;flex-direction:column;gap:9px}
+.dots i{width:5px;height:5px;border-radius:50%;background:var(--faint);cursor:pointer;transition:.3s}
+.dots i.on{background:var(--cyan);box-shadow:0 0 10px var(--cyan);height:18px;border-radius:3px}
+
+/* ===== slides ===== */
+.slide{position:fixed;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;padding:6vh 7vw;opacity:0;visibility:hidden;transform:translateY(26px) scale(.985);transition:opacity .55s ease,transform .55s cubic-bezier(.7,0,.3,1),visibility .55s}
+.slide.on{opacity:1;visibility:visible;transform:none;z-index:2}
+.slide .inner{width:100%;max-width:1240px}
+
+.kicker{display:inline-flex;align-items:center;gap:10px;font-family:var(--mono);font-size:12px;letter-spacing:.32em;color:var(--cyan);text-transform:uppercase;margin-bottom:18px}
+.kicker::before{content:"";width:34px;height:1px;background:linear-gradient(90deg,var(--cyan),transparent)}
+.kicker.v{color:var(--violet)} .kicker.e{color:var(--emerald)} .kicker.a{color:var(--amber)} .kicker.r{color:var(--rose)}
+h2.title{font-family:var(--disp);font-size:clamp(30px,4.2vw,50px);font-weight:700;line-height:1.12;letter-spacing:-.01em;margin-bottom:10px}
+h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,var(--emerald));-webkit-background-clip:text;background-clip:text;color:transparent}
+.sub{color:var(--dim);font-size:15.5px;line-height:1.75;max-width:860px;margin-bottom:34px;font-weight:300}
+.sub b{color:var(--ink);font-weight:500}
+
+.glass{background:var(--glass);border:1px solid var(--stroke);border-radius:18px;backdrop-filter:blur(14px);position:relative;overflow:hidden}
+.glass::before{content:"";position:absolute;top:0;left:8%;right:8%;height:1px;background:linear-gradient(90deg,transparent,rgba(160,200,255,.45),transparent)}
+
+/* stagger reveal */
+.on .rv{opacity:0;transform:translateY(18px);animation:rise .7s cubic-bezier(.2,.7,.2,1) forwards}
+.on .rv:nth-child(1),.on [data-d="1"]{animation-delay:.08s}
+.on [data-d="2"]{animation-delay:.2s}.on [data-d="3"]{animation-delay:.32s}
+.on [data-d="4"]{animation-delay:.44s}.on [data-d="5"]{animation-delay:.56s}
+.on [data-d="6"]{animation-delay:.68s}.on [data-d="7"]{animation-delay:.8s}
+@keyframes rise{to{opacity:1;transform:none}}
+
+/* ===== S1 cover ===== */
+.cover .inner{text-align:center}
+.cover .badge{font-family:var(--mono);font-size:12.5px;letter-spacing:.4em;color:var(--cyan);border:1px solid rgba(34,211,238,.35);border-radius:999px;padding:9px 26px;display:inline-block;margin-bottom:36px;background:rgba(34,211,238,.06);box-shadow:0 0 34px rgba(34,211,238,.12) inset}
+.cover h1{font-family:var(--disp);font-size:clamp(52px,8.4vw,116px);font-weight:700;letter-spacing:-.03em;line-height:1.02}
+.cover h1 .fx{background:linear-gradient(94deg,#67e8f9 5%,#a78bfa 45%,#34d399 90%);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 0 34px rgba(103,232,249,.28))}
+.cover .tagline{margin-top:26px;font-size:clamp(15px,1.5vw,19px);color:var(--dim);font-weight:300;letter-spacing:.06em}
+.cover .tagline b{color:var(--ink);font-weight:500}
+.cover .chips{margin-top:44px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+.chip{font-family:var(--mono);font-size:12px;color:var(--dim);border:1px solid var(--stroke);border-radius:10px;padding:9px 18px;background:rgba(148,180,255,.04)}
+.chip b{color:var(--emerald);font-weight:700}
+.matrixrain{position:absolute;inset:0;overflow:hidden;z-index:-1}
+.matrixrain span{position:absolute;top:-8%;font-family:var(--mono);font-size:11px;color:rgba(103,232,249,.16);animation:fall linear infinite}
+@keyframes fall{to{transform:translateY(118vh)}}
+
+/* ===== S2 pains ===== */
+.quad{display:grid;grid-template-columns:repeat(2,1fr);gap:20px}
+.pain{padding:30px 32px}
+.pain .no{font-family:var(--mono);font-size:13px;color:var(--rose);letter-spacing:.25em;margin-bottom:14px;display:flex;align-items:center;gap:12px}
+.pain .no::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,rgba(251,113,133,.4),transparent)}
+.pain h3{font-size:21px;font-weight:700;margin-bottom:10px}
+.pain p{color:var(--dim);font-size:14px;line-height:1.8;font-weight:300}
+.pain p em{color:var(--amber);font-style:normal}
+
+/* ===== S3 three layers ===== */
+.layers{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+.layer{padding:34px 30px;min-height:330px;display:flex;flex-direction:column}
+.layer .tag{font-family:var(--mono);font-size:11px;letter-spacing:.28em;margin-bottom:20px}
+.layer h3{font-size:23px;font-weight:700;margin-bottom:6px}
+.layer .en{font-family:var(--mono);font-size:11.5px;color:var(--faint);margin-bottom:18px;letter-spacing:.12em}
+.layer p{color:var(--dim);font-size:14px;line-height:1.85;font-weight:300}
+.layer ul{list-style:none;margin-top:auto;padding-top:18px}
+.layer li{font-size:13px;color:var(--dim);padding:7px 0;border-top:1px dashed rgba(148,180,255,.12)}
+.layer li::before{content:"▸";margin-right:9px;font-size:11px}
+.layer.l1{border-top:2px solid var(--violet)}.layer.l1 .tag{color:var(--violet)}.layer.l1 li::before{color:var(--violet)}
+.layer.l2{border-top:2px solid var(--cyan)}.layer.l2 .tag{color:var(--cyan)}.layer.l2 li::before{color:var(--cyan)}
+.layer.l3{border-top:2px solid var(--emerald)}.layer.l3 .tag{color:var(--emerald)}.layer.l3 li::before{color:var(--emerald)}
+
+/* ===== S4 matrix ===== */
+.mxwrap{display:grid;grid-template-columns:1.05fr .95fr;gap:44px;align-items:center}
+.mxstats{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:30px}
+.stat{padding:22px 24px}
+.stat .n{font-family:var(--disp);font-size:38px;font-weight:700;background:linear-gradient(90deg,var(--cyan),var(--violet));-webkit-background-clip:text;background-clip:text;color:transparent}
+.stat .l{font-size:12.5px;color:var(--dim);margin-top:5px;letter-spacing:.05em}
+.mxnaming{margin-top:26px;font-family:var(--mono);font-size:14px;background:rgba(4,8,18,.7);border:1px solid var(--stroke);border-radius:12px;padding:18px 20px;line-height:2}
+.mxnaming .p{color:var(--emerald)}.mxnaming .m{color:var(--cyan)}.mxnaming .t{color:var(--violet)}.mxnaming .c{color:var(--faint)}
+.mgrid{display:grid;grid-template-columns:repeat(13,1fr);gap:7px;padding:26px}
+.mcell{aspect-ratio:1;border-radius:5px;background:rgba(148,180,255,.07);border:1px solid rgba(148,180,255,.1);position:relative}
+.mcell.live{background:linear-gradient(135deg,rgba(34,211,238,.5),rgba(167,139,250,.5));border-color:transparent;box-shadow:0 0 12px rgba(34,211,238,.35);animation:cellglow 3.2s ease-in-out infinite}
+@keyframes cellglow{50%{box-shadow:0 0 22px rgba(167,139,250,.55);filter:brightness(1.35)}}
+.mlegend{display:flex;gap:22px;padding:0 26px 22px;font-family:var(--mono);font-size:11px;color:var(--dim)}
+.mlegend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:7px}
+.mcap{font-family:var(--mono);font-size:12px;color:var(--faint);text-align:center;padding-bottom:20px;letter-spacing:.15em}
+
+/* ===== S5 lanes ===== */
+.lanes{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+.lane{padding:26px 26px 22px;min-height:225px;display:flex;flex-direction:column;transition:transform .35s,box-shadow .35s}
+.lane:hover{transform:translateY(-6px)}
+.lane .ln{font-family:var(--mono);font-size:11px;letter-spacing:.3em;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center}
+.lane .ln s{text-decoration:none;font-size:10px;color:var(--faint)}
+.lane h3{font-size:20px;font-weight:700;margin-bottom:8px}
+.lane p{color:var(--dim);font-size:13px;line-height:1.75;font-weight:300}
+.lane .models{margin-top:auto;padding-top:14px;font-family:var(--mono);font-size:11px;color:var(--faint)}
+.lane.l-eco{border-top:2px solid #38bdf8}.lane.l-eco .ln{color:#38bdf8}
+.lane.l-mec{border-top:2px solid #818cf8}.lane.l-mec .ln{color:#818cf8}
+.lane.l-main{border-top:2px solid var(--cyan)}.lane.l-main .ln{color:var(--cyan)}
+.lane.l-hard{border-top:2px solid var(--rose)}.lane.l-hard .ln{color:var(--rose)}
+.lane.l-vis{border-top:2px solid var(--emerald)}.lane.l-vis .ln{color:var(--emerald)}
+.lane.l-rev{border-top:2px solid var(--amber)}.lane.l-rev .ln{color:var(--amber)}
+.lane.l-rev .shield{display:inline-block;font-size:10px;color:var(--amber);border:1px solid rgba(251,191,36,.4);border-radius:6px;padding:2px 8px;letter-spacing:.15em}
+
+/* ===== S6 hooks ===== */
+.hookflow{position:relative;display:grid;grid-template-columns:repeat(4,1fr);gap:18px;margin-top:14px}
+.hookflow::before{content:"";position:absolute;top:44px;left:6%;right:6%;height:1px;background:linear-gradient(90deg,var(--cyan),var(--violet),var(--emerald),var(--amber));opacity:.55}
+.hook{padding:26px 22px;text-align:left;margin-top:0}
+.hook .dot{width:13px;height:13px;border-radius:50%;margin:0 auto 18px;position:relative;z-index:2;border:2px solid var(--bg)}
+.hook .api{font-family:var(--mono);font-size:12px;text-align:center;margin-bottom:12px;letter-spacing:.04em}
+.hook h3{text-align:center;font-size:16.5px;font-weight:700;margin-bottom:9px}
+.hook p{color:var(--dim);font-size:12.5px;line-height:1.75;font-weight:300}
+.hook .dot{margin:0 0 18px}
+.hook.h1 .dot{background:var(--cyan);box-shadow:0 0 16px var(--cyan)}.hook.h1 .api{color:var(--cyan)}
+.hook.h2 .dot{background:var(--violet);box-shadow:0 0 16px var(--violet)}.hook.h2 .api{color:var(--violet)}
+.hook.h3 .dot{background:var(--emerald);box-shadow:0 0 16px var(--emerald)}.hook.h3 .api{color:var(--emerald)}
+.hook.h4 .dot{background:var(--amber);box-shadow:0 0 16px var(--amber)}.hook.h4 .api{color:var(--amber)}
+.hooknote{margin-top:24px;padding:18px 24px;display:flex;gap:16px;align-items:center}
+.hooknote .bolt{font-size:22px}
+.hooknote p{font-size:13.5px;color:var(--dim);line-height:1.7}
+.hooknote b{color:var(--emerald);font-weight:600}
+
+/* ===== S7 six gates ===== */
+.gates{display:flex;flex-direction:column;gap:11px}
+.gate{display:grid;grid-template-columns:74px 190px 1fr 300px;align-items:center;gap:20px;padding:15px 26px;border-radius:13px}
+.gate .gn{font-family:var(--disp);font-size:26px;font-weight:700;color:var(--faint)}
+.gate .gname{font-size:16px;font-weight:700}
+.gate .gtest{font-family:var(--mono);font-size:12px;color:var(--dim)}
+.gate .gact{font-size:12px;color:var(--rose);text-align:right;line-height:1.55}
+.gate .gact b{color:var(--cyan);font-weight:600}
+.gate:hover .gn{color:var(--cyan)}
+
+/* ===== S8 brain ===== */
+.brain{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}
+.decision{padding:26px 28px}
+.decision .di{font-size:22px;margin-bottom:13px;display:block}
+.decision h3{font-size:17px;font-weight:700;margin-bottom:7px}
+.decision h3 code{font-family:var(--mono);font-size:12px;color:var(--faint);font-weight:400;margin-left:8px}
+.decision p{color:var(--dim);font-size:13px;line-height:1.75;font-weight:300}
+.decision p b{color:var(--ink);font-weight:500}
+
+/* ===== S9 meta ===== */
+.codewrap{display:grid;grid-template-columns:1.15fr .85fr;gap:40px;align-items:start}
+.codebox{background:#060a16;border:1px solid var(--stroke);border-radius:16px;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.5)}
+.codebox .bar{display:flex;align-items:center;gap:8px;padding:13px 18px;border-bottom:1px solid rgba(148,180,255,.1);background:rgba(148,180,255,.03)}
+.codebox .bar i{width:10px;height:10px;border-radius:50%}
+.codebox .bar i:nth-child(1){background:#fb7185}.codebox .bar i:nth-child(2){background:#fbbf24}.codebox .bar i:nth-child(3){background:#34d399}
+.codebox .bar span{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--faint)}
+.codebox pre{padding:22px 24px;font-family:var(--mono);font-size:13.5px;line-height:2.05;color:#c8d3ea;overflow-x:auto}
+.tk-k{color:var(--violet)}.tk-s{color:var(--emerald)}.tk-n{color:var(--amber)}.tk-c{color:var(--faint)}.tk-p{color:var(--cyan)}
+.checklist{list-style:none;display:flex;flex-direction:column;gap:13px}
+.checklist li{display:flex;gap:14px;align-items:flex-start;font-size:14px;color:var(--dim);line-height:1.65;font-weight:300}
+.checklist li::before{content:"✓";flex:none;width:22px;height:22px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:12px;background:rgba(52,211,153,.12);color:var(--emerald);border:1px solid rgba(52,211,153,.3);margin-top:2px}
+.checklist b{color:var(--ink);font-weight:500}
+
+/* ===== S10 banner ===== */
+.bannerbox{max-width:960px;margin:0 auto}
+.brow{display:grid;grid-template-columns:92px 1fr;gap:0;background:#060a16;border:1px solid var(--stroke);border-radius:14px;overflow:hidden;margin-bottom:14px;box-shadow:0 16px 44px rgba(0,0,0,.45)}
+.brow .bl{display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:13px;letter-spacing:.1em;border-right:1px solid rgba(148,180,255,.12)}
+.brow .bt{padding:17px 24px;font-family:var(--mono);font-size:12.5px;color:#b9c4dd;line-height:1.9}
+.brow.b1 .bl{color:var(--cyan);background:rgba(34,211,238,.06)}
+.brow.b2 .bl{color:var(--emerald);background:rgba(52,211,153,.06)}
+.brow.b3 .bl{color:var(--violet);background:rgba(167,139,250,.06)}
+.brow.b4 .bl{color:var(--amber);background:rgba(251,191,36,.06)}
+.brow .bt .hl-c{color:var(--cyan)}.brow .bt .hl-e{color:var(--emerald)}.brow .bt .hl-v{color:var(--violet)}.brow .bt .hl-a{color:var(--amber)}
+.banner-cap{font-size:13px;color:var(--dim);text-align:center;margin-top:22px;font-weight:300}
+.banner-cap b{color:var(--ink);font-weight:500}
+
+/* ===== S11 heal ===== */
+.heal{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+.healc{padding:30px 28px;min-height:250px;display:flex;flex-direction:column}
+.healc .ic{font-size:26px;margin-bottom:16px}
+.healc h3{font-size:18px;font-weight:700;margin-bottom:12px}
+.healc p{color:var(--dim);font-size:13.5px;line-height:1.85;font-weight:300}
+.healc .foot{margin-top:auto;padding-top:16px;font-family:var(--mono);font-size:11.5px}
+.healc.h1{border-top:2px solid var(--cyan)}.healc.h1 .foot{color:var(--cyan)}
+.healc.h2{border-top:2px solid var(--rose)}.healc.h2 .foot{color:var(--rose)}
+.healc.h3{border-top:2px solid var(--emerald)}.healc.h3 .foot{color:var(--emerald)}
+
+/* ===== S12 close ===== */
+.close .inner{text-align:center}
+.close h2{font-family:var(--disp);font-size:clamp(36px,5.4vw,66px);font-weight:700;line-height:1.15}
+.close h2 .grad{background:linear-gradient(92deg,var(--cyan),var(--violet),var(--emerald));-webkit-background-clip:text;background-clip:text;color:transparent}
+.close .sub{margin:22px auto 40px}
+.close .chips{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-bottom:46px}
+.cmd{display:inline-flex;align-items:center;gap:14px;font-family:var(--mono);font-size:14px;background:rgba(34,211,238,.07);border:1px solid rgba(34,211,238,.35);border-radius:12px;padding:15px 28px;color:var(--cyan);box-shadow:0 0 40px rgba(34,211,238,.1)}
+.cmd .ps{color:var(--faint)}
+
+@media (max-width:980px){
+  .quad,.layers,.lanes,.brain,.heal,.mxwrap,.codewrap{grid-template-columns:1fr}
+  .hookflow{grid-template-columns:repeat(2,1fr)}
+  .hookflow::before{display:none}
+  .gate{grid-template-columns:50px 1fr;gap:8px}
+  .gate .gact{text-align:left}
+  .dots{display:none}
+}
+</style>
+</head>
+<body>
+
+<div class="bg"><div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div><div class="grid"></div><div class="scan"></div></div>
+<div class="progress" id="prog"></div>
+<div class="dots" id="dots"></div>
+<div class="brand">opencode-<em>switchman</em> · v0.0.1</div>
+<div class="counter"><b id="cur">01</b> / <span id="tot">12</span></div>
+<div class="hint">← → 翻页 · SPACE 前进</div>
+
+<!-- S1 COVER -->
+<section class="slide cover on">
+  <div class="matrixrain" id="rain"></div>
+  <div class="inner">
+    <div class="badge rv" data-d="1">OPENCODE ORCHESTRATION PLUGIN</div>
+    <h1 class="rv" data-d="2">opencode-<span class="fx">switchman</span></h1>
+    <p class="tagline rv" data-d="3">让主模型成为<b>调度员</b> · 六档壳矩阵编排 · 确定性拦截 × 配额感知路由</p>
+    <div class="chips rv" data-d="4">
+      <span class="chip"><b>13</b> 模型 → <b>52</b> 只模型空壳</span>
+      <span class="chip"><b>6</b> 档认知分层</span>
+      <span class="chip"><b>6</b> 闸确定性拦截</span>
+      <span class="chip"><b>4</b> 个生命周期钩子</span>
+      <span class="chip">三池配额感知</span>
+    </div>
+  </div>
+</section>
+
+<!-- S2 PAINS -->
+<section class="slide">
+  <div class="inner">
+    <div class="kicker r rv" data-d="1">PROBLEM / 多订阅并存的真实痛点</div>
+    <h2 class="title rv" data-d="2">一个模型用到天荒地老，<br><span class="grad">其余订阅在账户里过期</span></h2>
+    <p class="sub rv" data-d="3">同时持有 Copilot 积分、GLM Coding Plan、DeepSeek 余额，却总在水位盲飞、高峰全价硬扛。</p>
+    <div class="quad">
+      <div class="pain glass rv" data-d="3"><div class="no">PAIN_01</div><h3>认知错配</h3><p>旗舰模型干扫描清点的杂活，token 花在不该花的地方；轻量模型做架构设计，<em>返工反而最贵</em>。</p></div>
+      <div class="pain glass rv" data-d="4"><div class="no">PAIN_02</div><h3>水位盲飞</h3><p>GLM 5 小时窗耗尽还在硬撞、Copilot 积分月底作废没花完、DeepSeek 余额见底才发现。</p></div>
+      <div class="pain glass rv" data-d="5"><div class="no">PAIN_03</div><h3>单点视角</h3><p>复审用同一个模型族自查，<em>盲区相同</em>，审不出问题。</p></div>
+      <div class="pain glass rv" data-d="6"><div class="no">PAIN_04</div><h3>协议松弛</h3><p>「让 XX 帮我看看」式委派无结构、无校验，子代理拿到的是含糊任务。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- S3 ARCHITECTURE -->
+<section class="slide">
+  <div class="inner">
+    <div class="kicker v rv" data-d="1">ARCHITECTURE / 三层编排</div>
+    <h2 class="title rv" data-d="2">认知 · 执行 · <span class="grad">确定性</span>，各司其职</h2>
+    <p class="sub rv" data-d="3">LLM 负责认知决策，插件负责一切可以确定性计算的事——<b>智能与规则正交分工</b>。</p>
+    <div class="layers">
+      <div class="layer glass l1 rv" data-d="3">
+        <div class="tag">LAYER 01</div><h3>认知层</h3><div class="en">COGNITIVE</div>
+        <p>主模型（调度员）＋随包注入的调度员规程，做任务四维画像与委派决策。</p>
+        <ul><li>认知强度 × 机械度 × 上下文 × 紧急度</li><li>自做 or 委派</li><li>选档选壳，写 DELEGATION_V1</li></ul>
+      </div>
+      <div class="layer glass l2 rv" data-d="4">
+        <div class="tag">LAYER 02</div><h3>执行层</h3><div class="en">EXECUTION</div>
+        <p>「模型 × 档位」空壳子代理，只绑模型与思考档位，角色由委派 prompt 动态赋予。</p>
+        <ul><li>programmer / tester / reviewer… 14 角色</li><li>ro 壳＝review 链只读</li><li>视觉壳承接 image 任务</li></ul>
+      </div>
+      <div class="layer glass l3 rv" data-d="5">
+        <div class="tag">LAYER 03</div><h3>确定性层</h3><div class="en">DETERMINISTIC</div>
+        <p>插件本体：零概率、纯规则，把调度员的每一步委派放在硬约束之内。</p>
+        <ul><li>六闸拦截 · ROUTE_META 硬校验</li><li>配额 / 成本感知选链</li><li>探针熔断自愈 · 四行横幅注入</li></ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- S4 MATRIX -->
+<section class="slide">
+  <div class="inner">
+    <div class="kicker e rv" data-d="1">THE MATRIX / 壳矩阵</div>
+    <h2 class="title rv" data-d="2">52 只空壳，<span class="grad">一次启动全部就位</span></h2>
+    <div class="mxwrap">
+      <div>
+        <p class="sub rv" data-d="3" style="margin-bottom:0">启动时 <b>config 钩子</b>把全量「模型 × 档位」壳矩阵注入 agent 注册表——壳只是<b>模型与思考档位的绑定</b>，角色由委派 prompt 动态赋予。探针每 <b>10 分钟</b>后台探活，down 的组合自动进降级链，<b>无需人工维护</b>。</p>
+        <div class="mxstats">
+          <div class="stat glass rv" data-d="4"><div class="n">13→52</div><div class="l">模型 → 空壳 全量矩阵</div></div>
+          <div class="stat glass rv" data-d="4"><div class="n">10min</div><div class="l">探针周期 · TTL 600s</div></div>
+          <div class="stat glass rv" data-d="5"><div class="n">6×3</div><div class="l">六档链 × 三大模型池</div></div>
+          <div class="stat glass rv" data-d="5"><div class="n">0</div><div class="l">密钥另存（auth 只读）</div></div>
+        </div>
+        <div class="mxnaming rv" data-d="6">
+          <span class="c">壳名 =</span> <span class="p">copilot</span><span class="c">/</span><span class="p">glm</span><span class="c">/</span><span class="p">ds</span> <span class="c">-mx-</span> <span class="m">模型短名</span> <span class="c">-</span><span class="t">off|low|high|max</span>
+        </div>
+      </div>
+      <div class="glass rv" data-d="4">
+        <div class="mgrid" id="mgrid"></div>
+        <div class="mlegend"><span><i style="background:linear-gradient(135deg,rgba(34,211,238,.5),rgba(167,139,250,.5))"></i>已探活 · 可派发</span><span><i style="background:rgba(148,180,255,.12)"></i>未启用 / 降级中</span></div>
+        <div class="mcap">SHELL MATRIX · LIVE PROBE · SELF-HEALING</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- S5 LANES -->
+<section class="slide">
+  <div class="inner">
+    <div class="kicker rv" data-d="1">SIX LANES / 认知六档</div>
+    <h2 class="title rv" data-d="2">Token 经济学第一性：<span class="grad">返工是最贵的 token</span></h2>
+    <p class="sub rv" data-d="3">按认知强度分六档，每档一条由插件按矩阵 / 水位 / 熔断 / 成本实时计算的最优壳链。</p>
+    <div class="lanes">
+      <div class="lane glass l-eco rv" data-d="3"><div class="ln">economy <s>LANE_1</s></div><h3>扫描清点</h3><p>clerk / scouter 廉价扫档——上下文保护专用。</p><div class="models">轻量模型 · low 档</div></div>
+      <div class="lane glass l-mec rv" data-d="4"><div class="ln">mechanical <s>LANE_2</s></div><h3>回归与脚本</h3><p>tester / ops 机械执行——高频、可验证。</p><div class="models">轻量模型 · high 档</div></div>
+      <div class="lane glass l-main rv" data-d="4"><div class="ln">main <s>LANE_3</s></div><h3>主力交付</h3><p>programmer / uiux / data-analyst 日常主力。</p><div class="models">主力模型 · 常规档</div></div>
+      <div class="lane glass l-hard rv" data-d="5"><div class="ln">hard <s>LANE_4</s></div><h3>架构核心</h3><p>planner 承重设计——只给最强模型最高档。</p><div class="models">旗舰模型 · max 档</div></div>
+      <div class="lane glass l-vis rv" data-d="5"><div class="ln">vision <s>LANE_5</s></div><h3>视觉理解</h3><p>observer 看图——image 任务专属视觉壳。</p><div class="models">视觉模型 · 按需</div></div>
+      <div class="lane glass l-rev rv" data-d="6"><div class="ln">review <s>LANE_6</s> <span class="shield">强制异族</span></div><h3>审案复审</h3><p>reviewer / 专家席——先删与产出者同 family 的壳，<b style="color:var(--amber)">同族只算自审</b>。</p><div class="models">review 链 · 只读壳</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- S6 HOOKS -->
+<section class="slide">
+  <div class="inner">
+    <div class="kicker v rv" data-d="1">LIFECYCLE HOOKS / 四个钩子</div>
+    <h2 class="title rv" data-d="2">钩入 opencode 生命周期的<span class="grad">每一次心跳</span></h2>
+    <p class="sub rv" data-d="3">四个钩子覆盖「启动注入 → 派发拦截 → 失败记账 → 每轮提示注入」全链路。</p>
+    <div class="hookflow">
+      <div class="hook glass h1 rv" data-d="3"><div class="dot"></div><div class="api">config</div><h3>启动注入</h3><p>opencode 启动即注入全量壳矩阵到 cfg.agent，同步完成三池凭证收集（auth 只读、零另存）。</p></div>
+      <div class="hook glass h2 rv" data-d="4"><div class="dot"></div><div class="api">tool.execute.before</div><h3>派发拦截</h3><p>task 工具执行前做六闸确定性校验，deny 时附原因＋改派候选，主模型按链无缝改派。</p></div>
+      <div class="hook glass h3 rv" data-d="5"><div class="dot"></div><div class="api">event</div><h3>失败记账</h3><p>执行失败写入 failures.log，600s 窗内 ≥2 败自动触发熔断 600s，约 10 分钟自愈恢复。</p></div>
+      <div class="hook glass h4 rv" data-d="6"><div class="dot"></div><div class="api">system.transform</div><h3>每轮注入</h3><p>每轮 LLM 请求注入调度员规程＋四行横幅，路由 / 水位 / 限制对调度员实时可见。</p></div>
+    </div>
+    <div class="hooknote glass rv" data-d="7">
+      <span class="bolt">⚡</span>
+      <p><b>fail-open 铁律</b>：任何钩子异常只写 stderr 绝不阻塞主流程；配额未知不硬拦，熔断器与探针互为兜底——插件永不成为单点故障。</p>
+    </div>
+  </div>
+</section>
+
+<!-- S7 SIX GATES -->
+<section class="slide">
+  <div class="inner">
+    <div class="kicker a rv" data-d="1">SIX GATES / 六闸拦截</div>
+    <h2 class="title rv" data-d="2">任一命中即 deny，<span class="grad">并附改派候选</span></h2>
+    <p class="sub rv" data-d="3">主模型派发子代理时，插件在 task 工具执行前做确定性校验——顺序即优先级。</p>
+    <div class="gates">
+      <div class="gate glass rv" data-d="3"><div class="gn">01</div><div class="gname">注册表闸</div><div class="gtest">壳未启用 / 未探测</div><div class="gact">deny → <b>禁派未注册面</b></div></div>
+      <div class="gate glass rv" data-d="3"><div class="gn">02</div><div class="gname">探针矩阵闸</div><div class="gtest">组合实测 down</div><div class="gact">deny → <b>拦明确不可用</b></div></div>
+      <div class="gate glass rv" data-d="4"><div class="gn">03</div><div class="gname">熔断闸</div><div class="gtest">600s 窗内 ≥2 败</div><div class="gact">deny → <b>约 10 分钟自动恢复</b></div></div>
+      <div class="gate glass rv" data-d="4"><div class="gn">04</div><div class="gname">池耗尽闸</div><div class="gtest">配额判定必失败</div><div class="gact">deny → <b>附人读原因</b>（GLM 100% / 积分耗尽 / DS 欠费）</div></div>
+      <div class="gate glass rv" data-d="5"><div class="gn">05</div><div class="gname">协议闸</div><div class="gtest">ROUTE_META 缺失 / 非法</div><div class="gact">deny → <b>附样例与合法值表</b>，自动纠偏</div></div>
+      <div class="gate glass rv" data-d="5"><div class="gn">06</div><div class="gname">语义闸</div><div class="gtest">同族复审 / rw→ro / 图像→非视觉壳</div><div class="gact">deny → <b>复审须异族视角</b> 等语义约束</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- S8 BRAIN -->
+<section class="slide">
+  <div class="inner">
+    <div class="kicker e rv" data-d="1">AUTO DECISION / 自动化决策</div>
+    <h2 class="title rv" data-d="2">选链不靠拍脑袋，<span class="grad">靠实时数据面</span></h2>
+    <p class="sub rv" data-d="3">候选链由插件按矩阵、水位、熔断、成本实时算出——主模型只需照链首派发。</p>
+    <div class="brain">
+      <div class="decision glass rv" data-d="3"><span class="di">🎯</span><h3>配额感知排序<code>quota-aware</code></h3><p>GLM monitor / DeepSeek balance / Copilot internal 直查，分层 TTL 缓存。<b>水位只影响排序</b>（周额度用满不浪费），唯一硬拦是「调用必失败」。</p></div>
+      <div class="decision glass rv" data-d="4"><span class="di">📈</span><h3>高峰避让 + 成本 tiebreaker<code>cost-aware</code></h3><p>GLM 工作日 14–18 点高峰自动让 Copilot 同档顶上；models.dev 计价快照参与选链，<b>水位同分时便宜者前</b>。</p></div>
+      <div class="decision glass rv" data-d="5"><span class="di">🧬</span><h3>异族复审强制<code>cross-family</code></h3><p>review 链先剔除与产出者同 family 的壳，<b>同族只算自审</b>——盲区不同，才审得出问题。</p></div>
+      <div class="decision glass rv" data-d="6"><span class="di">🛟</span><h3>兜底与终端失败协议<code>fallback</code></h3><p>DeepSeek 按量池恒居链尾兜底，自动路由绝不选它；同档全不可用则触发<b>终端失败协议</b>：显式告知＋两个可选项，禁静默降质。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- S9 ROUTE_META -->
+<section class="slide">
+  <div class="inner">
+    <div class="kicker rv" data-d="1">PROTOCOL / ROUTE_META 协议</div>
+    <h2 class="title rv" data-d="2">一行协议，<span class="grad">六键六值逐字段校验</span></h2>
+    <div class="codewrap">
+      <div class="codebox rv" data-d="3">
+        <div class="bar"><i></i><i></i><i></i><span>DELEGATION_V1 · embedded</span></div>
+        <pre><span class="tk-c"># 委派 prompt 内嵌单行协议（示例）</span>
+ROUTE_META <span class="tk-p">{</span>
+  <span class="tk-k">"lane"</span><span class="tk-p">:</span>            <span class="tk-s">"main"</span><span class="tk-p">,</span>      <span class="tk-c">// 六档之一</span>
+  <span class="tk-k">"role"</span><span class="tk-p">:</span>           <span class="tk-s">"programmer"</span><span class="tk-p">,</span> <span class="tk-c">// 14 角色之一</span>
+  <span class="tk-k">"producer_family"</span><span class="tk-p">:</span> <span class="tk-s">"glm"</span><span class="tk-p">,</span>      <span class="tk-c">// 真实模型族</span>
+  <span class="tk-k">"capability"</span><span class="tk-p">:</span>      <span class="tk-s">"rw"</span><span class="tk-p">,</span>         <span class="tk-c">// rw | ro</span>
+  <span class="tk-k">"modality"</span><span class="tk-p">:</span>        <span class="tk-s">"text"</span><span class="tk-p">,</span>       <span class="tk-c">// text | image</span>
+  <span class="tk-k">"source"</span><span class="tk-p">:</span>          <span class="tk-s">"auto"</span>        <span class="tk-c">// auto | user</span>
+<span class="tk-p">}</span></pre>
+      </div>
+      <ul class="checklist">
+        <li class="rv" data-d="4"><span><b>协议闸逐字段校验</b>——缺失或非法即 deny，报错附正确样例，主模型照抄即修复。</span></li>
+        <li class="rv" data-d="5"><span><b>producer_family 硬约束</b>——copilot / glm 是池不是族；复审时与壳 family 比对，落实异族审计。</span></li>
+        <li class="rv" data-d="6"><span><b>语义联动</b>——lane=review 强制 ro 壳、modality=image 强制视觉壳、source=auto 禁选付费兜底。</span></li>
+        <li class="rv" data-d="7"><span><b>结构化委派</b>——DELEGATION_V1 模板随包内置，委派 prompt 自包含、可缓存、可校验。</span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- S10 BANNER -->
+<section class="slide">
+  <div class="inner">
+    <div class="kicker a rv" data-d="1">LIVE BANNER / 四行横幅</div>
+    <h2 class="title rv" data-d="2">调度依据，<span class="grad">每轮实时可见</span></h2>
+    <p class="sub rv" data-d="3">system.transform 钩子每轮注入系统提示——调度员永远在最新事实之上做决策。</p>
+    <div class="bannerbox">
+      <div class="brow b1 rv" data-d="3"><div class="bl">[路由]</div><div class="bt">economy: glm-53f-low→ds-v4fv-off <span class="hl-c">|</span> mechanical: glm-53f-high→ds-v4fv-off <span class="hl-c">|</span> main: ds-v4p-high <span class="hl-c">|</span> hard: ds-v4p-max …</div></div>
+      <div class="brow b2 rv" data-d="4"><div class="bl">[水位]</div><div class="bt">GLM 5h窗 <span class="hl-e">23%</span> 周 <span class="hl-e">7%</span> <span class="hl-v">(09-04 10:00刷新)</span> <span class="hl-c">|</span> Copilot 积分不限量 已用3885 <span class="hl-c">|</span> <span class="hl-a">建议: 攻坚改glm、积分留给关键主力</span></div></div>
+      <div class="brow b3 rv" data-d="5"><div class="bl">[限制]</div><div class="bt">down: <span class="hl-e">无</span> <span class="hl-c">|</span> reviewer 须异族 <span class="hl-v">(producer family ≠ 壳 family)</span> <span class="hl-c">|</span> DeepSeek 仅链尾兜底</div></div>
+      <div class="brow b4 rv" data-d="6"><div class="bl">[更新]</div><div class="bt">插件新版本可用时提示升级 <span class="hl-c">—</span> 可经 banner.enabled 一键关闭</div></div>
+      <p class="banner-cap rv" data-d="7">横幅即「调度依据」——<b>清单与六档链以系统提示实时三行为准</b>，主模型无需记忆任何静态配置。</p>
+    </div>
+  </div>
+</section>
+
+<!-- S11 SELF-HEAL -->
+<section class="slide">
+  <div class="inner">
+    <div class="kicker r rv" data-d="1">SELF-HEALING / 自愈数据面</div>
+    <h2 class="title rv" data-d="2">探针 · 熔断 · <span class="grad">fail-open</span></h2>
+    <p class="sub rv" data-d="3">数据面全部自动运行：探活、配额、计价、熔断——无需任何人工干预。</p>
+    <div class="heal">
+      <div class="healc glass h1 rv" data-d="3"><div class="ic">🛰️</div><h3>探针矩阵</h3><p>对三池发起真实请求探活，矩阵落盘 TTL 600s。模型临时 down 无需维护——10 分钟周期刷新，自动进降级链。</p><div class="foot">model-matrix.json · probe/10min</div></div>
+      <div class="healc glass h2 rv" data-d="4"><div class="ic">🔥</div><h3>熔断自愈</h3><p>执行失败由 event 钩子记账，600s 滑窗内 ≥2 败即熔断该壳 600s——「连续失败熔断中，约 10 分钟自动恢复」。</p><div class="foot">routing.json · failures.log</div></div>
+      <div class="healc glass h3 rv" data-d="5"><div class="ic">🫀</div><h3>fail-open 铁律</h3><p>任何钩子异常只写 stderr 绝不阻塞主流程；配额未知不硬拦、熔断器与探针互为兜底——<b style="color:var(--emerald)">插件永不卡死你的工作流</b>。</p><div class="foot">fail-open · zero-block</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- S12 CLOSE -->
+<section class="slide close">
+  <div class="inner">
+    <div class="kicker e rv" data-d="1" style="justify-content:center">GET STARTED</div>
+    <h2 class="rv" data-d="2">多订阅者的高级玩法：<br><span class="grad">让每一分 token 都花在刀刃上</span></h2>
+    <p class="sub rv" data-d="3" style="max-width:720px">33 项行为契约 fixture 全绿兜底 · 状态目录全量落盘可审计 · 三池任意组合、无凭证自动跳过</p>
+    <div class="chips rv" data-d="4">
+      <span class="chip">六档认知分层</span><span class="chip">六闸确定性拦截</span><span class="chip">四钩子全生命周期</span><span class="chip">探针熔断自愈</span><span class="chip">强制异族复审</span>
+    </div>
+    <div class="cmd rv" data-d="5"><span class="ps">$</span> npm install opencode-switchman<span style="opacity:.4;margin:0 4px">·</span>plugin: ["opencode-switchman"]</div>
+  </div>
+</section>
+
+<script>
+const slides=[...document.querySelectorAll('.slide')];
+let i=0;
+const dots=document.getElementById('dots');
+slides.forEach((_,k)=>{const d=document.createElement('i');d.onclick=()=>go(k);dots.appendChild(d)});
+document.getElementById('tot').textContent=String(slides.length).padStart(2,'0');
+function go(n){
+  i=Math.max(0,Math.min(slides.length-1,n));
+  slides.forEach((s,k)=>s.classList.toggle('on',k===i));
+  [...dots.children].forEach((d,k)=>d.classList.toggle('on',k===i));
+  document.getElementById('cur').textContent=String(i+1).padStart(2,'0');
+  document.getElementById('prog').style.width=((i+1)/slides.length*100)+'%';
+}
+addEventListener('keydown',e=>{
+  if(['ArrowRight','ArrowDown',' ','PageDown','Enter'].includes(e.key)){e.preventDefault();go(i+1)}
+  if(['ArrowLeft','ArrowUp','PageUp'].includes(e.key)){e.preventDefault();go(i-1)}
+  if(e.key==='Home')go(0); if(e.key==='End')go(slides.length-1);
+});
+addEventListener('click',e=>{if(!e.target.closest('.dots'))go(i+1)});
+let sx=0;
+addEventListener('touchstart',e=>sx=e.touches[0].clientX);
+addEventListener('touchend',e=>{const dx=e.changedTouches[0].clientX-sx;if(Math.abs(dx)>60)go(i+(dx<0?1:-1))});
+/* matrix cells */
+const mg=document.getElementById('mgrid');
+for(let k=0;k<52;k++){const c=document.createElement('div');c.className='mcell'+(Math.random()>.24?' live':'');c.style.animationDelay=(-Math.random()*3)+'s';mg.appendChild(c)}
+/* matrix rain */
+const rain=document.getElementById('rain');
+const glyphs=['0','1','{','}','→','λ','Σ','#','glm','ds','52','mx'];
+for(let k=0;k<26;k++){const s=document.createElement('span');s.textContent=glyphs[k%glyphs.length];s.style.left=(Math.random()*100)+'%';s.style.animationDuration=(7+Math.random()*11)+'s';s.style.animationDelay=(-Math.random()*14)+'s';rain.appendChild(s)}
+go(0);
+</script>
+</body>
+</html>
