@@ -18,6 +18,8 @@ import {
   computeLane, billingWindow, poolStates, routingAdvice,
   glmExhausted, copilotExhausted, deepseekExhausted, firstCandidate,
 } from "./lane"
+import { logDecision } from "./scoring"
+import type { WaterFactor, DecisionRecord } from "./scoring"
 import { quotaView, readAuthStore, markCopilotGatewayExhausted } from "./quota"
 import { costOf, refreshCosts, costsStale } from "./cost"
 import { refreshMatrixIfStale, refreshActiveMatrixIfStale, probeKeys } from "./probe"
@@ -288,6 +290,27 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     })
   }
 
+  function waterFactorOf(peak: ReturnType<typeof billingWindow>, qv: ReturnType<typeof quotaView>): WaterFactor {
+    const g = qv.glm
+    const c = qv.copilot
+    let copilotResetDays: number | null = null
+    if (c?.reset_date && typeof c.reset_date === "string") {
+      const d = new Date(`${c.reset_date.slice(0, 10)}T00:00:00`)
+      if (!Number.isNaN(d.getTime())) {
+        const start = new Date()
+        start.setHours(0, 0, 0, 0)
+        copilotResetDays = Math.max(Math.floor((d.getTime() - start.getTime()) / 86400000), 0)
+      }
+    }
+    return {
+      glmFiveHourPct: typeof g?.five_hour?.used_pct === "number" ? g.five_hour.used_pct : null,
+      glmWeeklyPct: typeof g?.weekly?.used_pct === "number" ? g.weekly.used_pct : null,
+      copilotRemainingPct: typeof c?.premium?.percent_remaining === "number" ? c.premium.percent_remaining : null,
+      copilotResetDays,
+      dsIdle: !peak.dsPeak,
+    }
+  }
+
   function bannerLines(): string[] {
     try {
       if (bannerCache && Date.now() - bannerCache.at < 15_000) return bannerCache.lines
@@ -296,16 +319,19 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       const costs = options.cost!.enabled ? costOf : null
       const lanes: Record<string, LaneResult> = {}
       const peak = billingWindow(new Date(), options.billingWindow)
-      const states = poolStates(quotaView(creds as any, { enabled: {
+      const qv = quotaView(creds as any, { enabled: {
         glm: options.quota!.glm!.enabled!,
         deepseek: options.quota!.deepseek!.enabled!,
         copilot: options.quota!.copilot!.enabled!,
-      } }), peak)
+      } })
+      // [2026-08-29]-[评分引擎：配额视图归一化水位因子（water 系数）；DS 空闲时段 costBias 惩罚减轻 0.85]
+      const water = waterFactorOf(peak, qv)
+      const states = poolStates(qv, peak)
       for (const lane of LANE_ORDER) {
         try {
           lanes[lane] = computeLane(lane, baseChainFor(lane), {
             registry, matrix: ctx.matrix?.combos ?? null, routing: routingWithRealFailures(ctx.routing),
-            quotaExhausted: quotaEx, states, glmPeak: peak.glmPeak, costs,
+            quotaExhausted: quotaEx, states, glmPeak: peak.glmPeak, costs, water,
           })
         } catch { /* 单档失败不影响其余档 */ }
       }
@@ -328,11 +354,6 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         matrixInfo,
       })
       // [水位] 行需要原始配额数据 → 二次组装（banner 纯函数吃快照；这里补真实 quota）
-      const qv = quotaView(creds as any, { enabled: {
-        glm: options.quota!.glm!.enabled!,
-        deepseek: options.quota!.deepseek!.enabled!,
-        copilot: options.quota!.copilot!.enabled!,
-      } })
       const lines2 = buildBanner({
         lanes: lanes as any,
         down,
@@ -343,6 +364,17 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         dsLowWarnCny: options.quota!.deepseek!.lowBalanceWarnCny,
         matrixInfo,
       })
+      // [2026-08-29]-[评分引擎决策日志：每次横幅重建（15s 缓存失效）追加各 lane 评分明细；fail-open 不阻塞]
+      try {
+        const records: DecisionRecord[] = []
+        for (const lane of LANE_ORDER) {
+          const candidates = (lanes[lane]?.chain ?? [])
+            .filter((c) => c.score)
+            .map((c) => ({ name: c.shell, ...c.score! }))
+          if (candidates.length > 0) records.push({ at: new Date().toISOString(), lane, candidates })
+        }
+        if (records.length > 0) logDecision(records).catch(() => {})
+      } catch { /* fail-open */ }
       bannerCache = { at: Date.now(), lines: lines2 }
       return lines2
     } catch (exc) {

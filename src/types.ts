@@ -1,4 +1,6 @@
 // opencode-switchman 类型与契约（六档壳矩阵编排；池 = copilot / glm / deepseek）
+import type { ScoreBreakdown } from "./scoring"
+
 export type Lane = "economy" | "mechanical" | "main" | "hard" | "vision" | "review"
 export const LANE_ORDER: Lane[] = ["economy", "mechanical", "main", "hard", "vision", "review"]
 
@@ -92,8 +94,9 @@ export interface ShellRegEntry extends ShellManifestEntry {
 }
 
 // 探针矩阵条目
+// [2026-08-29]-[评分引擎：新增 "strained"（429 限流类瞬时限流新状态，健康系数 0.6 而非出局）]
 export interface MatrixEntry {
-  status: "ok" | "down" | "unknown" | "missing" | "unprobed"
+  status: "ok" | "strained" | "down" | "unknown" | "missing" | "unprobed"
   reason?: string
   latency_ms?: number | null
   checked_at?: string
@@ -196,6 +199,8 @@ export interface ChainCandidate {
   vision: boolean | null
   latency_ms: number | null
   auto_ok?: boolean
+  /** [2026-08-29]-[评分引擎：组内乘积分明细（normal 档；immediate/评分失败回退时为 undefined），供决策日志追溯] */
+  score?: ScoreBreakdown
 }
 export interface DroppedCandidate { shell: string; reason: string }
 export interface LaneResult {

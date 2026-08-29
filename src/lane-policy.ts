@@ -1,7 +1,7 @@
 // 六档基础链策略（v1.3 动态矩阵）：内置偏好序∩激活壳 → 按 lane 所需 effort/vision/ro 补齐
 // [2026-08-29]-[静态 lanes 在动态模式下只是偏好序（引用未激活壳会被剔除）；
 //  补齐按 lane 档位亲和度排序，纯函数确定性输出（同分按名称字典序）]
-// computeLane（lane.ts）继续负责健康/熔断/水位/成本排序——本模块只产出 base 链。
+// [2026-08-29]-[v2.0 评分引擎后：computeLane（lane.ts→scoring.ts）负责健康/熔断/水位/评分排序（costOf 仅平局 tiebreak）——本模块只产出 base 链。]
 import type { Lane } from "./types"
 import { LANE_ORDER } from "./types"
 
@@ -21,7 +21,8 @@ export interface LanePolicyInput {
   maxLen?: number
 }
 
-const LANE_SPEC: Record<Lane, { efforts: string[]; vision: boolean; ro: boolean }> = {
+// [2026-08-29]-[评分引擎复用：导出 LANE_SPEC 序位供 scoring.effortFit 计算档位亲和度]
+export const LANE_SPEC: Record<Lane, { efforts: string[]; vision: boolean; ro: boolean }> = {
   economy: { efforts: ["low", "minimal", "off", "medium"], vision: false, ro: false },
   mechanical: { efforts: ["medium", "high", "low"], vision: false, ro: false },
   main: { efforts: ["high", "medium", "low"], vision: false, ro: false },

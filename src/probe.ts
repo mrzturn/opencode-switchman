@@ -4,6 +4,7 @@
 // [口径：TTL 600s；2xx=ok；30s 内有响应=慢而可用不判 down（超时 45s 判 down）；并发 8-32]
 import { readCopilotGithubToken, markCopilotGatewayExhausted } from "./quota"
 import { loadManifest, loadMatrix, paths, writeJsonAtomic, withPathLock, PROBE_TTL } from "./state"
+import { classifyFailure } from "./failclass"
 import type { Matrix } from "./types"
 
 const PROBE_TIMEOUT_MS = 45_000
@@ -73,6 +74,15 @@ function buildRequest(
     return { url: `${base}/chat/completions`, headers: { "Content-Type": "application/json", Authorization: `Bearer ${eps.dsKey}` }, body }
   }
   return null
+}
+
+/**
+ * [2026-08-29]-[评分引擎：探针结果状态归一纯函数——down+rate_limit(429) 转 strained（健康 0.6 参与而非出局），
+ *  其余类别维持原状；供 probeTargets 落盘前调用，也便于纯函数层测试]
+ */
+export function classifyProbeStatus(raw: { status: "ok" | "down" | "unknown"; reason?: string }): "ok" | "strained" | "down" | "unknown" {
+  if (raw.status === "down" && classifyFailure(String(raw.reason ?? "")) === "rate_limit") return "strained"
+  return raw.status
 }
 
 async function probeOne(
@@ -150,7 +160,10 @@ async function probeTargets(
       while (idx < sorted.length) {
         const key = sorted[idx++]!
         const [prov, model, eff] = targets.get(key)!
-        results[key] = { ...await probeOne(prov, model, eff, eps, gh), checked_at: new Date().toISOString() }
+        const r = await probeOne(prov, model, eff, eps, gh)
+        // [2026-08-29]-[评分引擎：429 限流类失败不再写 down——写 strained（保留 reason/latency/checked_at），
+        //  评分层 health=0.6 参与而非出局；其余类别维持原状]
+        results[key] = { ...r, status: classifyProbeStatus(r), checked_at: new Date().toISOString() }
       }
     }
     await Promise.all(Array.from({ length: workers }, run))

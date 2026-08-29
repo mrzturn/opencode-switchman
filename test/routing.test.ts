@@ -169,7 +169,7 @@ describe("六闸顺序", () => {
   test("18 auto 误选 DeepSeek → deny 附套餐首候选；user 点名放行", () => {
     const d = denyOf("ds-mx-v4p-high", meta(), snap())
     expect(d).toContain("DeepSeek 按量壳")
-    expect(d).toContain("glm-mx-53-high")
+    expect(d).toContain("copilot-mx-terra-high")
     expect(denyOf("ds-mx-v4p-high", meta("main", "programmer", "glm", "rw", "text", "user"), snap())).toBeNull()
   })
 })
@@ -182,7 +182,8 @@ describe("compute_lane", () => {
     const b = computeLane("main", LANES.main, p as any)
     expect(JSON.stringify(a)).toBe(JSON.stringify(b))
     expect(a.status).toBe("ok")
-    expect(a.chain.map((c) => c.shell)).toEqual(LANES.main)
+    // [2026-08-29]-[评分引擎：tier 主导——main 链 terra(S) 在 glm-53(A) 前，DS 链尾]
+    expect(a.chain.map((c) => c.shell)).toEqual(["copilot-mx-terra-high", "glm-mx-53-high", "ds-mx-v4p-high"])
   })
   test("20 deepseek 恒链尾 + auto_ok 门控（user 点名放行）", () => {
     const p = { registry: fullRegistry(), matrix: matrixOk(), routing: { down_agents: {}, down_expiry: {} }, source: "auto" }
@@ -202,20 +203,20 @@ describe("compute_lane", () => {
     const r = computeLane("main", LANES.main, p as any)
     expect(r.chain.map((c) => c.shell)).toEqual(["glm-mx-53-high", "copilot-mx-terra-high", "ds-mx-v4p-high"])
   })
-  test("22 normal 按水位换序（GLM 高峰 copilot 同档提前；strained 避让）", () => {
+  test("22 tier 主导排序（软系数不跨能力级换序；DS 恒链尾）", () => {
     const base = { registry: fullRegistry(), matrix: matrixOk(), routing: { down_agents: {}, down_expiry: {} } }
-    // GLM 高峰：mechanical 链 terra-medium 提前
+    // [2026-08-29]-[评分引擎：mechanical 链 terra-medium(S) 恒在 glm-53f(B) 前，高峰/平峰一致]
     const peak = computeLane("mechanical", LANES.mechanical, { ...base, glmPeak: true } as any)
     expect(peak.chain[0].shell).toBe("copilot-mx-terra-medium")
     const calm = computeLane("mechanical", LANES.mechanical, { ...base, glmPeak: false } as any)
-    expect(calm.chain.map((c) => c.shell)).toEqual(LANES.mechanical)
-    // copilot strained：economy 链 glm 提前
+    expect(calm.chain.map((c) => c.shell)).toEqual(["copilot-mx-terra-medium", "glm-mx-53f-high", "ds-mx-v4fv-off"])
+    // copilot strained 也不得让 B 档 glm 越到 S 档 luna 前（tier 分组不可逆）
     const strained = computeLane("economy", LANES.economy, {
       ...base, glmPeak: false, states: { copilot: { state: "strained" } },
     } as any)
-    expect(strained.chain[0].shell).toBe("glm-mx-53f-low")
+    expect(strained.chain[0].shell).toBe("copilot-mx-luna-low")
   })
-  test("23 v1.1 成本 tiebreaker：水位同分时便宜者前（immediate 不受影响）", () => {
+  test("23 v2.0 成本 tiebreaker：同 tier 且评分平局时便宜者前（immediate 按延迟）", () => {
     const base = { registry: fullRegistry(), matrix: matrixOk(), routing: { down_agents: {}, down_expiry: {} }, glmPeak: false }
     const costs = (modelId: string) => (modelId === "gpt-5.6-terra" ? 1 : 10) // terra 便宜
     const r = computeLane("mechanical", LANES.mechanical, { ...base, costs } as any)

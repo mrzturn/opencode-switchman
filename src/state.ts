@@ -27,6 +27,8 @@ export const paths = () => {
     modelCatalog: join(dir, "model-catalog.json"),
     shellSuperset: join(dir, "shell-superset.json"),
     activeMatrix: join(dir, "active-matrix.json"),
+    // [2026-08-29]-[评分引擎决策日志（环形截断 200 行，JSONL）]
+    decisions: join(dir, "routing-decisions.jsonl"),
   }
 }
 

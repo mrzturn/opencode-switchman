@@ -1,10 +1,13 @@
 // 六档选链计算器（过滤 → 换序 → auto_ok 门控 → 降级标记；
-// v1.1 增补：normal/deferable 排序在水位同分时按 costScore 升序 tiebreaker——immediate 档不受影响）
+// [2026-08-29]-[v2.0 评分引擎：排序=ds 链尾→tier 分组（base 压倒软系数）→乘积分→costOf 升序→入参序；
+// immediate 档按探针延迟]）
 // 本模块纯函数零 IO：registry/matrix/routing/quota/states 全部由调用方装配。
 import type {
   ChainCandidate, CopilotQuota, DroppedCandidate, GlmQuota, Lane, LaneResult,
   Pool, PoolStateKind, ShellRegEntry,
 } from "./types"
+import { rankCandidates } from "./scoring"
+import type { WaterFactor } from "./scoring"
 
 // ---- 计费窗口（可配置）----
 export interface BillingWindowCfg {
@@ -200,6 +203,29 @@ function poolScore(pool: string, states: Record<string, { state?: PoolStateKind 
   return 0
 }
 
+// [2026-08-29]-[评分引擎 fail-open 回退：v1.1 规则式排序原样保留，评分异常时兜底不劣化]
+function legacySort(chain: ChainCandidate[], p: ComputeLaneParams, glmPeak: boolean, immediate: boolean): void {
+  const costOf = p.costs
+  const registry = p.registry
+  const dsLast = (c: ChainCandidate) => (c.pool === "deepseek" ? 1 : 0)
+  if (immediate) {
+    chain.sort((a, b) =>
+      dsLast(a) - dsLast(b) ||
+      (a.latency_ms ?? Number.POSITIVE_INFINITY) - (b.latency_ms ?? Number.POSITIVE_INFINITY))
+  } else {
+    const score = (c: ChainCandidate) => poolScore(String(c.pool), p.states, glmPeak)
+    const cost = (c: ChainCandidate): number => {
+      const modelId = registry?.[c.shell]?.modelId
+      const v = modelId && costOf ? costOf(modelId) : null
+      return typeof v === "number" && Number.isFinite(v) ? v : Number.POSITIVE_INFINITY
+    }
+    chain.sort((a, b) =>
+      dsLast(a) - dsLast(b) ||
+      score(b) - score(a) ||
+      cost(a) - cost(b))
+  }
+}
+
 export interface ComputeLaneParams {
   registry: Record<string, ShellRegEntry> | null
   matrix: Record<string, import("./types").MatrixEntry> | null
@@ -213,6 +239,10 @@ export interface ComputeLaneParams {
   modality?: string | null
   capability?: string | null
   source?: string
+  /** [2026-08-29]-[评分引擎：归一化水位因子（缺省=全 1.0 fail-open）] */
+  water?: WaterFactor
+  retiredModels?: ReadonlySet<string>
+  realFailedCombos?: ReadonlySet<string>
 }
 
 /** agentDown 引用（避免循环依赖放此处实现：纯读传入 routing） */
@@ -246,7 +276,9 @@ export function computeLane(lane: Lane, base: string[], p: ComputeLaneParams): L
     else if (regOk && shell && !shell.matrixKey) reason = "matrix-unprobed"
     else if (mcombos !== null && mcombos && regOk && shell) {
       const st = String(mcombos[shell.matrixKey]?.status ?? "").toLowerCase()
-      if (st !== "ok") reason = `matrix-${st || "missing"}`
+      // [2026-08-29]-[评分引擎：仅 down 硬门出局；strained 参与评分（health 0.6），
+      //  unknown/missing/unprobed fail-open 放行（评分层 health 视同 1.0）]
+      if (st === "down") reason = `matrix-${st || "missing"}`
     }
     let latency: number | null = null
     if (reason === null && mcombos && regOk && shell) {
@@ -276,25 +308,51 @@ export function computeLane(lane: Lane, base: string[], p: ComputeLaneParams): L
   }
 
   const glmPeak = p.glmPeak ?? false
-  const costOf = p.costs
-  const dsLast = (c: ChainCandidate) => (c.pool === "deepseek" ? 1 : 0)
-  if (p.urgency === "immediate") {
-    // immediate：按探针延迟升序（无数据殿后），DS 恒链尾；不避峰不计成本
-    chain.sort((a, b) =>
-      dsLast(a) - dsLast(b) ||
-      (a.latency_ms ?? Number.POSITIVE_INFINITY) - (b.latency_ms ?? Number.POSITIVE_INFINITY))
-  } else {
-    // normal/deferable：水位换序（GLM 高峰 copilot 同档提前）→ v1.1 成本 tiebreaker（水位同分便宜者前）
-    const score = (c: ChainCandidate) => poolScore(String(c.pool), p.states, glmPeak)
-    const cost = (c: ChainCandidate): number => {
-      const modelId = registry?.[c.shell]?.modelId
-      const v = modelId && costOf ? costOf(modelId) : null
-      return typeof v === "number" && Number.isFinite(v) ? v : Number.POSITIVE_INFINITY
+  const immediate = p.urgency === "immediate"
+  // [2026-08-29]-[评分引擎：内部排序改调 rankCandidates（硬门已在循环完成，此处只排序）；
+  //  registry/矩阵缺失或评分异常一律 fail-open 回退规则式排序，绝不阻塞委派主流程]
+  try {
+    const matrixStatusOf = (c: ChainCandidate): string => {
+      if (!regOk || !mcombos) return "ok"
+      const sh = registry![c.shell]
+      if (!sh?.matrixKey) return "ok"
+      return String(mcombos[sh.matrixKey]?.status ?? "").toLowerCase() || "missing"
     }
-    chain.sort((a, b) =>
-      dsLast(a) - dsLast(b) ||
-      score(b) - score(a) ||
-      cost(a) - cost(b))
+    const rankables = chain.map((c) => ({
+      key: c.shell,
+      modelId: regOk && registry![c.shell] ? registry![c.shell].modelId : "",
+      effort: c.effort,
+      pool: c.pool,
+      family: c.family,
+      capability: c.capability,
+      vision: c.vision,
+      matrixStatus: matrixStatusOf(c),
+      latencyMs: c.latency_ms,
+    }))
+    const { ranked, breakdowns } = rankCandidates(rankables, {
+      lane,
+      immediate,
+      glmPeak,
+      water: p.water ?? {},
+      routing,
+      registry,
+      quotaExhausted: exhausted,
+      retiredModels: p.retiredModels,
+      realFailedCombos: p.realFailedCombos,
+      producerFamily: p.producerFamily,
+      modality: p.modality,
+      capability: p.capability,
+      costs: p.costs,
+    })
+    const order = new Map(ranked.map((r, i) => [r.key, i]))
+    chain.sort((a, b) => (order.get(a.shell) ?? Number.POSITIVE_INFINITY) - (order.get(b.shell) ?? Number.POSITIVE_INFINITY))
+    for (const c of chain) {
+      const bd = breakdowns.get(c.shell)
+      if (bd) c.score = bd
+    }
+  } catch (exc) {
+    console.error(`[opencode-switchman] 评分失败回退规则式排序: ${exc}`)
+    legacySort(chain, p, glmPeak, immediate)
   }
 
   const planAlive = chain.filter((c) => c.pool !== "deepseek")
