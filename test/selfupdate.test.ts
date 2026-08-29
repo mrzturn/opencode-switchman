@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { bannerTextOf, compareSemver, ensureUpgradeCommand, modeOfDistPath } from "../src/selfupdate"
-import { readFileSync, existsSync } from "node:fs"
+import { bannerTextOf, compareSemver, ensureUpdateCommands, flagSemantics, modeOfDistPath } from "../src/selfupdate"
+import { readFileSync, existsSync, writeFileSync, rmSync, utimesSync } from "node:fs"
 import type { SelfUpdateState } from "../src/selfupdate"
 
 describe("插件自更新纯函数", () => {
@@ -33,13 +33,47 @@ describe("插件自更新纯函数", () => {
 describe("一键升级命令资产", () => {
   test("prod 写入 /switchman-update（npm 静默安装模板），local 删除残留", () => {
     const base = mkdtempSync(join(tmpdir(), "sw-cmd-"))
-    ensureUpgradeCommand("prod", base)
+    ensureUpdateCommands("prod", base)
     const file = join(base, "command", "switchman-update.md")
     const md = readFileSync(file, "utf8")
     expect(md).toContain("npm install opencode-switchman@latest")
     expect(md).toContain("description:")
-    ensureUpgradeCommand("local", base)
+    ensureUpdateCommands("local", base)
     expect(existsSync(file)).toBe(false)
+  })
+  test("升级/忽略标记语义：mtime 晚于进程启动=生效，重启后失效", () => {
+    const base = mkdtempSync(join(tmpdir(), "sw-flag-"))
+    const past = Date.now() - 60_000
+    expect(flagSemantics(base, past).upgraded).toBe(false)
+    writeFileSync(join(base, "upgraded.flag"), "")
+    utimesSync(join(base, "upgraded.flag"), new Date(), new Date())
+    expect(flagSemantics(base, past).upgraded).toBe(true)
+    expect(flagSemantics(base, Date.now() + 60_000).upgraded).toBe(false)
+    writeFileSync(join(base, "update-ignore.flag"), "")
+    utimesSync(join(base, "update-ignore.flag"), new Date(), new Date())
+    expect(flagSemantics(base, past).ignored).toBe(true)
+  })
+  test("横幅：升级完成显示待重启、本次忽略返回 null、local 只给忽略入口", () => {
+    const base = mkdtempSync(join(tmpdir(), "sw-bnr-"))
+    writeFileSync(join(base, "upgraded.flag"), "")
+    utimesSync(join(base, "upgraded.flag"), new Date(), new Date())
+    const st: SelfUpdateState = { checked_at: "", mode: "prod", current: "1.0.0", latest: "2.0.0", outdated: true }
+    expect(bannerTextOf(st, Date.now(), base)).toContain("已升级")
+    rmSync(join(base, "upgraded.flag"), { force: true })
+    writeFileSync(join(base, "update-ignore.flag"), "")
+    utimesSync(join(base, "update-ignore.flag"), new Date(), new Date())
+    expect(bannerTextOf(st, Date.now(), base)).toBeNull()
+    rmSync(join(base, "update-ignore.flag"), { force: true })
+    expect(bannerTextOf({ ...st, mode: "local" }, Date.now(), base)).toContain("/switchman-ignore")
+    expect(bannerTextOf({ ...st, mode: "local" }, Date.now(), base)).not.toContain("/switchman-update")
+  })
+  test("prod 双命令、local 仅忽略命令", () => {
+    const base = mkdtempSync(join(tmpdir(), "sw-cmd2-"))
+    ensureUpdateCommands("prod", base)
+    expect(existsSync(join(base, "command", "switchman-ignore.md"))).toBe(true)
+    ensureUpdateCommands("local", base)
+    expect(existsSync(join(base, "command", "switchman-ignore.md"))).toBe(true)
+    expect(existsSync(join(base, "command", "switchman-update.md"))).toBe(false)
   })
   test("upgradeCommandMd：local 模式文案不含一键升级入口", () => {
     expect(bannerTextOf({ checked_at: "", mode: "local", current: "0.0.1", latest: "", outdated: true })).not.toContain("/switchman-update")

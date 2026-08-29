@@ -1,6 +1,6 @@
 // 插件自身更新检查：状态缓存与所有外部调用均 fail-open，绝不影响 OpenCode 启动。
 import { execFileSync } from "node:child_process"
-import { mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { homedir } from "node:os"
 import { paths, readJson, withPathLock, writeJsonAtomic } from "./state"
@@ -96,25 +96,44 @@ export async function refreshSelfUpdate(): Promise<SelfUpdateState | null> {
   })
 }
 
-export function bannerTextOf(state: SelfUpdateState | null): string | null {
+export function bannerTextOf(state: SelfUpdateState | null, now = Date.now(), baseDir?: string): string | null {
   if (!state?.outdated) return null
+  const flags = flagSemantics(baseDir)
+  // [2026-08-29]-[升级完成：横幅改显示「已升级待重启」，压过版本提示]-
+  if (flags.upgraded) return `opencode-switchman 已升级（运行中 ${state.current}）——重启 opencode 生效`
+  if (flags.ignored) return null // 本次忽略：会话级，重启后自动恢复提示
   if (state.mode === "prod") {
-    // [2026-08-29]-[一键升级：prod 模式注册 /switchman-update 命令（ensureUpgradeCommand），提示语带入口]-
-    return `opencode-switchman 有新版 ${state.latest}（当前 ${state.current}）——输入 /switchman-update 一键升级，或手动 cd ~/.config/opencode && npm install opencode-switchman 后重启`
+    // [2026-08-29]-[一键升级：prod 注册 /switchman-update 与 /switchman-ignore 两个命令入口]-
+    return `opencode-switchman 有新版 ${state.latest}（当前 ${state.current}）——/switchman-update 立即升级（静默，完成后提示重启）；/switchman-ignore 本次忽略`
   }
-  // local 模式只提示不自动升级（规格：自动升级仅针对 npm 正式版）
-  return "本地构建落后 origin/main——仓库内 git pull && bun run mode:local 后重启"
+  // local 模式只提示不自动升级（规格：自动升级仅针对 npm 正式版），仅提供本次忽略
+  return "本地构建落后 origin/main——需手动更新后重启：git pull && bun run mode:local；/switchman-ignore 本次忽略"
 }
 
-// ---- 一键升级命令资产（opencode 自定义命令=用户可点的「按钮」；仅 prod 模式注册）----
+// ---- 「按钮」= 自定义命令 + 会话级标记（mtime > 进程启动时间 → 本次会话有效，重启即失效）----
+
+const PLUGIN_START = Date.now()
+
+/** 标记语义：mtime 晚于进程启动 = 本次会话生效；重启后自然失效（每次打开重新提示） */
+export function flagSemantics(baseDir = join(homedir(), ".config", "opencode", "opencode-switchman"), startMs = PLUGIN_START, now = Date.now()): { upgraded: boolean; ignored: boolean } {
+  const active = (name: string): boolean => {
+    try {
+      return statSync(join(baseDir, name)).mtimeMs > startMs
+    } catch {
+      return false
+    }
+  }
+  void now
+  return { upgraded: active("upgraded.flag"), ignored: active("update-ignore.flag") }
+}
 
 export function upgradeCommandMd(): string {
   return [
     "---",
-    "description: 静默升级 opencode-switchman 插件（npm 正式版）",
+    "description: 立即升级 opencode-switchman（npm 正式版，静默安装）",
     "---",
     "",
-    "!`cd ~/.config/opencode && npm install opencode-switchman@latest 2>&1 | tail -8`",
+    "!`cd ~/.config/opencode && npm install opencode-switchman@latest 2>&1 | tail -8 && touch \"$HOME/.config/opencode/opencode-switchman/upgraded.flag\"`",
     "",
     "以上是 opencode-switchman 插件自动升级的输出。请：",
     "1. 用一句话报告升级结果（成功/已是最新/失败原因）",
@@ -123,16 +142,34 @@ export function upgradeCommandMd(): string {
   ].join("\n")
 }
 
-/** [2026-08-29]-[prod 写入全局命令 switchman-update（用户触发即静默 npm install）；
- *  local 删除残留命令文件——自动升级仅限 npm 正式版，本地只提示]-[fail-open] */
-export function ensureUpgradeCommand(mode: LoadMode, baseDir = join(homedir(), ".config", "opencode")): void {
+export function ignoreCommandMd(): string {
+  return [
+    "---",
+    "description: 忽略本次 opencode-switchman 更新提示（重启后恢复）",
+    "---",
+    "",
+    "!`touch \"$HOME/.config/opencode/opencode-switchman/update-ignore.flag\"`",
+    "",
+    "以上命令已标记忽略本次更新提示。请用一句话确认：本次会话不再提示，重启 opencode 后会重新提示。",
+    "",
+  ].join("\n")
+}
+
+/** [2026-08-29]-[prod 注册「立即升级+本次忽略」两命令；local 只注册「本次忽略」并删除升级命令]-
+ *  [fail-open] */
+export function ensureUpdateCommands(mode: LoadMode, baseDir = join(homedir(), ".config", "opencode")): void {
   try {
-    const file = join(baseDir, "command", "switchman-update.md")
+    const cmdDir = join(baseDir, "command")
+    const write = (name: string, md: string): void => {
+      mkdirSync(cmdDir, { recursive: true })
+      writeFileSync(join(cmdDir, name), md)
+    }
     if (mode === "prod") {
-      mkdirSync(dirname(file), { recursive: true })
-      writeFileSync(file, upgradeCommandMd())
+      write("switchman-update.md", upgradeCommandMd())
+      write("switchman-ignore.md", ignoreCommandMd())
     } else {
-      rmSync(file, { force: true })
+      write("switchman-ignore.md", ignoreCommandMd())
+      rmSync(join(cmdDir, "switchman-update.md"), { force: true })
     }
   } catch (exc) {
     console.error(`[opencode-switchman] 升级命令资产 fail-open: ${exc}`)
