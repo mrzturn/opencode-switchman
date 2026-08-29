@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>opencode-switchman · Six-Lane Shell Matrix Orchestration Plugin</title>
+<title>opencode-switchman · 六档壳矩阵编排插件</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;700&family=Noto+Sans+SC:wght@300;400;500;700;900&display=swap" rel="stylesheet">
 <style>
@@ -16,7 +16,7 @@
   --disp:'Space Grotesk','Noto Sans SC',sans-serif;
 }
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);font-family:'Space Grotesk','Noto Sans SC',sans-serif;-webkit-font-smoothing:antialiased}
+html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);font-family:'Noto Sans SC','Space Grotesk',sans-serif;-webkit-font-smoothing:antialiased}
 
 /* ===== ambient background ===== */
 .bg{position:fixed;inset:0;z-index:0;pointer-events:none}
@@ -286,11 +286,11 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
 
 <div class="bg"><div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div><div class="grid"></div><div class="scan"></div></div>
 <div class="progress" id="prog"></div>
-<a class="lang" href="index.zh.html">中文版</a>
+<a class="lang" href="index.html">English</a>
 <div class="dots" id="dots"></div>
 <div class="brand">opencode-<em>switchman</em> · v0.0.1</div>
 <div class="counter"><b id="cur">01</b> / <span id="tot">12</span></div>
-<div class="hint">← → Navigate · SPACE Next</div>
+<div class="hint">← → 翻页 · SPACE 前进</div>
 
 <!-- S1 COVER -->
 <section class="slide cover on">
@@ -298,13 +298,13 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
   <div class="inner">
     <div class="badge rv" data-d="1">OPENCODE ORCHESTRATION PLUGIN</div>
     <h1 class="rv" data-d="2">opencode-<span class="fx">switchman</span></h1>
-    <p class="tagline rv" data-d="3">Turn the main model into a <b>dispatcher</b> · Six-lane shell matrix · Deterministic gating × Quota-aware routing</p>
+    <p class="tagline rv" data-d="3">让主模型成为<b>调度员</b> · 六档壳矩阵编排 · 确定性拦截 × 配额感知路由</p>
     <div class="chips rv" data-d="4">
-      <span class="chip"><b>13</b> models → <b>52</b> model shells</span>
-      <span class="chip"><b>6</b> cognitive lanes</span>
-      <span class="chip"><b>6</b> deterministic gates</span>
-      <span class="chip"><b>4</b> lifecycle hooks</span>
-      <span class="chip">quota-aware across 3 pools</span>
+      <span class="chip"><b>13</b> 模型 → <b>52</b> 只模型空壳</span>
+      <span class="chip"><b>6</b> 档认知分层</span>
+      <span class="chip"><b>6</b> 闸确定性拦截</span>
+      <span class="chip"><b>4</b> 个生命周期钩子</span>
+      <span class="chip">三池配额感知</span>
     </div>
   </div>
 </section>
@@ -312,14 +312,14 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
 <!-- S2 PAINS -->
 <section class="slide">
   <div class="inner">
-    <div class="kicker r rv" data-d="1">PROBLEM / The real pain of juggling subscriptions</div>
-    <h2 class="title rv" data-d="2">One model driven into the ground,<br><span class="grad">while the rest expire in your account</span></h2>
-    <p class="sub rv" data-d="3">You hold Copilot credits, a GLM Coding Plan and a DeepSeek balance — yet you keep flying blind on watermarks and paying full freight at peak hours.</p>
+    <div class="kicker r rv" data-d="1">PROBLEM / 多订阅并存的真实痛点</div>
+    <h2 class="title rv" data-d="2">一个模型用到天荒地老，<br><span class="grad">其余订阅在账户里过期</span></h2>
+    <p class="sub rv" data-d="3">同时持有 Copilot 积分、GLM Coding Plan、DeepSeek 余额，却总在水位盲飞、高峰全价硬扛。</p>
     <div class="quad">
-      <div class="pain glass rv" data-d="3"><div class="no">PAIN_01</div><h3>Cognitive mismatch</h3><p>Flagship models running scan-and-count grunt work, tokens spent where they shouldn't be; lightweight models doing architecture design — <em>rework ends up costing the most</em>.</p></div>
-      <div class="pain glass rv" data-d="4"><div class="no">PAIN_02</div><h3>Flying blind on quotas</h3><p>GLM's 5-hour window exhausted yet you keep ramming into it, Copilot credits expiring at month-end unspent, DeepSeek balance drained before you notice.</p></div>
-      <div class="pain glass rv" data-d="5"><div class="no">PAIN_03</div><h3>Single-point perspective</h3><p>Review runs in the same model family as the producer, <em>sharing the same blind spots</em> — nothing ever gets caught.</p></div>
-      <div class="pain glass rv" data-d="6"><div class="no">PAIN_04</div><h3>Loose protocol</h3><p>"Hey, take a look at this" delegation is unstructured and unvalidated — sub-agents end up with vague tasks.</p></div>
+      <div class="pain glass rv" data-d="3"><div class="no">PAIN_01</div><h3>认知错配</h3><p>旗舰模型干扫描清点的杂活，token 花在不该花的地方；轻量模型做架构设计，<em>返工反而最贵</em>。</p></div>
+      <div class="pain glass rv" data-d="4"><div class="no">PAIN_02</div><h3>水位盲飞</h3><p>GLM 5 小时窗耗尽还在硬撞、Copilot 积分月底作废没花完、DeepSeek 余额见底才发现。</p></div>
+      <div class="pain glass rv" data-d="5"><div class="no">PAIN_03</div><h3>单点视角</h3><p>复审用同一个模型族自查，<em>盲区相同</em>，审不出问题。</p></div>
+      <div class="pain glass rv" data-d="6"><div class="no">PAIN_04</div><h3>协议松弛</h3><p>「让 XX 帮我看看」式委派无结构、无校验，子代理拿到的是含糊任务。</p></div>
     </div>
   </div>
 </section>
@@ -327,24 +327,24 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
 <!-- S3 ARCHITECTURE -->
 <section class="slide">
   <div class="inner">
-    <div class="kicker v rv" data-d="1">ARCHITECTURE / Three layers of orchestration</div>
-    <h2 class="title rv" data-d="2">Cognition · Execution · <span class="grad">Determinism</span>, each in its own lane</h2>
-    <p class="sub rv" data-d="3">The LLM handles cognitive decisions; the plugin handles everything computable deterministically — <b>intelligence and rules, cleanly separated</b>.</p>
+    <div class="kicker v rv" data-d="1">ARCHITECTURE / 三层编排</div>
+    <h2 class="title rv" data-d="2">认知 · 执行 · <span class="grad">确定性</span>，各司其职</h2>
+    <p class="sub rv" data-d="3">LLM 负责认知决策，插件负责一切可以确定性计算的事——<b>智能与规则正交分工</b>。</p>
     <div class="layers">
       <div class="layer glass l1 rv" data-d="3">
-        <div class="tag">LAYER 01</div><h3>Cognitive layer</h3><div class="en">COGNITIVE</div>
-        <p>The main model (dispatcher) plus the injected dispatcher protocol — profiling tasks in four dimensions and making delegation decisions.</p>
-        <ul><li>Cognitive intensity × mechanical load × context × urgency</li><li>Do it yourself, or delegate</li><li>Pick lane and shell, write DELEGATION_V1</li></ul>
+        <div class="tag">LAYER 01</div><h3>认知层</h3><div class="en">COGNITIVE</div>
+        <p>主模型（调度员）＋随包注入的调度员规程，做任务四维画像与委派决策。</p>
+        <ul><li>认知强度 × 机械度 × 上下文 × 紧急度</li><li>自做 or 委派</li><li>选档选壳，写 DELEGATION_V1</li></ul>
       </div>
       <div class="layer glass l2 rv" data-d="4">
-        <div class="tag">LAYER 02</div><h3>Execution layer</h3><div class="en">EXECUTION</div>
-        <p>"Model × lane" empty-shell sub-agents, bound only to a model and thinking tier; roles are assigned dynamically by the delegation prompt.</p>
-        <ul><li>programmer / tester / reviewer… 14 roles</li><li>ro shell = review-chain read-only</li><li>vision shell handles image tasks</li></ul>
+        <div class="tag">LAYER 02</div><h3>执行层</h3><div class="en">EXECUTION</div>
+        <p>「模型 × 档位」空壳子代理，只绑模型与思考档位，角色由委派 prompt 动态赋予。</p>
+        <ul><li>programmer / tester / reviewer… 14 角色</li><li>ro 壳＝review 链只读</li><li>视觉壳承接 image 任务</li></ul>
       </div>
       <div class="layer glass l3 rv" data-d="5">
-        <div class="tag">LAYER 03</div><h3>Deterministic layer</h3><div class="en">DETERMINISTIC</div>
-        <p>The plugin itself: zero probability, pure rules — every dispatcher decision is held inside hard constraints.</p>
-        <ul><li>Six-gate interception · ROUTE_META hard validation</li><li>Quota / cost-aware lane selection</li><li>Probe + breaker self-healing · four-line banner injection</li></ul>
+        <div class="tag">LAYER 03</div><h3>确定性层</h3><div class="en">DETERMINISTIC</div>
+        <p>插件本体：零概率、纯规则，把调度员的每一步委派放在硬约束之内。</p>
+        <ul><li>六闸拦截 · ROUTE_META 硬校验</li><li>配额 / 成本感知选链</li><li>探针熔断自愈 · 四行横幅注入</li></ul>
       </div>
     </div>
   </div>
@@ -353,24 +353,24 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
 <!-- S4 MATRIX -->
 <section class="slide">
   <div class="inner">
-    <div class="kicker e rv" data-d="1">THE MATRIX / Shell matrix</div>
-    <h2 class="title rv" data-d="2">52 empty shells,<span class="grad"> all in place at a single startup</span></h2>
+    <div class="kicker e rv" data-d="1">THE MATRIX / 壳矩阵</div>
+    <h2 class="title rv" data-d="2">52 只空壳，<span class="grad">一次启动全部就位</span></h2>
     <div class="mxwrap">
       <div>
-        <p class="sub rv" data-d="3" style="margin-bottom:0">At startup the <b>config hook</b> injects the full "model × lane" shell matrix into the agent registry — a shell is merely a <b>binding of model and thinking tier</b>; the role is assigned dynamically by the delegation prompt. Probes check liveness every <b>10 minutes</b> in the background; down combinations automatically enter the degradation chain — <b>zero manual upkeep</b>.</p>
+        <p class="sub rv" data-d="3" style="margin-bottom:0">启动时 <b>config 钩子</b>把全量「模型 × 档位」壳矩阵注入 agent 注册表——壳只是<b>模型与思考档位的绑定</b>，角色由委派 prompt 动态赋予。探针每 <b>10 分钟</b>后台探活，down 的组合自动进降级链，<b>无需人工维护</b>。</p>
         <div class="mxstats">
-          <div class="stat glass rv" data-d="4"><div class="n">13→52</div><div class="l">models → empty shells, full matrix</div></div>
-          <div class="stat glass rv" data-d="4"><div class="n">10min</div><div class="l">probe interval · TTL 600s</div></div>
-          <div class="stat glass rv" data-d="5"><div class="n">6×3</div><div class="l">six lanes × three model pools</div></div>
-          <div class="stat glass rv" data-d="5"><div class="n">0</div><div class="l">keys stored separately (auth read-only)</div></div>
+          <div class="stat glass rv" data-d="4"><div class="n">13→52</div><div class="l">模型 → 空壳 全量矩阵</div></div>
+          <div class="stat glass rv" data-d="4"><div class="n">10min</div><div class="l">探针周期 · TTL 600s</div></div>
+          <div class="stat glass rv" data-d="5"><div class="n">6×3</div><div class="l">六档链 × 三大模型池</div></div>
+          <div class="stat glass rv" data-d="5"><div class="n">0</div><div class="l">密钥另存（auth 只读）</div></div>
         </div>
         <div class="mxnaming rv" data-d="6">
-          <span class="c">shell =</span> <span class="p">copilot</span><span class="c">/</span><span class="p">glm</span><span class="c">/</span><span class="p">ds</span> <span class="c">-mx-</span> <span class="m">model short name</span> <span class="c">-</span><span class="t">off|low|high|max</span>
+          <span class="c">壳名 =</span> <span class="p">copilot</span><span class="c">/</span><span class="p">glm</span><span class="c">/</span><span class="p">ds</span> <span class="c">-mx-</span> <span class="m">模型短名</span> <span class="c">-</span><span class="t">off|low|high|max</span>
         </div>
       </div>
       <div class="glass rv" data-d="4">
         <div class="mgrid" id="mgrid"></div>
-        <div class="mlegend"><span><i style="background:linear-gradient(135deg,rgba(34,211,238,.5),rgba(167,139,250,.5))"></i>Live · dispatchable</span><span><i style="background:rgba(148,180,255,.12)"></i>Disabled / degraded</span></div>
+        <div class="mlegend"><span><i style="background:linear-gradient(135deg,rgba(34,211,238,.5),rgba(167,139,250,.5))"></i>已探活 · 可派发</span><span><i style="background:rgba(148,180,255,.12)"></i>未启用 / 降级中</span></div>
         <div class="mcap">SHELL MATRIX · LIVE PROBE · SELF-HEALING</div>
       </div>
     </div>
@@ -380,16 +380,16 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
 <!-- S5 LANES -->
 <section class="slide">
   <div class="inner">
-    <div class="kicker rv" data-d="1">SIX LANES / Six cognitive lanes</div>
-    <h2 class="title rv" data-d="2">Token economics first principles: <span class="grad">rework is the most expensive token</span></h2>
-    <p class="sub rv" data-d="3">Six lanes by cognitive intensity, each backed by an optimal shell chain computed live by the plugin from matrix / watermarks / breakers / cost.</p>
+    <div class="kicker rv" data-d="1">SIX LANES / 认知六档</div>
+    <h2 class="title rv" data-d="2">Token 经济学第一性：<span class="grad">返工是最贵的 token</span></h2>
+    <p class="sub rv" data-d="3">按认知强度分六档，每档一条由插件按矩阵 / 水位 / 熔断 / 成本实时计算的最优壳链。</p>
     <div class="lanes">
-      <div class="lane glass l-eco rv" data-d="3"><div class="ln">economy <s>LANE_1</s></div><h3>Scan & count</h3><p>clerk / scouter cheap sweeps — built for context protection.</p><div class="models">lightweight models · low tier</div></div>
-      <div class="lane glass l-mec rv" data-d="4"><div class="ln">mechanical <s>LANE_2</s></div><h3>Regression & scripts</h3><p>tester / ops mechanical execution — high-frequency, verifiable.</p><div class="models">lightweight models · high tier</div></div>
-      <div class="lane glass l-main rv" data-d="4"><div class="ln">main <s>LANE_3</s></div><h3>Primary delivery</h3><p>programmer / uiux / data-analyst, your daily workhorses.</p><div class="models">mainstream models · regular tier</div></div>
-      <div class="lane glass l-hard rv" data-d="5"><div class="ln">hard <s>LANE_4</s></div><h3>Architecture core</h3><p>planner load-bearing design — only the strongest models at max tier.</p><div class="models">flagship models · max tier</div></div>
-      <div class="lane glass l-vis rv" data-d="5"><div class="ln">vision <s>LANE_5</s></div><h3>Visual understanding</h3><p>observer reads images — dedicated vision shells for image tasks.</p><div class="models">vision models · on demand</div></div>
-      <div class="lane glass l-rev rv" data-d="6"><div class="ln">review <s>LANE_6</s> <span class="shield">cross-family enforced</span></div><h3>Review & re-audit</h3><p>reviewer / expert panel — drop shells sharing the producer's family first, <b style="color:var(--amber)">same family counts as self-review</b>.</p><div class="models">review chain · read-only shells</div></div>
+      <div class="lane glass l-eco rv" data-d="3"><div class="ln">economy <s>LANE_1</s></div><h3>扫描清点</h3><p>clerk / scouter 廉价扫档——上下文保护专用。</p><div class="models">轻量模型 · low 档</div></div>
+      <div class="lane glass l-mec rv" data-d="4"><div class="ln">mechanical <s>LANE_2</s></div><h3>回归与脚本</h3><p>tester / ops 机械执行——高频、可验证。</p><div class="models">轻量模型 · high 档</div></div>
+      <div class="lane glass l-main rv" data-d="4"><div class="ln">main <s>LANE_3</s></div><h3>主力交付</h3><p>programmer / uiux / data-analyst 日常主力。</p><div class="models">主力模型 · 常规档</div></div>
+      <div class="lane glass l-hard rv" data-d="5"><div class="ln">hard <s>LANE_4</s></div><h3>架构核心</h3><p>planner 承重设计——只给最强模型最高档。</p><div class="models">旗舰模型 · max 档</div></div>
+      <div class="lane glass l-vis rv" data-d="5"><div class="ln">vision <s>LANE_5</s></div><h3>视觉理解</h3><p>observer 看图——image 任务专属视觉壳。</p><div class="models">视觉模型 · 按需</div></div>
+      <div class="lane glass l-rev rv" data-d="6"><div class="ln">review <s>LANE_6</s> <span class="shield">强制异族</span></div><h3>审案复审</h3><p>reviewer / 专家席——先删与产出者同 family 的壳，<b style="color:var(--amber)">同族只算自审</b>。</p><div class="models">review 链 · 只读壳</div></div>
     </div>
   </div>
 </section>
@@ -397,18 +397,18 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
 <!-- S6 HOOKS -->
 <section class="slide">
   <div class="inner">
-    <div class="kicker v rv" data-d="1">LIFECYCLE HOOKS / Four hooks</div>
-    <h2 class="title rv" data-d="2">Hooked into <span class="grad">every heartbeat</span> of opencode's lifecycle</h2>
-    <p class="sub rv" data-d="3">Four hooks cover the full chain: startup injection → dispatch interception → failure accounting → per-turn prompt injection.</p>
+    <div class="kicker v rv" data-d="1">LIFECYCLE HOOKS / 四个钩子</div>
+    <h2 class="title rv" data-d="2">钩入 opencode 生命周期的<span class="grad">每一次心跳</span></h2>
+    <p class="sub rv" data-d="3">四个钩子覆盖「启动注入 → 派发拦截 → 失败记账 → 每轮提示注入」全链路。</p>
     <div class="hookflow">
-      <div class="hook glass h1 rv" data-d="3"><div class="dot"></div><div class="api">config</div><h3>Startup injection</h3><p>Injects the full shell matrix into cfg.agent at opencode startup, and collects credentials across the three pools (auth read-only, zero separate storage).</p></div>
-      <div class="hook glass h2 rv" data-d="4"><div class="dot"></div><div class="api">tool.execute.before</div><h3>Dispatch interception</h3><p>Runs six-gate deterministic validation before the task tool executes; on deny it attaches the reason plus a redirect candidate, and the main model reassigns seamlessly along the chain.</p></div>
-      <div class="hook glass h3 rv" data-d="5"><div class="dot"></div><div class="api">event</div><h3>Failure accounting</h3><p>Failures are written to failures.log; ≥2 failures in a 600s window trip the breaker for 600s, auto-recovering in about 10 minutes.</p></div>
-      <div class="hook glass h4 rv" data-d="6"><div class="dot"></div><div class="api">system.transform</div><h3>Per-turn injection</h3><p>Injects the dispatcher protocol plus the four-line banner into every LLM request — routing / watermarks / limits stay live and visible to the dispatcher.</p></div>
+      <div class="hook glass h1 rv" data-d="3"><div class="dot"></div><div class="api">config</div><h3>启动注入</h3><p>opencode 启动即注入全量壳矩阵到 cfg.agent，同步完成三池凭证收集（auth 只读、零另存）。</p></div>
+      <div class="hook glass h2 rv" data-d="4"><div class="dot"></div><div class="api">tool.execute.before</div><h3>派发拦截</h3><p>task 工具执行前做六闸确定性校验，deny 时附原因＋改派候选，主模型按链无缝改派。</p></div>
+      <div class="hook glass h3 rv" data-d="5"><div class="dot"></div><div class="api">event</div><h3>失败记账</h3><p>执行失败写入 failures.log，600s 窗内 ≥2 败自动触发熔断 600s，约 10 分钟自愈恢复。</p></div>
+      <div class="hook glass h4 rv" data-d="6"><div class="dot"></div><div class="api">system.transform</div><h3>每轮注入</h3><p>每轮 LLM 请求注入调度员规程＋四行横幅，路由 / 水位 / 限制对调度员实时可见。</p></div>
     </div>
     <div class="hooknote glass rv" data-d="7">
       <span class="bolt">⚡</span>
-      <p><b>fail-open law</b>: any hook exception only writes to stderr and never blocks the main flow; unknown quota is never hard-blocked, and breaker + probe back each other up — the plugin never becomes a single point of failure.</p>
+      <p><b>fail-open 铁律</b>：任何钩子异常只写 stderr 绝不阻塞主流程；配额未知不硬拦，熔断器与探针互为兜底——插件永不成为单点故障。</p>
     </div>
   </div>
 </section>
@@ -416,16 +416,16 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
 <!-- S7 SIX GATES -->
 <section class="slide">
   <div class="inner">
-    <div class="kicker a rv" data-d="1">SIX GATES / Six-gate interception</div>
-    <h2 class="title rv" data-d="2">Any gate hits, and it's a deny — <span class="grad">with a redirect candidate attached</span></h2>
-    <p class="sub rv" data-d="3">When the main model dispatches a sub-agent, the plugin validates deterministically before the task tool executes — order is priority.</p>
+    <div class="kicker a rv" data-d="1">SIX GATES / 六闸拦截</div>
+    <h2 class="title rv" data-d="2">任一命中即 deny，<span class="grad">并附改派候选</span></h2>
+    <p class="sub rv" data-d="3">主模型派发子代理时，插件在 task 工具执行前做确定性校验——顺序即优先级。</p>
     <div class="gates">
-      <div class="gate glass rv" data-d="3"><div class="gn">01</div><div class="gname">Registry gate</div><div class="gtest">shell not enabled / not probed</div><div class="gact">deny → <b>no dispatch to unregistered faces</b></div></div>
-      <div class="gate glass rv" data-d="3"><div class="gn">02</div><div class="gname">Probe matrix gate</div><div class="gtest">combo probed down</div><div class="gact">deny → <b>block known-unavailable</b></div></div>
-      <div class="gate glass rv" data-d="4"><div class="gn">03</div><div class="gname">Circuit-breaker gate</div><div class="gtest">≥2 failures in a 600s window</div><div class="gact">deny → <b>auto-recovers in ~10 min</b></div></div>
-      <div class="gate glass rv" data-d="4"><div class="gn">04</div><div class="gname">Pool exhaustion gate</div><div class="gtest">quota check will fail</div><div class="gact">deny → <b>human-readable reason</b> (GLM 100% / credits exhausted / DS overdue)</div></div>
-      <div class="gate glass rv" data-d="5"><div class="gn">05</div><div class="gname">Protocol gate</div><div class="gtest">ROUTE_META missing / invalid</div><div class="gact">deny → <b>attach sample + valid-value table</b>, auto-correct</div></div>
-      <div class="gate glass rv" data-d="5"><div class="gn">06</div><div class="gname">Semantic gate</div><div class="gtest">same-family review / rw→ro / image→non-vision shell</div><div class="gact">deny → <b>review requires cross-family view</b> and other semantic constraints</div></div>
+      <div class="gate glass rv" data-d="3"><div class="gn">01</div><div class="gname">注册表闸</div><div class="gtest">壳未启用 / 未探测</div><div class="gact">deny → <b>禁派未注册面</b></div></div>
+      <div class="gate glass rv" data-d="3"><div class="gn">02</div><div class="gname">探针矩阵闸</div><div class="gtest">组合实测 down</div><div class="gact">deny → <b>拦明确不可用</b></div></div>
+      <div class="gate glass rv" data-d="4"><div class="gn">03</div><div class="gname">熔断闸</div><div class="gtest">600s 窗内 ≥2 败</div><div class="gact">deny → <b>约 10 分钟自动恢复</b></div></div>
+      <div class="gate glass rv" data-d="4"><div class="gn">04</div><div class="gname">池耗尽闸</div><div class="gtest">配额判定必失败</div><div class="gact">deny → <b>附人读原因</b>（GLM 100% / 积分耗尽 / DS 欠费）</div></div>
+      <div class="gate glass rv" data-d="5"><div class="gn">05</div><div class="gname">协议闸</div><div class="gtest">ROUTE_META 缺失 / 非法</div><div class="gact">deny → <b>附样例与合法值表</b>，自动纠偏</div></div>
+      <div class="gate glass rv" data-d="5"><div class="gn">06</div><div class="gname">语义闸</div><div class="gtest">同族复审 / rw→ro / 图像→非视觉壳</div><div class="gact">deny → <b>复审须异族视角</b> 等语义约束</div></div>
     </div>
   </div>
 </section>
@@ -433,14 +433,14 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
 <!-- S8 BRAIN -->
 <section class="slide">
   <div class="inner">
-    <div class="kicker e rv" data-d="1">AUTO DECISION / Automated decisions</div>
-    <h2 class="title rv" data-d="2">Lane selection isn't guesswork — <span class="grad">it's a live data plane</span></h2>
-    <p class="sub rv" data-d="3">Candidate chains are computed live by the plugin from matrix, watermarks, breakers and cost — the main model just dispatches to the chain head.</p>
+    <div class="kicker e rv" data-d="1">AUTO DECISION / 自动化决策</div>
+    <h2 class="title rv" data-d="2">选链不靠拍脑袋，<span class="grad">靠实时数据面</span></h2>
+    <p class="sub rv" data-d="3">候选链由插件按矩阵、水位、熔断、成本实时算出——主模型只需照链首派发。</p>
     <div class="brain">
-      <div class="decision glass rv" data-d="3"><span class="di">🎯</span><h3>Quota-aware ordering<code>quota-aware</code></h3><p>GLM monitor / DeepSeek balance / Copilot internal queried directly, tiered TTL caching. <b>Watermarks only affect ordering</b> (weekly quota used up, not wasted); the only hard block is "the call will definitely fail".</p></div>
-      <div class="decision glass rv" data-d="4"><span class="di">📈</span><h3>Peak avoidance + cost tiebreaker<code>cost-aware</code></h3><p>GLM weekday 14:00–18:00 peak auto-yields to the Copilot equivalent; models.dev pricing snapshots join lane selection — <b>on equal watermarks, the cheaper one goes first</b>.</p></div>
-      <div class="decision glass rv" data-d="5"><span class="di">🧬</span><h3>Cross-family review enforced<code>cross-family</code></h3><p>The review chain first strips shells sharing the producer's family, <b>same family counts as self-review</b> — only different blind spots can catch problems.</p></div>
-      <div class="decision glass rv" data-d="6"><span class="di">🛟</span><h3>Fallback & terminal-failure protocol<code>fallback</code></h3><p>DeepSeek's metered pool always sits at the chain tail as fallback, never chosen by auto-routing; if an entire lane is unavailable, the <b>terminal-failure protocol</b> fires: state it explicitly plus two options, never silently downgrade.</p></div>
+      <div class="decision glass rv" data-d="3"><span class="di">🎯</span><h3>配额感知排序<code>quota-aware</code></h3><p>GLM monitor / DeepSeek balance / Copilot internal 直查，分层 TTL 缓存。<b>水位只影响排序</b>（周额度用满不浪费），唯一硬拦是「调用必失败」。</p></div>
+      <div class="decision glass rv" data-d="4"><span class="di">📈</span><h3>高峰避让 + 成本 tiebreaker<code>cost-aware</code></h3><p>GLM 工作日 14–18 点高峰自动让 Copilot 同档顶上；models.dev 计价快照参与选链，<b>水位同分时便宜者前</b>。</p></div>
+      <div class="decision glass rv" data-d="5"><span class="di">🧬</span><h3>异族复审强制<code>cross-family</code></h3><p>review 链先剔除与产出者同 family 的壳，<b>同族只算自审</b>——盲区不同，才审得出问题。</p></div>
+      <div class="decision glass rv" data-d="6"><span class="di">🛟</span><h3>兜底与终端失败协议<code>fallback</code></h3><p>DeepSeek 按量池恒居链尾兜底，自动路由绝不选它；同档全不可用则触发<b>终端失败协议</b>：显式告知＋两个可选项，禁静默降质。</p></div>
     </div>
   </div>
 </section>
@@ -448,26 +448,26 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
 <!-- S9 ROUTE_META -->
 <section class="slide">
   <div class="inner">
-    <div class="kicker rv" data-d="1">PROTOCOL / ROUTE_META protocol</div>
-    <h2 class="title rv" data-d="2">One line, <span class="grad">field-by-field validation of six keys</span></h2>
+    <div class="kicker rv" data-d="1">PROTOCOL / ROUTE_META 协议</div>
+    <h2 class="title rv" data-d="2">一行协议，<span class="grad">六键六值逐字段校验</span></h2>
     <div class="codewrap">
       <div class="codebox rv" data-d="3">
         <div class="bar"><i></i><i></i><i></i><span>DELEGATION_V1 · embedded</span></div>
-        <pre><span class="tk-c"># single-line protocol embedded in the delegation prompt (sample)</span>
+        <pre><span class="tk-c"># 委派 prompt 内嵌单行协议（示例）</span>
 ROUTE_META <span class="tk-p">{</span>
-  <span class="tk-k">"lane"</span><span class="tk-p">:</span>            <span class="tk-s">"main"</span><span class="tk-p">,</span>      <span class="tk-c">// one of six lanes</span>
-  <span class="tk-k">"role"</span><span class="tk-p">:</span>           <span class="tk-s">"programmer"</span><span class="tk-p">,</span> <span class="tk-c">// one of 14 roles</span>
-  <span class="tk-k">"producer_family"</span><span class="tk-p">:</span> <span class="tk-s">"glm"</span><span class="tk-p">,</span>      <span class="tk-c">// true model family</span>
+  <span class="tk-k">"lane"</span><span class="tk-p">:</span>            <span class="tk-s">"main"</span><span class="tk-p">,</span>      <span class="tk-c">// 六档之一</span>
+  <span class="tk-k">"role"</span><span class="tk-p">:</span>           <span class="tk-s">"programmer"</span><span class="tk-p">,</span> <span class="tk-c">// 14 角色之一</span>
+  <span class="tk-k">"producer_family"</span><span class="tk-p">:</span> <span class="tk-s">"glm"</span><span class="tk-p">,</span>      <span class="tk-c">// 真实模型族</span>
   <span class="tk-k">"capability"</span><span class="tk-p">:</span>      <span class="tk-s">"rw"</span><span class="tk-p">,</span>         <span class="tk-c">// rw | ro</span>
   <span class="tk-k">"modality"</span><span class="tk-p">:</span>        <span class="tk-s">"text"</span><span class="tk-p">,</span>       <span class="tk-c">// text | image</span>
   <span class="tk-k">"source"</span><span class="tk-p">:</span>          <span class="tk-s">"auto"</span>        <span class="tk-c">// auto | user</span>
 <span class="tk-p">}</span></pre>
       </div>
       <ul class="checklist">
-        <li class="rv" data-d="4"><span><b>Protocol gate field-by-field validation</b> — missing or invalid is an immediate deny, the error carries the correct sample, and the main model fixes it by copying.</span></li>
-        <li class="rv" data-d="5"><span><b>producer_family hard constraint</b> — copilot / glm are pools, not families; compared against the shell family at review to enforce cross-family audit.</span></li>
-        <li class="rv" data-d="6"><span><b>Semantic linkage</b> — lane=review forces ro shells, modality=image forces vision shells, source=auto forbids paid fallback.</span></li>
-        <li class="rv" data-d="7"><span><b>Structured delegation</b> — the DELEGATION_V1 template ships with the package; delegation prompts are self-contained, cacheable and validatable.</span></li>
+        <li class="rv" data-d="4"><span><b>协议闸逐字段校验</b>——缺失或非法即 deny，报错附正确样例，主模型照抄即修复。</span></li>
+        <li class="rv" data-d="5"><span><b>producer_family 硬约束</b>——copilot / glm 是池不是族；复审时与壳 family 比对，落实异族审计。</span></li>
+        <li class="rv" data-d="6"><span><b>语义联动</b>——lane=review 强制 ro 壳、modality=image 强制视觉壳、source=auto 禁选付费兜底。</span></li>
+        <li class="rv" data-d="7"><span><b>结构化委派</b>——DELEGATION_V1 模板随包内置，委派 prompt 自包含、可缓存、可校验。</span></li>
       </ul>
     </div>
   </div>
@@ -476,15 +476,15 @@ ROUTE_META <span class="tk-p">{</span>
 <!-- S10 BANNER -->
 <section class="slide">
   <div class="inner">
-    <div class="kicker a rv" data-d="1">LIVE BANNER / Four-line banner</div>
-    <h2 class="title rv" data-d="2">The dispatch basis, <span class="grad">live and visible every turn</span></h2>
-    <p class="sub rv" data-d="3">The system.transform hook injects into the system prompt every turn — the dispatcher always decides on the freshest facts.</p>
+    <div class="kicker a rv" data-d="1">LIVE BANNER / 四行横幅</div>
+    <h2 class="title rv" data-d="2">调度依据，<span class="grad">每轮实时可见</span></h2>
+    <p class="sub rv" data-d="3">system.transform 钩子每轮注入系统提示——调度员永远在最新事实之上做决策。</p>
     <div class="bannerbox">
-      <div class="brow b1 rv" data-d="3"><div class="bl">[Routing]</div><div class="bt">economy: glm-53f-low→ds-v4fv-off <span class="hl-c">|</span> mechanical: glm-53f-high→ds-v4fv-off <span class="hl-c">|</span> main: ds-v4p-high <span class="hl-c">|</span> hard: ds-v4p-max …</div></div>
-      <div class="brow b2 rv" data-d="4"><div class="bl">[Watermark]</div><div class="bt">GLM 5h window <span class="hl-e">23%</span> weekly <span class="hl-e">7%</span> <span class="hl-v">(refresh 09-04 10:00)</span> <span class="hl-c">|</span> Copilot credits unlimited used 3885 <span class="hl-c">|</span> <span class="hl-a">tip: push hard tasks to glm, save credits for key work</span></div></div>
-      <div class="brow b3 rv" data-d="5"><div class="bl">[Limits]</div><div class="bt">down: <span class="hl-e">none</span> <span class="hl-c">|</span> reviewer must be cross-family <span class="hl-v">(producer family ≠ shell family)</span> <span class="hl-c">|</span> DeepSeek tail fallback only</div></div>
-      <div class="brow b4 rv" data-d="6"><div class="bl">[Update]</div><div class="bt">prompts an upgrade when a new plugin version is available <span class="hl-c">—</span> can be disabled via banner.enabled</div></div>
-      <p class="banner-cap rv" data-d="7">The banner is the "dispatch basis" — <b>the roster and six-lane chains follow the three live system-prompt lines</b>; the main model never needs to memorize static config.</p>
+      <div class="brow b1 rv" data-d="3"><div class="bl">[路由]</div><div class="bt">economy: glm-53f-low→ds-v4fv-off <span class="hl-c">|</span> mechanical: glm-53f-high→ds-v4fv-off <span class="hl-c">|</span> main: ds-v4p-high <span class="hl-c">|</span> hard: ds-v4p-max …</div></div>
+      <div class="brow b2 rv" data-d="4"><div class="bl">[水位]</div><div class="bt">GLM 5h窗 <span class="hl-e">23%</span> 周 <span class="hl-e">7%</span> <span class="hl-v">(09-04 10:00刷新)</span> <span class="hl-c">|</span> Copilot 积分不限量 已用3885 <span class="hl-c">|</span> <span class="hl-a">建议: 攻坚改glm、积分留给关键主力</span></div></div>
+      <div class="brow b3 rv" data-d="5"><div class="bl">[限制]</div><div class="bt">down: <span class="hl-e">无</span> <span class="hl-c">|</span> reviewer 须异族 <span class="hl-v">(producer family ≠ 壳 family)</span> <span class="hl-c">|</span> DeepSeek 仅链尾兜底</div></div>
+      <div class="brow b4 rv" data-d="6"><div class="bl">[更新]</div><div class="bt">插件新版本可用时提示升级 <span class="hl-c">—</span> 可经 banner.enabled 一键关闭</div></div>
+      <p class="banner-cap rv" data-d="7">横幅即「调度依据」——<b>清单与六档链以系统提示实时三行为准</b>，主模型无需记忆任何静态配置。</p>
     </div>
   </div>
 </section>
@@ -492,13 +492,13 @@ ROUTE_META <span class="tk-p">{</span>
 <!-- S11 SELF-HEAL -->
 <section class="slide">
   <div class="inner">
-    <div class="kicker r rv" data-d="1">SELF-HEALING / Self-healing data plane</div>
-    <h2 class="title rv" data-d="2">Probe · Breaker · <span class="grad">fail-open</span></h2>
-    <p class="sub rv" data-d="3">The data plane runs fully automatically: liveness, quota, pricing, breakers — no manual intervention.</p>
+    <div class="kicker r rv" data-d="1">SELF-HEALING / 自愈数据面</div>
+    <h2 class="title rv" data-d="2">探针 · 熔断 · <span class="grad">fail-open</span></h2>
+    <p class="sub rv" data-d="3">数据面全部自动运行：探活、配额、计价、熔断——无需任何人工干预。</p>
     <div class="heal">
-      <div class="healc glass h1 rv" data-d="3"><div class="ic">🛰️</div><h3>Probe matrix</h3><p>Sends real requests to the three pools to check liveness; the matrix is persisted with TTL 600s. A temporarily-down model needs no upkeep — the 10-minute refresh auto-moves it into the degradation chain.</p><div class="foot">model-matrix.json · probe/10min</div></div>
-      <div class="healc glass h2 rv" data-d="4"><div class="ic">🔥</div><h3>Breaker self-healing</h3><p>Failures are logged by the event hook; ≥2 failures in a 600s sliding window trip the shell for 600s — "breaker open during consecutive failures, auto-recovers in ~10 minutes".</p><div class="foot">routing.json · failures.log</div></div>
-      <div class="healc glass h3 rv" data-d="5"><div class="ic">🫀</div><h3>fail-open law</h3><p>Any hook exception only writes to stderr and never blocks the main flow; unknown quota is never hard-blocked, breaker and probe back each other up — <b style="color:var(--emerald)">the plugin never stalls your workflow</b>.</p><div class="foot">fail-open · zero-block</div></div>
+      <div class="healc glass h1 rv" data-d="3"><div class="ic">🛰️</div><h3>探针矩阵</h3><p>对三池发起真实请求探活，矩阵落盘 TTL 600s。模型临时 down 无需维护——10 分钟周期刷新，自动进降级链。</p><div class="foot">model-matrix.json · probe/10min</div></div>
+      <div class="healc glass h2 rv" data-d="4"><div class="ic">🔥</div><h3>熔断自愈</h3><p>执行失败由 event 钩子记账，600s 滑窗内 ≥2 败即熔断该壳 600s——「连续失败熔断中，约 10 分钟自动恢复」。</p><div class="foot">routing.json · failures.log</div></div>
+      <div class="healc glass h3 rv" data-d="5"><div class="ic">🫀</div><h3>fail-open 铁律</h3><p>任何钩子异常只写 stderr 绝不阻塞主流程；配额未知不硬拦、熔断器与探针互为兜底——<b style="color:var(--emerald)">插件永不卡死你的工作流</b>。</p><div class="foot">fail-open · zero-block</div></div>
     </div>
   </div>
 </section>
@@ -507,10 +507,10 @@ ROUTE_META <span class="tk-p">{</span>
 <section class="slide close">
   <div class="inner">
     <div class="kicker e rv" data-d="1" style="justify-content:center">GET STARTED</div>
-    <h2 class="rv" data-d="2">The advanced play for multi-subscribers:<br><span class="grad">every token spent where it counts</span></h2>
-    <p class="sub rv" data-d="3" style="max-width:720px">33 behavior-contract fixtures all green as the safety net · state directory fully persisted and auditable · any combination of three pools, credentials auto-skipped when absent</p>
+    <h2 class="rv" data-d="2">多订阅者的高级玩法：<br><span class="grad">让每一分 token 都花在刀刃上</span></h2>
+    <p class="sub rv" data-d="3" style="max-width:720px">33 项行为契约 fixture 全绿兜底 · 状态目录全量落盘可审计 · 三池任意组合、无凭证自动跳过</p>
     <div class="chips rv" data-d="4">
-      <span class="chip">Six cognitive lanes</span><span class="chip">Six deterministic gates</span><span class="chip">Four hooks, full lifecycle</span><span class="chip">Probe + breaker self-healing</span><span class="chip">Cross-family review enforced</span>
+      <span class="chip">六档认知分层</span><span class="chip">六闸确定性拦截</span><span class="chip">四钩子全生命周期</span><span class="chip">探针熔断自愈</span><span class="chip">强制异族复审</span>
     </div>
     <div class="cmd rv" data-d="5"><span class="ps">$</span> npm install opencode-switchman<span style="opacity:.4;margin:0 4px">·</span>plugin: ["opencode-switchman"]</div>
   </div>
