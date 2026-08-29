@@ -36,7 +36,9 @@
     "build": "bun run gen:shells && bun build src/index.ts --target=node --format=esm --outfile=dist/opencode-switchman.js",
     "prepublishOnly": "bun install --frozen-lockfile && bun test && bun run build",
     "pack": "bun run build && npm pack",
-    "deploy": "bun run build && cp dist/opencode-switchman.js ~/.config/opencode/plugins/opencode-switchman.js"
+    "mode:local": "bun run build && bun scripts/plugin-mode.ts local",
+    "mode:prod": "bun scripts/plugin-mode.ts prod",
+    "deploy": "bun run mode:local"
   },
   "devDependencies": {
     "@opencode-ai/plugin": "latest",
