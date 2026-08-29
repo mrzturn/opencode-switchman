@@ -255,7 +255,10 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
   .brow .bl{justify-content:flex-start;min-height:40px;padding:9px 14px;border-right:0;border-bottom:1px solid rgba(148,180,255,.12)}
   .brow .bt{font-size:12px;padding:12px 14px;white-space:nowrap}
   .codebox pre{font-size:12px;padding:16px;line-height:1.85}
-  .mxnaming{font-size:12px;white-space:nowrap}
+  /* [2026-08-29]-[修复：壳名公式 nowrap 撑爆网格最小宽度（英文版整行更长→右侧整体溢出）——
+     移动端允许换行+网格子项 min-width:0 防最小内容宽度传导；中文版本就放得下，视觉不变] */
+  .mxnaming{font-size:12px;white-space:normal;line-height:2}
+  .mxwrap>div{min-width:0}
 }
 @media (max-width:640px){
   .slide{padding:6vh 5vw 72px}
