@@ -300,6 +300,17 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
 <div class="hint">← → / 滑动翻页 · 首尾循环</div>
 
 <!-- S1 COVER -->
+<section class="slide close">
+  <div class="inner">
+    <div class="kicker e rv" data-d="1" style="justify-content:center">GET STARTED</div>
+    <h2 class="rv" data-d="2">多订阅者的高级玩法：<br><span class="grad">让每一分 token 都花在刀刃上</span></h2>
+    <p class="sub rv" data-d="3" style="max-width:720px">75 项行为契约 fixture 全绿兜底 · 状态目录全量落盘可审计 · 三池任意组合、无凭证自动跳过</p>
+    <div class="chips rv" data-d="4">
+      <span class="chip">六档认知分层</span><span class="chip">六闸确定性拦截</span><span class="chip">四钩子全生命周期</span><span class="chip">探针熔断自愈</span><span class="chip">强制异族复审</span>
+    </div>
+    <div class="cmd rv" data-d="5"><span class="ps">$</span> npm install opencode-switchman<span style="opacity:.4;margin:0 4px">·</span>plugin: ["opencode-switchman"]</div>
+  </div>
+</section>
 <section class="slide cover on">
   <div class="matrixrain" id="rain"></div>
   <div class="inner">
@@ -524,17 +535,6 @@ ROUTE_META <span class="tk-p">{</span>
 </section>
 
 <!-- S12 CLOSE -->
-<section class="slide close">
-  <div class="inner">
-    <div class="kicker e rv" data-d="1" style="justify-content:center">GET STARTED</div>
-    <h2 class="rv" data-d="2">多订阅者的高级玩法：<br><span class="grad">让每一分 token 都花在刀刃上</span></h2>
-    <p class="sub rv" data-d="3" style="max-width:720px">33 项行为契约 fixture 全绿兜底 · 状态目录全量落盘可审计 · 三池任意组合、无凭证自动跳过</p>
-    <div class="chips rv" data-d="4">
-      <span class="chip">六档认知分层</span><span class="chip">六闸确定性拦截</span><span class="chip">四钩子全生命周期</span><span class="chip">探针熔断自愈</span><span class="chip">强制异族复审</span>
-    </div>
-    <div class="cmd rv" data-d="5"><span class="ps">$</span> npm install opencode-switchman<span style="opacity:.4;margin:0 4px">·</span>plugin: ["opencode-switchman"]</div>
-  </div>
-</section>
 
 <script>
 const slides=[...document.querySelectorAll('.slide')];
@@ -552,9 +552,7 @@ function go(n){
 addEventListener('keydown',e=>{
   if(['ArrowRight','ArrowDown',' ','PageDown','Enter'].includes(e.key)){e.preventDefault();go(i+1)}
   if(['ArrowLeft','ArrowUp','PageUp'].includes(e.key)){e.preventDefault();go(i-1)}
-  if(e.key==='Home')document.getElementById('prev').addEventListener('click',e=>{e.stopPropagation();go(i-1)});
-document.getElementById('next').addEventListener('click',e=>{e.stopPropagation();go(i+1)});
-go(0); if(e.key==='End')go(slides.length-1);
+  if(e.key==='Home')go(0); if(e.key==='End')go(slides.length-1);
 });
 const coarse=matchMedia('(pointer:coarse)').matches;
 if(!coarse)addEventListener('click',e=>{if(!e.target.closest('.dots'))go(i+1)});
@@ -568,6 +566,8 @@ for(let k=0;k<52;k++){const c=document.createElement('div');c.className='mcell'+
 const rain=document.getElementById('rain');
 const glyphs=['0','1','{','}','→','λ','Σ','#','glm','ds','52','mx'];
 for(let k=0;k<26;k++){const s=document.createElement('span');s.textContent=glyphs[k%glyphs.length];s.style.left=(Math.random()*100)+'%';s.style.animationDuration=(7+Math.random()*11)+'s';s.style.animationDelay=(-Math.random()*14)+'s';rain.appendChild(s)}
+document.getElementById('prev').addEventListener('click',e=>{e.stopPropagation();go(i-1)});
+document.getElementById('next').addEventListener('click',e=>{e.stopPropagation();go(i+1)});
 go(0);
 </script>
 </body>
