@@ -98,6 +98,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   const runMode = detectMode(options.matrix!.mode as MatrixModeOption, process.env.OPENCODE_CLIENT)
   const dynamic = runMode !== "legacy"
   let manager: MatrixManager | null = null
+  // [2026-08-29]-[fail-open 可见性：config 注入崩溃只写 stderr 时模型侧无感知，会对着空注册表盲派——
+  //  崩溃即置位，transform 向系统提示注入显式告警（自做/告知用户，别派发）]-
+  let configFailed = false
   const injectedNames = new Set<string>()
   const conflictNames = new Set<string>()
   let supersetDefs: ShellDefinition[] = []
@@ -479,6 +482,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         // [2026-08-29]-[配置钩子触发自更新检查]-[检查异步且失败不阻塞启动]
         refreshSelfUpdate().then((state) => { if (state?.outdated) clearBannerCache() }).catch(() => {})
       } catch (exc) {
+        configFailed = true
         console.error(`[opencode-switchman] config 钩子 fail-open: ${exc}`)
       }
     },
@@ -510,6 +514,10 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             const agent = sessionAgent.get(input.sessionID) ?? ""
             if (/-mx-/.test(agent) || agent === "title" || agent === "compaction" || agent === "summary") return
           }
+        }
+        // [2026-08-29]-[fail-open 可见性：注入崩溃时显式告警——不派发，直接自做或告知用户]-
+        if (configFailed) {
+          output.system.push("[opencode-switchman] ⚠ 插件注入失败（壳/派发闸不可用）——本轮禁止 task 派发，直接自做或向用户说明后自做")
         }
         // [v1.2] 调度员规程随包内置：系统提示每轮注入（内存态、不可被本地文件改动丢失，
         // 与用户自己的全局/项目 AGENTS.md 拼接共存，互不覆盖）
