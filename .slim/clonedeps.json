@@ -1,0 +1,15 @@
+{
+  "version": "1.0.0",
+  "updatedAt": "2026-08-29T10:43:44.002639+08:00",
+  "dependencies": [
+    {
+      "name": "@opencode-ai/plugin",
+      "resolvedVersion": "dev (HEAD dc4449d)",
+      "repoUrl": "https://github.com/anomalyco/opencode.git",
+      "ref": "dc4449df0d52199704ea4989a5a993ebbc605612",
+      "path": ".slim/clonedeps/repos/anomalyco__opencode",
+      "packagePath": "packages/plugin",
+      "reason": "Plugin API source; plus monorepo internals (core/tui/app) for matrix-dynamic feature research"
+    }
+  ]
+}

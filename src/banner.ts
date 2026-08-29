@@ -22,6 +22,8 @@ export interface BannerInput {
   advice?: string | null
   update?: string | null
   dsLowWarnCny?: number
+  /** [2026-08-29]-[动态矩阵：[限制] 行追加 模式/watch/configStatus、restartRequired、models.dev 降级标注；缺省=legacy 原样] */
+  matrixInfo?: { mode: string; configStatus: string; watch: boolean; restartRequired?: string[]; degradedModels?: number } | null
 }
 
 function routeLine(lanes: Record<string, LaneResult> | null): string {
@@ -117,12 +119,21 @@ function levelLine(input: BannerInput): string {
   return `[水位] ${segs.join(" | ")}`
 }
 
-function limitLine(down: Set<string> | string[], unknownCount?: number): string {
+function limitLine(down: Set<string> | string[], unknownCount?: number, matrixInfo?: BannerInput["matrixInfo"]): string {
   const arr = Array.isArray(down) ? down : [...down]
   const names = arr.map((n) => (n.includes("-mx-") ? shortName(n) : n)).sort()
   const downTxt = names.length === 0 ? "无" : `${names.join("、")}（不可派发，deny 会附改派）`
   let line = `[限制] down: ${downTxt} | reviewer 须异族（producer family ≠ 壳 family，ROUTE_META 校验） | DeepSeek 仅链尾兜底`
   if (unknownCount && unknownCount > 0) line += ` | ${unknownCount} 个组合状态未知（不拦截）`
+  if (matrixInfo) {
+    line += ` | 矩阵: ${matrixInfo.mode}${matrixInfo.watch ? "·watch" : ""}/${matrixInfo.configStatus}`
+    if (matrixInfo.restartRequired && matrixInfo.restartRequired.length > 0) {
+      line += ` | 新 provider ${matrixInfo.restartRequired.join("、")} 待重启注册`
+    }
+    if (matrixInfo.degradedModels && matrixInfo.degradedModels > 0) {
+      line += ` | models.dev 缺元数据：${matrixInfo.degradedModels} 模型降级单档 off`
+    }
+  }
   return line
 }
 
@@ -131,7 +142,7 @@ export function buildBanner(input: BannerInput): string[] {
   const lines = [
     routeLine(input.lanes),
     levelLine(input),
-    limitLine(input.down, input.states ? countUnknown(input) : undefined),
+    limitLine(input.down, input.states ? countUnknown(input) : undefined, input.matrixInfo ?? undefined),
   ]
   if (input.update) lines.push(`[更新] ${input.update}`)
   return lines

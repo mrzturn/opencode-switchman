@@ -62,6 +62,23 @@ export function checkShell(
 
   // 闸1 注册表三态：enabled 唯一可派发；discovered=未探测面 deny；
   // disabled 按矩阵致因区分（down 才 deny，unknown/missing fail-open 放行+提示）
+  // [2026-08-29]-[动态矩阵闸1 拆三层：同名冲突/未激活在本层 deny（未注入层由 index.ts denyUninjected）]
+  const act = snap.activation
+  if (act && act.enabled) {
+    if (act.conflicts && act.conflicts.has(agent)) {
+      return { deny: `${agent} 与用户自定义同名 agent 冲突，不可派发（请改名或删除自定义 agent）${hint()}`, note: null }
+    }
+    if (act.activeShells && !act.activeShells.has(agent)) {
+      const restart = act.restartRequired.length > 0
+        ? `；新 provider（${act.restartRequired.join("、")}）壳注册需重启 opencode`
+        : ""
+      return {
+        // [2026-08-29]-[修复复审P2-文案口径：「实时」→「下一请求生效」（激活面变化对派发闸在下一次 tool 派发生效）]
+        deny: `${agent} 未激活（模型不在当前激活矩阵：在模型管理设为可见/加入 favorites/主会话切到该模型即可激活，下一请求生效${restart}）${hint()}`,
+        note: null,
+      }
+    }
+  }
   const status = String(shell.status)
   if (status !== "enabled") {
     const [mstat, mreason] = snap.matrix !== null ? matrixStatus(shell, snap.matrix) : ["unknown", ""]
@@ -159,4 +176,17 @@ export function checkShell(
 /** 未注册/非壳名 → fail-open（unknown 内置代理不受路由管辖） */
 export function noteUnknownAgent(agent: string): string {
   return `[opencode-switchman] unknown subagent_type='${agent}'：放行（不在壳清单，内置代理不受路由管辖）`
+}
+
+/** 壳命名形态判定（仅用于「未注入超集」deny 的形态识别；isShell 判定一律走注册表，禁启发式） */
+export function shellLikeName(agent: string): boolean {
+  return /^[a-z][a-z0-9]*-mx-[a-z0-9]+-[a-z]+(-ro)?$/.test(agent)
+}
+
+/** [2026-08-29]-[动态矩阵闸1 第一层：壳名形态但未注入超集 → deny（模型未开/无凭证/新增 provider 需重启）] */
+export function denyUninjected(agent: string, restartRequired: string[], hint: string | null): string {
+  const restart = restartRequired.length > 0
+    ? `检测到超集外 provider（${restartRequired.join("、")}）：新增 provider 的壳注册需重启 opencode`
+    : "若为新增 provider，壳注册需重启 opencode"
+  return `${agent} 未注入壳超集（模型未开/无凭证，或为超集外新壳）${restart}${hint ? `，${hint}` : ""}`
 }

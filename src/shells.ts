@@ -2,6 +2,7 @@
 // [2026-08-28]-[tools 字段已 @deprecated→permission；thoughtLevel 无此字段→agent options 按 family 映射]-
 // [兜底两轨：config 注入若实测不生效，切换 writeShellFiles 落 ~/.config/opencode/agent/*.md]
 import type { ShellRegEntry } from "./types"
+import type { ShellDefinition } from "./catalog"
 
 // 思考档位 → agent options（family 分协议映射；off＝不附带推理参数）
 const CLAUDE_BUDGET: Record<string, number> = {
@@ -59,4 +60,23 @@ export function injectShells(cfg: Record<string, any>, registry: Record<string, 
     n++
   }
   return n
+}
+
+/** [2026-08-29]-[动态超集注入：全部超集壳一次性注入（cfg.agent 运行期不可变），
+ *  返回成功注入名与用户同名冲突名（同名冲突壳禁派发，闸1 deny）] */
+export function injectShellDefs(
+  cfg: Record<string, any>, defs: readonly ShellDefinition[],
+): { injected: Set<string>; conflicts: Set<string> } {
+  cfg.agent = cfg.agent ?? {}
+  const injected = new Set<string>()
+  const conflicts = new Set<string>()
+  for (const d of defs) {
+    if (cfg.agent[d.name]) {
+      conflicts.add(d.name) // 用户显式定义优先，但壳不可再作为委派目标
+      continue
+    }
+    cfg.agent[d.name] = shellAgentConfig({ ...d, status: "enabled", comboKey: d.matrixKey } as ShellRegEntry)
+    injected.add(d.name)
+  }
+  return { injected, conflicts }
 }

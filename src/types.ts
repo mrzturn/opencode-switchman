@@ -60,6 +60,30 @@ export interface ShellManifestEntry {
   matrixKey: string // provider|modelId|effort
 }
 
+// ---- 动态激活矩阵（v1.3）----
+export type ModelKey = `${string}/${string}`
+export type MatrixRunMode = "desktop" | "cli" | "legacy"
+export type MatrixConfigStatus = "ok" | "empty" | "unreadable"
+
+export interface ActivationState {
+  generation: number
+  mode: MatrixRunMode
+  configStatus: MatrixConfigStatus
+  configured: ModelKey[] // desktop: visibility==="show"；cli: favorite[]
+  sessionModels: ModelKey[] // 活跃非壳非内部会话的模型（多会话并集）
+  activeModels: ModelKey[] // configured ∪ sessionModels
+  activeShells: string[] // activeModels 展开的壳名
+  restartRequired: string[] // 超集外 providerID 去重（壳注册需重启）
+}
+
+// 闸1 动态三层注入（gates 快照可选字段；缺省＝legacy 路径不启用）
+export interface ActivationGateInfo {
+  enabled: boolean
+  activeShells: Set<string> | null
+  conflicts: Set<string> | null
+  restartRequired: string[]
+}
+
 // 运行时注册表视图 = 清单 × 探针矩阵 × 凭据在场
 export interface ShellRegEntry extends ShellManifestEntry {
   status: "enabled" | "disabled"
@@ -74,7 +98,13 @@ export interface MatrixEntry {
   latency_ms?: number | null
   checked_at?: string
 }
-export interface Matrix { combos: Record<string, MatrixEntry>; generated_at?: string | null }
+export interface Matrix {
+  combos: Record<string, MatrixEntry>
+  generated_at?: string | null
+  /** [2026-08-29]-[动态矩阵 v1.3：当前激活组合与目标代数（matrix-manager 维护）] */
+  active_keys?: string[]
+  target_generation?: number
+}
 
 // 熔断状态
 export interface Routing {
@@ -182,6 +212,7 @@ export interface GateSnapshot {
   routing: Routing | null
   quotaExhausted: Partial<Record<Pool, boolean>>
   costs?: (modelId: string) => number | null
+  activation?: ActivationGateInfo | null
 }
 
 // 插件 options（["opencode-switchman", {...}] 元组形式）
@@ -196,6 +227,12 @@ export interface DeepseekQuotaOptions {
   lowBalanceWarnCny?: number
 }
 export interface CopilotQuotaOptions { enabled?: boolean }
+export interface MatrixOptions {
+  /** auto（默认）=按 OPENCODE_CLIENT 判定 desktop/cli；app/tui 强制覆盖；legacy 完全走静态 shells.json */
+  mode?: "auto" | "app" | "tui" | "legacy"
+      /** 监听 opencode state 目录变更重算（默认 true；激活变化对派发闸「下一请求生效」，非实时改写已发请求） */
+  watch?: boolean
+}
 export interface SwitchmanOptions {
   quota?: { glm?: GlmQuotaOptions; deepseek?: DeepseekQuotaOptions; copilot?: CopilotQuotaOptions }
   cost?: { enabled?: boolean }
@@ -205,4 +242,5 @@ export interface SwitchmanOptions {
   /** 调度员规程系统提示注入（随包内置；关闭后依赖用户自行安装 AGENTS.md） */
   rules?: { enabled?: boolean }
   lanes?: Partial<Record<Lane, string[]>>
+  matrix?: MatrixOptions
 }

@@ -59,3 +59,10 @@
 - fixture：opencode-switchman 仓库 `bun test`（全绿＝行为契约基线，27+ 项）。
 - 状态目录：`~/.config/opencode/opencode-switchman/`（shells.json / model-matrix.json / routing.json / failures.log / *-quota.json / costs.json）。
 - 矩阵重生成：`bun run gen:shells`（启用面变化时）；探针/配额/熔断自动运行，无需人工干预。
+
+## Cloned Dependency Source
+
+Read-only dependency source repositories are available under
+`.slim/clonedeps/repos/` for inspection. Do not edit these clones.
+
+- `.slim/clonedeps/repos/anomalyco__opencode/` - opencode monorepo at `dc4449d` (shallow); plugin API (packages/plugin), core runtime, TUI and app internals for researching shell-matrix dynamic update mechanics.

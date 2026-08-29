@@ -23,6 +23,10 @@ export const paths = () => {
     copilotQuota: join(dir, "copilot-quota.json"),
     dsQuota: join(dir, "ds-balance.json"),
     costs: join(dir, "costs.json"),
+    // [2026-08-29]-[动态矩阵 v1.3 新增状态文件]
+    modelCatalog: join(dir, "model-catalog.json"),
+    shellSuperset: join(dir, "shell-superset.json"),
+    activeMatrix: join(dir, "active-matrix.json"),
   }
 }
 
@@ -52,15 +56,26 @@ export function readJson<T>(path: string): T | null {
   }
 }
 
+// [2026-08-29]-[修复复审P1-写入竞态：临时文件名唯一化（pid+计数器），并发写不得互踩 tmp 再 rename 错文件]
+let tmpCounter = 0
 export function writeJsonAtomic(path: string, obj: unknown): void {
   try {
     mkdirSync(path.slice(0, path.lastIndexOf("/")), { recursive: true })
   } catch { /* fail-open */ }
-  const tmp = `${path}.tmp.${process.pid}`
+  const tmp = `${path}.tmp.${process.pid}.${++tmpCounter}`
   try {
     writeFileSync(tmp, JSON.stringify(obj, null, 2))
     renameSync(tmp, path)
   } catch { /* fail-open */ }
+}
+
+// [2026-08-29]-[修复复审P1-写入竞态：同文件异步读改写串行化（简单互斥队列），并发不丢更新]
+const pathLocks = new Map<string, Promise<unknown>>()
+export function withPathLock<T>(path: string, fn: () => T | Promise<T>): Promise<T> {
+  const prev = pathLocks.get(path) ?? Promise.resolve()
+  const run = prev.then(fn, fn) // 前序失败不阻断后续
+  pathLocks.set(path, run.then(() => undefined, () => undefined))
+  return run
 }
 
 export function fileMtime(path: string): number {
@@ -149,14 +164,19 @@ export function buildRegistry(
   return out
 }
 
-/** 运行时上下文装配（文件读全部在此，纯函数层不碰 IO） */
-export function loadContext(options: SwitchmanOptions, credentials: RuntimeContext["credentials"]): RuntimeContext {
+/** 运行时上下文装配（文件读全部在此，纯函数层不碰 IO；manifestOverride=动态超集清单视图） */
+export function loadContext(
+  options: SwitchmanOptions,
+  credentials: RuntimeContext["credentials"],
+  manifestOverride?: { shells: ShellManifestEntry[]; lanes: Record<string, string[]> } | null,
+): RuntimeContext {
   const routing = loadRouting()
   try {
     cleanExpired(routing)
   } catch { /* fail-open */ }
+  const manifest = manifestOverride ?? loadManifest()
   return {
-    manifest: loadManifest(),
+    manifest,
     matrix: loadMatrix(),
     routing,
     options,
@@ -169,6 +189,13 @@ export function laneShells(ctx: RuntimeContext, lane: string): string[] {
   if (Array.isArray(custom) && custom.length > 0) return custom
   const l = (ctx.manifest.lanes as any)[lane]
   return Array.isArray(l) ? l : []
+}
+
+/** 动态超集清单（config 钩子落盘 shell-superset.json；缺失/坏=null） */
+export function loadSupersetShells(): { shells: ShellManifestEntry[]; generated_at?: string } | null {
+  const data = readJson<{ shells?: unknown; generated_at?: string }>(paths().shellSuperset)
+  if (!data || !Array.isArray(data.shells) || data.shells.length === 0) return null
+  return { shells: data.shells as ShellManifestEntry[], generated_at: data.generated_at }
 }
 
 export function ensureStateDir(): void {
