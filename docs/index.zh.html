@@ -238,6 +238,10 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
 }
 @media (max-width:768px){
   .slide{padding:6.5vh 5vw 72px}
+  /* [2026-08-29]-[移动端长文本适配：英文不可断 token（命令/路径/型号名）撑破布局——
+     取消标题强制 <br>、长 token 允许断行；中英双页共享此规则] */
+  h1 br,h2 br,h3 br,.sub br{display:none}
+  h1,h2,h3,.sub,.cmd,.chip,code,td,th{overflow-wrap:anywhere;word-break:normal}
   .slide .inner{margin:0 auto}
   .quad,.layers,.lanes,.brain,.heal,.mxwrap,.codewrap,.hookflow{grid-template-columns:1fr;gap:14px}
   .mxstats{grid-template-columns:1fr;gap:12px}
@@ -317,18 +321,6 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
 <div class="navbtns"><button class="nv" id="prev" aria-label="previous">‹</button><button class="nv" id="next" aria-label="next">›</button></div>
 <div class="hint">← → / 滑动翻页 · 首尾循环</div>
 
-<!-- S1 COVER -->
-<section class="slide close">
-  <div class="inner">
-    <div class="kicker e rv" data-d="1" style="justify-content:center">GET STARTED</div>
-    <h2 class="rv" data-d="2">多订阅者的高级玩法：<br><span class="grad">让每一分 token 都花在刀刃上</span></h2>
-    <p class="sub rv" data-d="3" style="max-width:720px">124 项行为契约 fixture 全绿兜底 · 全供应商即插即用 · glm / deepseek / copilot 额度控制</p>
-    <div class="chips rv" data-d="4">
-      <span class="chip">六档认知分层</span><span class="chip">加权评分引擎</span><span class="chip">决策可追溯</span><span class="chip">失败隔离</span><span class="chip">自更新命令</span>
-    </div>
-    <div class="cmd rv" data-d="5"><span class="ps">$</span> npm install opencode-switchman<span style="opacity:.4;margin:0 4px">·</span>plugin: ["opencode-switchman"]</div>
-  </div>
-</section>
 <section class="slide cover on">
   <div class="matrixrain" id="rain"></div>
   <div class="inner">
@@ -549,6 +541,19 @@ ROUTE_META <span class="tk-p">{</span>
       <div class="healc glass h2 rv" data-d="4"><div class="ic">🔥</div><h3>分类 + 隔离</h3><p>失败归一为 rate_limit / quota / auth / not_found / server / network / unknown。实调失败隔离 10–30 分钟；连续 3 次 404 自动下线模型。</p><div class="foot">routing.json · failures.log</div></div>
       <div class="healc glass h3 rv" data-d="5"><div class="ic">⬆️</div><h3>自更新路径</h3><p>启动检查缓存 24h。prod 安装暴露 /switchman-update 静默升级并提示重启；/switchman-ignore 仅本会话有效，重启后恢复提示。</p><div class="foot">[更新] · commands</div></div>
     </div>
+  </div>
+</section>
+
+<!-- CLOSING -->
+<section class="slide close">
+  <div class="inner">
+    <div class="kicker e rv" data-d="1" style="justify-content:center">GET STARTED</div>
+    <h2 class="rv" data-d="2">多订阅者的高级玩法：<br><span class="grad">让每一分 token 都花在刀刃上</span></h2>
+    <p class="sub rv" data-d="3" style="max-width:720px">124 项行为契约 fixture 全绿兜底 · 全供应商即插即用 · glm / deepseek / copilot 额度控制</p>
+    <div class="chips rv" data-d="4">
+      <span class="chip">六档认知分层</span><span class="chip">加权评分引擎</span><span class="chip">决策可追溯</span><span class="chip">失败隔离</span><span class="chip">自更新命令</span>
+    </div>
+    <div class="cmd rv" data-d="5"><span class="ps">$</span> npm install opencode-switchman<span style="opacity:.4;margin:0 4px">·</span>plugin: ["opencode-switchman"]</div>
   </div>
 </section>
 

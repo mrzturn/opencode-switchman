@@ -238,6 +238,10 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
 }
 @media (max-width:768px){
   .slide{padding:6.5vh 5vw 72px}
+  /* [2026-08-29]-[移动端长文本适配：英文不可断 token（命令/路径/型号名）撑破布局——
+     取消标题强制 <br>、长 token 允许断行；中英双页共享此规则] */
+  h1 br,h2 br,h3 br,.sub br{display:none}
+  h1,h2,h3,.sub,.cmd,.chip,code,td,th{overflow-wrap:anywhere;word-break:normal}
   .slide .inner{margin:0 auto}
   .quad,.layers,.lanes,.brain,.heal,.mxwrap,.codewrap,.hookflow{grid-template-columns:1fr;gap:14px}
   .mxstats{grid-template-columns:1fr;gap:12px}
@@ -317,18 +321,6 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
 <div class="navbtns"><button class="nv" id="prev" aria-label="previous">‹</button><button class="nv" id="next" aria-label="next">›</button></div>
 <div class="hint">← → / swipe · loops</div>
 
-<!-- S1 COVER -->
-<section class="slide close">
-  <div class="inner">
-    <div class="kicker e rv" data-d="1" style="justify-content:center">GET STARTED</div>
-    <h2 class="rv" data-d="2">The advanced play for multi-subscribers:<br><span class="grad">every token spent where it counts</span></h2>
-    <p class="sub rv" data-d="3" style="max-width:720px">124 behavior-contract fixtures all green as the safety net · every opencode provider plugs in · glm / deepseek / copilot quota control</p>
-    <div class="chips rv" data-d="4">
-      <span class="chip">Six cognitive lanes</span><span class="chip">Weighted scoring engine</span><span class="chip">Traceable decisions</span><span class="chip">Failure isolation</span><span class="chip">Self-update commands</span>
-    </div>
-    <div class="cmd rv" data-d="5"><span class="ps">$</span> npm install opencode-switchman<span style="opacity:.4;margin:0 4px">·</span>plugin: ["opencode-switchman"]</div>
-  </div>
-</section>
 <section class="slide cover on">
   <div class="matrixrain" id="rain"></div>
   <div class="inner">
@@ -549,6 +541,19 @@ ROUTE_META <span class="tk-p">{</span>
       <div class="healc glass h2 rv" data-d="4"><div class="ic">🔥</div><h3>Classify + isolate</h3><p>Failures become rate_limit / quota / auth / not_found / server / network / unknown. Real-dispatch failures isolate a combo for 10–30 minutes; 3 consecutive 404s retire a model.</p><div class="foot">routing.json · failures.log</div></div>
       <div class="healc glass h3 rv" data-d="5"><div class="ic">⬆️</div><h3>Self-update path</h3><p>Startup checks cache for 24h. Production installs expose /switchman-update for silent upgrade plus restart notice; /switchman-ignore is session-scoped and resets on restart.</p><div class="foot">[更新] · commands</div></div>
     </div>
+  </div>
+</section>
+
+<!-- CLOSING -->
+<section class="slide close">
+  <div class="inner">
+    <div class="kicker e rv" data-d="1" style="justify-content:center">GET STARTED</div>
+    <h2 class="rv" data-d="2">The advanced play for multi-subscribers:<br><span class="grad">every token spent where it counts</span></h2>
+    <p class="sub rv" data-d="3" style="max-width:720px">124 behavior-contract fixtures all green as the safety net · every opencode provider plugs in · glm / deepseek / copilot quota control</p>
+    <div class="chips rv" data-d="4">
+      <span class="chip">Six cognitive lanes</span><span class="chip">Weighted scoring engine</span><span class="chip">Traceable decisions</span><span class="chip">Failure isolation</span><span class="chip">Self-update commands</span>
+    </div>
+    <div class="cmd rv" data-d="5"><span class="ps">$</span> npm install opencode-switchman<span style="opacity:.4;margin:0 4px">·</span>plugin: ["opencode-switchman"]</div>
   </div>
 </section>
 
