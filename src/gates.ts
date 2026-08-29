@@ -105,13 +105,24 @@ export function checkShell(
     }
   }
 
-  // 闸3 熔断：down_agents 命中壳名或 comboKey（600s 窗 × 2 次）
+  // 闸2.5：模型已退休（连续 404 永久移出候选，重启清空；仅 dynamic 注入 retiredModels）
+  // [2026-08-29]-[失败分类：厂商无关，provider/modelId 命中即 deny，不再依赖池硬编码]
+  if (snap.retiredModels?.has(`${shell.provider}/${shell.modelId}`)) {
+    return { deny: `${agent} 不可用（模型已下线：连续 404，请改派其他候选）${hint()}`, note: null }
+  }
+
+  // 闸3：探针可用但实调失败的进程内隔离（不落盘，30 分钟/重启后恢复）
+  if (shell.comboKey && snap.realFailedCombos?.has(shell.comboKey)) {
+    return { deny: `${agent} 暂不可用（探针可用但实际委派失败，30 分钟后自动解锁或重启 opencode 恢复）${hint()}`, note: null }
+  }
+
+  // 闸4 熔断：down_agents 命中壳名或 comboKey（600s 窗 × 2 次）
   const down = snap.routing?.down_agents
   if (down && ((agent in down) || (shell.comboKey && shell.comboKey in down))) {
     return { deny: `${agent} 暂不可用（连续失败熔断中，约 10 分钟自动恢复）${hint()}`, note: null }
   }
 
-  // 闸4 池耗尽（只认调用必失败；unknown/高水位不拦）
+  // 闸5 池耗尽（只认调用必失败；unknown/高水位不拦）
   const pool = shell.pool
   if (snap.quotaExhausted?.[pool]) {
     const why = pool === "glm"
@@ -120,7 +131,7 @@ export function checkShell(
     return { deny: `${agent} 暂不可用（${why}）${hint()}`, note: null }
   }
 
-  // 闸5 ROUTE_META 硬闸：行缺失/格式坏/字段非法/安全字段缺失一律 deny 附样例+实时候选
+  // 闸6 ROUTE_META 硬闸：行缺失/格式坏/字段非法/安全字段缺失一律 deny 附样例+实时候选
   if (metaErr !== null) {
     const fallbackLane = laneForCheck(agent, null, snap.lanes)
     let fallback: string
@@ -138,7 +149,7 @@ export function checkShell(
   const source = meta!.source
   const role = meta!.role
 
-  // 闸6 语义校验
+  // 闸7 语义校验
   if (role === "reviewer") {
     const pf = meta!.producer_family
     if (pf && pf === String(shell.family)) {

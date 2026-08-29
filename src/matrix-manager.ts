@@ -33,6 +33,9 @@ export interface MatrixManagerOptions {
   pollMs?: number
   /** 重算回调：清横幅缓存＋提交探针差集；source 区分触发面（config=可见集/favorites 变化） */
   onRecompute?: (state: ActivationState, newTargets: string[], source: RecomputeSource) => void
+  /** [2026-08-29]-[复审P1-1：被动侧文件变更被 sameActivation 短路吞掉导致反向镜像不触发——
+   *  debounce 回调里无条件调用（短路也调）；syncIfDiverged 同集 no-op，写回后收敛无环] */
+  onConfigSync?: () => void
 }
 
 /** 重算触发源：config=配置面文件变化（desktop 可见集开关/TUI favorites 增删）；
@@ -251,6 +254,11 @@ export class MatrixManager {
       this.debounceTimer = null
       this.recomputeWithRetry().catch((exc) => console.error(`[opencode-switchman] 重算 fail-open: ${exc}`))
       this.refreshMtimes()
+      try {
+        this.opts.onConfigSync?.()
+      } catch (exc) {
+        console.error(`[opencode-switchman] 配置面同步 fail-open: ${exc}`)
+      }
     }, delay ?? this.opts.debounceMs)
     unref(this.debounceTimer)
   }

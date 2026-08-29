@@ -10,6 +10,63 @@ import type { Routing, ShellRegEntry } from "./types"
 
 const TAIL_BYTES = 262144
 const NOT_FOUND_HINTS = ["not found", "not_found", "未找到", "无法找到"]
+export const REAL_FAIL_TTL_MS = 1_800_000
+// [2026-08-29]-[失败分类：瞬时 429 用短 TTL，区别于真失败长 TTL——避免限流误伤 30 分钟]
+export const RATE_LIMIT_TTL_MS = 600_000
+const realFailedCombos = new Map<string, number>()
+
+/** 探针成功而实调失败的短期内存隔离；重启自然清空。ttlMs 可选（限流用短 TTL）。 */
+export function markRealFailure(comboKey: string, now = Date.now(), ttlMs = REAL_FAIL_TTL_MS): void {
+  if (comboKey) realFailedCombos.set(comboKey, now + ttlMs)
+}
+
+// ---- 模型退休（厂商无关：连续 404 类失败 → 永久移出候选，重启清空）----
+const NOT_FOUND_WINDOW_MS = 3_600_000
+const NOT_FOUND_THRESHOLD = 3
+const notFoundHits = new Map<string, number[]>() // modelKey -> 1h 窗内命中时间戳
+const retiredModels = new Set<string>()
+
+/**
+ * 记一次模型下线类（404）失败：1h 滑窗内连续 ≥3 次 → 加入 retired 集（不再过期，重启清空）。
+ * 「连续」以 1h 窗内累计近似（非严格无间隔判定）。返回是否恰好本次触发退休。
+ */
+export function noteModelNotFound(modelKey: string, now = Date.now()): boolean {
+  if (!modelKey || retiredModels.has(modelKey)) return false
+  const hits = (notFoundHits.get(modelKey) ?? []).filter((t) => now - t <= NOT_FOUND_WINDOW_MS)
+  hits.push(now)
+  notFoundHits.set(modelKey, hits)
+  if (hits.length >= NOT_FOUND_THRESHOLD) {
+    retiredModels.add(modelKey)
+    return true
+  }
+  return false
+}
+
+export function isModelRetired(modelKey: string): boolean {
+  return retiredModels.has(modelKey)
+}
+
+export function retiredModelKeys(): string[] {
+  return [...retiredModels]
+}
+
+/** 滤掉已退休模型的壳（供 baseChainFor 排除候选）。 */
+export function filterRetiredShells<T extends { provider: string; modelId: string }>(shells: readonly T[]): T[] {
+  return shells.filter((s) => !retiredModels.has(`${s.provider}/${s.modelId}`))
+}
+
+/** 惰性清理后返回仍被实调失败隔离的组合。 */
+export function realFailedComboKeys(now = Date.now()): Set<string> {
+  for (const [key, expiresAt] of realFailedCombos) {
+    if (expiresAt <= now) realFailedCombos.delete(key)
+  }
+  return new Set(realFailedCombos.keys())
+}
+
+/** 测试与消费层共用的组合命中判定。 */
+export function isRealFailedCombo(comboKey: string | undefined, now = Date.now()): boolean {
+  return Boolean(comboKey && realFailedComboKeys(now).has(comboKey))
+}
 
 export function isNotFound(reason: string): boolean {
   const low = reason.toLowerCase()

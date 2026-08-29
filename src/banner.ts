@@ -23,7 +23,7 @@ export interface BannerInput {
   update?: string | null
   dsLowWarnCny?: number
   /** [2026-08-29]-[动态矩阵：[限制] 行追加 模式/watch/configStatus、restartRequired、models.dev 降级标注；缺省=legacy 原样] */
-  matrixInfo?: { mode: string; configStatus: string; watch: boolean; restartRequired?: string[]; degradedModels?: number } | null
+  matrixInfo?: { mode: string; configStatus: string; watch: boolean; restartRequired?: string[]; degradedModels?: number; retiredModels?: number } | null
 }
 
 function routeLine(lanes: Record<string, LaneResult> | null): string {
@@ -132,6 +132,9 @@ function limitLine(down: Set<string> | string[], unknownCount?: number, matrixIn
     }
     if (matrixInfo.degradedModels && matrixInfo.degradedModels > 0) {
       line += ` | models.dev 缺元数据：${matrixInfo.degradedModels} 模型降级单档 off`
+    }
+    if (matrixInfo.retiredModels && matrixInfo.retiredModels > 0) {
+      line += `、${matrixInfo.retiredModels} 模型已下线`
     }
   }
   return line

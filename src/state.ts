@@ -66,7 +66,10 @@ export function writeJsonAtomic(path: string, obj: unknown): void {
   try {
     writeFileSync(tmp, JSON.stringify(obj, null, 2))
     renameSync(tmp, path)
-  } catch { /* fail-open */ }
+  } catch (exc) {
+    // [2026-08-29]-[复审P2-写失败静默无痕：调用方无法感知未落盘，统一在此留痕]-[不改变 fail-open 语义]
+    console.error(`[opencode-switchman] 原子写失败（fail-open）: ${path}: ${exc}`)
+  }
 }
 
 // [2026-08-29]-[修复复审P1-写入竞态：同文件异步读改写串行化（简单互斥队列），并发不丢更新]

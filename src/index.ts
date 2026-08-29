@@ -23,7 +23,11 @@ import { costOf, refreshCosts, costsStale } from "./cost"
 import { refreshMatrixIfStale, refreshActiveMatrixIfStale, probeKeys } from "./probe"
 import { injectShells, injectShellDefs } from "./shells"
 import { buildBanner } from "./banner"
-import { recordFailure, cleanRoutingExpired } from "./breaker"
+import {
+  recordFailure, cleanRoutingExpired, markRealFailure, realFailedComboKeys,
+  REAL_FAIL_TTL_MS, RATE_LIMIT_TTL_MS, noteModelNotFound, retiredModelKeys, filterRetiredShells,
+} from "./breaker"
+import { classifyFailure } from "./failclass"
 import { LANE_ORDER } from "./types"
 import type { SwitchmanOptions, Lane, LaneResult, Pool, ShellRegEntry, ModelKey } from "./types"
 import { detectMode, readConfigured, normalizeProviderListResponse } from "./activation"
@@ -32,6 +36,7 @@ import type { MatrixModeOption } from "./activation"
 //  opencode 会把它们当插件工厂调用产生 null hooks，炸掉 config 钩子与 provider.list]-[修复启动报错]
 import { chatParamsModelKey, sessionDeletedId, sessionCreatedInfo } from "./helpers"
 import { MatrixManager } from "./matrix-manager"
+import { syncIfDiverged } from "./sync"
 import { laneBaseChain } from "./lane-policy"
 import {
   buildShells, loadCatalog, bundledModelIndex, isConversational, toManifestEntry,
@@ -97,6 +102,14 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
 
   function clearBannerCache(): void {
     bannerCache = null
+  }
+
+  function routingWithRealFailures(routing: ReturnType<typeof loadContext>["routing"]) {
+    // [2026-08-29]-[复审P2-5：legacy 内存标记恒空仍加守卫，与新闸写入点一致防未来引入非 dynamic 写入路径]-
+    if (!dynamic) return routing
+    const down = { ...routing.down_agents }
+    for (const combo of realFailedComboKeys()) down[combo] = "探针可用但实际委派失败（30 分钟内存隔离）"
+    return { ...routing, down_agents: down }
   }
 
   function collectCreds(cfg: Record<string, any>): void {
@@ -264,7 +277,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     if (!dynamic || !manager) return laneShells(loadContext(options, creds as any), lane)
     const m = loadManifest()
     const attrs = new Map<string, { effort: string; capability: string; vision: boolean; pool: string }>()
-    for (const s of (dynamicManifest() ?? m).shells) {
+    // [2026-08-29]-[失败分类：dynamic 先滤已退休模型壳，避免连续 404 的模型仍进改派候选]
+    for (const s of filterRetiredShells((dynamicManifest() ?? m).shells)) {
       attrs.set(s.name, { effort: s.effort, capability: s.capability, vision: s.vision, pool: String(s.pool) })
     }
     return laneBaseChain(lane, {
@@ -290,18 +304,19 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       for (const lane of LANE_ORDER) {
         try {
           lanes[lane] = computeLane(lane, baseChainFor(lane), {
-            registry, matrix: ctx.matrix?.combos ?? null, routing: ctx.routing,
+            registry, matrix: ctx.matrix?.combos ?? null, routing: routingWithRealFailures(ctx.routing),
             quotaExhausted: quotaEx, states, glmPeak: peak.glmPeak, costs,
           })
         } catch { /* 单档失败不影响其余档 */ }
       }
-      const down = new Set(Object.keys(ctx.routing.down_agents))
+      const down = new Set(Object.keys(routingWithRealFailures(ctx.routing).down_agents))
       // [2026-08-29]-[动态矩阵：[路由] 只显示激活候选；[限制] 追加 模式/watch/configStatus/restartRequired/降级标注]
       const matrixInfo = dynamic && manager ? {
         mode: runMode, configStatus: manager.snapshot().configStatus,
         watch: options.matrix!.watch === true,
         restartRequired: manager.snapshot().restartRequired,
         degradedModels: degradedModelCount,
+        retiredModels: retiredModelKeys().length,
       } : undefined
       const lines = buildBanner({
         lanes: lanes as any,
@@ -352,7 +367,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       const cand = firstCandidate(lane, lanes[lane] ?? [], {
         registry: buildRegistry(ctx),
         matrix: ctx.matrix?.combos ?? null,
-        routing: ctx.routing,
+        routing: routingWithRealFailures(ctx.routing),
         quotaExhausted: quotaExhaustedFlags(),
       } as any, agent)
       return cand ? `请改派 ${cand}` : "降级链已尽：向用户声明原因并给 2 个可选项"
@@ -408,12 +423,16 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           watchEnabled: options.matrix!.watch === true,
           onRecompute: (state, newTargets, source) => {
             clearBannerCache()
+            if (source === "config") syncIfDiverged(stateRoot, runMode as "desktop" | "cli")
             // [2026-08-29]-[配置面变化即探：desktop 可见集开关/TUI favorites 增删（config 源）全量重探
             //  激活组合、不等 TTL；session/startup 源维持仅探新增组合；10min 周期刷新保持不变]-
             const targets = source === "config" ? (manager?.activeMatrixKeys() ?? newTargets) : newTargets
             if (targets.length > 0) probeKeys(targets, probeEndpoints()).catch(() => {})
             console.error(`[opencode-switchman] 激活矩阵已重算（gen=${state.generation}，激活壳 ${state.activeShells.length}，探针 ${source}×${targets.length}）`)
           },
+          // [2026-08-29]-[复审P1-1：被动侧文件变更被 sameActivation 短路时 onRecompute 不触发——
+          //  debounce 尾部无条件同步（同集 no-op，无环）；onRecompute 里的 config 源同步保留为变更时的即时路径]-
+          onConfigSync: () => syncIfDiverged(stateRoot, runMode as "desktop" | "cli"),
         })
         manager.recompute(configured)
         manager.start()
@@ -491,11 +510,14 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         const r = checkShell(agent, shell, output.args?.prompt, {
           registry,
           matrix: ctx.matrix?.combos ?? null,
-          routing: ctx.routing,
+          // [2026-08-29]-[功能1 仅动态矩阵：legacy 静态路径逐字节不变（tester 回归发现漏_gate）]-
+          routing: dynamic ? routingWithRealFailures(ctx.routing) : ctx.routing,
           quotaExhausted: quotaExhaustedFlags(),
           costs: options.cost!.enabled ? costOf : undefined,
           lanes: dynamicLaneMap(ctx),
           activation: activationGate,
+          realFailedCombos: dynamic ? realFailedComboKeys() : undefined,
+          retiredModels: dynamic ? new Set(retiredModelKeys()) : undefined,
         })
         if (r.note) console.error(r.note)
         if (r.deny) {
@@ -536,15 +558,35 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         }
         const agent = String(part.state?.input?.subagent_type ?? "").trim()
         if (!agent) return
-        const { registry } = currentContext()
+        const { ctx, registry } = currentContext()
         const reason = String(part.state?.error ?? part.state?.message ?? "派发失败").slice(0, 300)
-        const rec = recordFailure(agent, reason, registry)
+        const combo = registry[agent]?.comboKey
+        // [2026-08-29]-[失败分类：厂商无关分类，一次判定全程复用（瞬时 429 与真额度分离）]
+        const category = classifyFailure(reason)
+        // [2026-08-29]-[功能1 仅动态矩阵：legacy 维持原 recordFailure 熔断路径（tester 回归发现漏_gate）]-
+        const realFailed = dynamic && Boolean(combo && ctx.matrix?.combos[combo]?.status === "ok")
+        if (realFailed) {
+          // 限流用短 TTL（10 分钟自愈），真失败用默认长 TTL（30 分钟）
+          markRealFailure(combo!, undefined, category === "rate_limit" ? RATE_LIMIT_TTL_MS : REAL_FAIL_TTL_MS)
+          clearBannerCache()
+        }
+        const rec = realFailed ? null : recordFailure(agent, reason, registry)
         // Copilot 网关额度类错误 → 第二真值源置池耗尽（信任至 reset_date）
-        if (/429|quota|premium.*(limit|exhaust)|monthly.*limit/i.test(reason)) {
+        // [2026-08-29]-[失败分类：仅真 quota 判池耗尽，429 瞬时永不触发；非 copilot 池的 quota 不做池级
+        //  处理——探针 10min 会持续 down，横幅自然降级，30 分钟内存标记已覆盖]
+        if (category === "quota") {
           const shell = registry[agent]
           if (shell?.pool === "copilot") markCopilotGatewayExhausted(reason)
         }
-        if (rec.tripped) console.error(`[opencode-switchman] ${agent} 已熔断（600s）：${reason.slice(0, 80)}`)
+        // 模型下线类（连续 404）→ 退休移出候选
+        if (category === "not_found" && dynamic) {
+          const shell = registry[agent]
+          if (shell && noteModelNotFound(`${shell.provider}/${shell.modelId}`)) {
+            clearBannerCache()
+            console.error(`[opencode-switchman] 模型已下线（连续 404），已移出候选：${shell.provider}/${shell.modelId}`)
+          }
+        }
+        if (rec?.tripped) console.error(`[opencode-switchman] ${agent} 已熔断（600s）：${reason.slice(0, 80)}`)
       } catch (exc) {
         console.error(`[opencode-switchman] 记账 fail-open: ${exc}`)
       }

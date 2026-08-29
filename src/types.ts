@@ -213,6 +213,10 @@ export interface GateSnapshot {
   quotaExhausted: Partial<Record<Pool, boolean>>
   costs?: (modelId: string) => number | null
   activation?: ActivationGateInfo | null
+  /** 探针 ok 但实际委派失败的进程内短期隔离组合。 */
+  realFailedCombos?: ReadonlySet<string>
+  /** [2026-08-29]-[失败分类：连续 404 已退休模型集（provider/modelId），闸前 deny；仅动态矩阵注入] */
+  retiredModels?: ReadonlySet<string>
 }
 
 // 插件 options（["opencode-switchman", {...}] 元组形式）
