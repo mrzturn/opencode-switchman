@@ -244,6 +244,14 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
   h1,h2,h3,.sub,.cmd,.chip,code,td,th{overflow-wrap:anywhere;word-break:normal}
   .slide .inner{margin:0 auto}
   .quad,.layers,.lanes,.brain,.heal,.mxwrap,.codewrap,.hookflow{grid-template-columns:1fr;gap:14px}
+  /* [2026-08-29]-[英文文本较中文长约四成：六档卡片移动端收紧密度（min-height 归零+缩字号），
+     对齐中文版视觉密度；仅英文页，中文页不动] */
+  .lanes .lane{min-height:0;padding:18px 18px 16px}
+  .lanes .lane h3{font-size:16.5px;margin-bottom:6px}
+  .lanes .lane p{font-size:12.5px;line-height:1.6}
+  .lanes .lane .ln{margin-bottom:10px}
+  .lanes .lane .models{padding-top:10px}
+  .title{font-size:clamp(22px,6.4vw,30px)}
   .mxstats{grid-template-columns:1fr;gap:12px}
   .hookflow::before{display:none}
   .gate{grid-template-columns:42px 1fr;grid-template-areas:"gn name" "gn test" "gn act";gap:4px 14px;padding:13px 16px;border-radius:12px}
