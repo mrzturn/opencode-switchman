@@ -406,10 +406,13 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           stateRoot, mode: runMode, superset: supersetDefs,
           injectedNames, knownProviders,
           watchEnabled: options.matrix!.watch === true,
-          onRecompute: (state, newTargets) => {
+          onRecompute: (state, newTargets, source) => {
             clearBannerCache()
-            if (newTargets.length > 0) probeKeys(newTargets, probeEndpoints()).catch(() => {})
-            console.error(`[opencode-switchman] 激活矩阵已重算（gen=${state.generation}，激活壳 ${state.activeShells.length}，新增探针 ${newTargets.length}）`)
+            // [2026-08-29]-[配置面变化即探：desktop 可见集开关/TUI favorites 增删（config 源）全量重探
+            //  激活组合、不等 TTL；session/startup 源维持仅探新增组合；10min 周期刷新保持不变]-
+            const targets = source === "config" ? (manager?.activeMatrixKeys() ?? newTargets) : newTargets
+            if (targets.length > 0) probeKeys(targets, probeEndpoints()).catch(() => {})
+            console.error(`[opencode-switchman] 激活矩阵已重算（gen=${state.generation}，激活壳 ${state.activeShells.length}，探针 ${source}×${targets.length}）`)
           },
         })
         manager.recompute(configured)
@@ -428,7 +431,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         const sessionID = (input as any).sessionID as string | undefined
         const agent = (input as any).agent as string | undefined
         if (dynamic) {
-          if (manager?.noteChatParams(sessionID, agent, chatParamsModelKey(input))) manager.scheduleRecompute(50)
+          if (manager?.noteChatParams(sessionID, agent, chatParamsModelKey(input))) manager.scheduleRecompute(50, "session")
           return
         }
         if (sessionID && agent) sessionAgent.set(sessionID, agent)
@@ -521,7 +524,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         //  清理会话注册表（仅动态矩阵；非壳会话移除→重算）]
         if (dynamic && event.type === "session.deleted") {
           const sid = sessionDeletedId((event as any).properties)
-          if (sid && manager?.noteSessionDeleted(sid)) manager.scheduleRecompute(50)
+          if (sid && manager?.noteSessionDeleted(sid)) manager.scheduleRecompute(50, "session")
           return
         }
         if (event.type !== "message.part.updated") return

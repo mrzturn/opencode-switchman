@@ -571,6 +571,36 @@ describe("watch 集成", async () => {
       rmSync(TUI_MODEL, { force: true })
     }
   })
+  test("重算触发源透传：直调=startup、会话调度=session、watch/轮询=config（可见集开关/favorites 增删即探依据）", async () => {
+    rmSync(TUI_MODEL, { force: true })
+    rmSync(DESKTOP_DAT, { force: true })
+    const sources: string[] = []
+    const m = new MatrixManager({
+      stateRoot, mode: "cli", superset: SUP,
+      injectedNames: new Set(SUP.map((d) => d.name)),
+      knownProviders: new Set(SUP.map((d) => d.provider)),
+      watchEnabled: true, debounceMs: 60, pollMs: 200,
+      onRecompute: (_s, _t, source) => { sources.push(source) },
+    })
+    try {
+      m.noteChatParams("s7", "build", "glm/glm-5.3") // 预注册，避免首轮空状态等价短路
+      m.recompute() // config 钩子直调 → startup
+      expect(sources).toEqual(["startup"])
+      // session 源断言放在 start() 前：macOS fs.watch 建立后会补投历史目录事件，污染触发源
+      m.noteChatParams("s8", "build", "deepseek/deepseek-v4-pro") // 会话模型变化，确保非短路
+      m.scheduleRecompute(50, "session")
+      await new Promise((r) => setTimeout(r, 150))
+      expect(sources).toEqual(["startup", "session"])
+      m.start()
+      // favorites 写入（TUI 持久化）→ watch/mtime 轮询 → config
+      writeFileSync(TUI_MODEL, JSON.stringify({ recent: [], favorite: [{ providerID: "glm", modelID: "glm-5.3" }], variant: null }))
+      await new Promise((r) => setTimeout(r, 500))
+      expect(sources).toContain("config")
+    } finally {
+      m.stop()
+      rmSync(TUI_MODEL, { force: true })
+    }
+  })
 })
 
 beforeAll(() => {

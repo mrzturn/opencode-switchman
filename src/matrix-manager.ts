@@ -31,9 +31,13 @@ export interface MatrixManagerOptions {
   watchEnabled?: boolean
   debounceMs?: number
   pollMs?: number
-  /** 重算回调：清横幅缓存＋提交探针差集 */
-  onRecompute?: (state: ActivationState, newTargets: string[]) => void
+  /** 重算回调：清横幅缓存＋提交探针差集；source 区分触发面（config=可见集/favorites 变化） */
+  onRecompute?: (state: ActivationState, newTargets: string[], source: RecomputeSource) => void
 }
+
+/** 重算触发源：config=配置面文件变化（desktop 可见集开关/TUI favorites 增删）；
+ *  session=会话模型切换/删除；startup=config 钩子直调首轮 */
+export type RecomputeSource = "config" | "session" | "startup"
 
 export const WATCH_DEBOUNCE_MS = 500
 export const WATCH_POLL_MS = 30_000
@@ -52,6 +56,7 @@ export class MatrixManager {
   private pollTimer: ReturnType<typeof setInterval> | null = null
   private lastMtimes: [number, number] = [0, 0]
   private stopped = false
+  private pendingSource: RecomputeSource = "startup"
 
   constructor(options: MatrixManagerOptions) {
     this.opts = { watchEnabled: true, debounceMs: WATCH_DEBOUNCE_MS, pollMs: WATCH_POLL_MS, ...options }
@@ -133,8 +138,10 @@ export class MatrixManager {
   /** 同步重算：读配置面→并集→落盘；状态等价短路（不 bump generation/不清缓存）
    *  [2026-08-29]-[修复复审P1-写入竞态：本方法全同步（读-算-写无 await）→进程内天然原子；
    *  model-matrix.json 读改写同步完成（进程内原子）；探针异步写经 withPathLock 串行＋完成时代数校验丢弃，
-   *  二者交错由代数校验兜底；跨进程靠唯一 tmp+rename 不损坏文件] */
-  recompute(configured?: { configStatus: ActivationState["configStatus"]; models: ModelKey[] }): ActivationState {
+   *  二者交错由代数校验兜底；跨进程靠唯一 tmp+rename 不损坏文件]-
+   *  [2026-08-29]-[触发源透传：watch/轮询=config、chat.params/session.deleted=session、直调=startup；
+   *  供 onRecompute 按源决定探针范围（config→全量激活组合，其余→仅新增）] */
+  recompute(configured?: { configStatus: ActivationState["configStatus"]; models: ModelKey[] }, source: RecomputeSource = "startup"): ActivationState {
     const read = configured ?? readConfigured(this.opts.stateRoot, this.opts.mode)
     const next = computeActivation({
       generation: this.current_.generation + 1,
@@ -160,7 +167,7 @@ export class MatrixManager {
       console.error(`[opencode-switchman] 激活矩阵落盘 fail-open: ${exc}`)
     }
     try {
-      this.opts.onRecompute?.(next, newTargets)
+      this.opts.onRecompute?.(next, newTargets, source)
     } catch (exc) {
       console.error(`[opencode-switchman] 激活矩阵回调 fail-open: ${exc}`)
     }
@@ -176,14 +183,14 @@ export class MatrixManager {
     return [...out]
   }
 
-  /** 异步重算（watch/轮询触发）：unreadable 带短重试（原子 rename 竞态兜底） */
+  /** 异步重算（watch/轮询/会话触发）：unreadable 带短重试（原子 rename 竞态兜底） */
   async recomputeWithRetry(): Promise<ActivationState> {
     let read = this.readConfiguredSafe()
     for (let i = 0; i < PARSE_RETRIES && read.configStatus === "unreadable"; i++) {
       await new Promise((r) => setTimeout(r, PARSE_RETRY_MS))
       read = this.readConfiguredSafe()
     }
-    return this.recompute(read)
+    return this.recompute(read, this.pendingSource)
   }
 
   private readConfiguredSafe(): { configStatus: ActivationState["configStatus"]; models: ModelKey[] } {
@@ -234,8 +241,11 @@ export class MatrixManager {
     this.lastMtimes = [fileMtimeOf(a), fileMtimeOf(b)]
   }
 
-  scheduleRecompute(delay?: number): void {
+  /** [2026-08-29]-[触发源参数：watch/轮询默认 config（可见集开关/favorites 增删→全量重探）；
+   *  会话源由 chat.params/session.deleted 显式传 session（只探新增）] */
+  scheduleRecompute(delay?: number, source: RecomputeSource = "config"): void {
     if (this.stopped) return
+    this.pendingSource = source
     if (this.debounceTimer) clearTimeout(this.debounceTimer)
     this.debounceTimer = setTimeout(() => {
       this.debounceTimer = null
