@@ -32,6 +32,9 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Generate version module
+        run: bun scripts/gen-version.ts
+
       - name: Test
         run: bun test
 

@@ -1,7 +1,6 @@
 .DS_Store
 node_modules/
 dist/
-src/version.ts
 *.tgz
 # BEGIN oh-my-opencode-slim clonedeps
 .slim/clonedeps/repos/
