@@ -8,7 +8,7 @@
 >
 > [![opencode-switchman 能力介绍演示](docs/assets/preview.png)](https://mrzturn.github.io/opencode-switchman/index.zh.html)
 
-OpenCode 六档壳矩阵编排插件——让主模型成为调度员，把任务按「认知档位」委派给跨任意 opencode 供应商的子代理空壳，插件层做确定性拦截；glm / deepseek / copilot 三池额外享有配额感知路由。
+OpenCode 六档壳矩阵编排插件——让主模型成为调度员，把任务按「认知档位」委派给跨任意 opencode 供应商的子代理空壳，插件层做确定性拦截、加权模型评分、可追溯路由决策与失败自愈隔离；glm / deepseek / copilot 三池额外享有配额感知路由。
 
 如果你同时持有多个模型订阅（GitHub Copilot premium 积分、智谱 GLM Coding Plan、DeepSeek 按量余额），却总是一个模型用到天荒地老、水位盲飞、高峰全价硬扛——opencode-switchman 就是为你准备的。
 
@@ -79,7 +79,8 @@ bun run build   # 生成 dist/opencode-switchman.js
 ```
 [路由] economy: glm-53f-low→ds-v4fv-off | mechanical: glm-53f-high→ds-v4fv-off | main: glm-53-high→ds-v4p-high | ...
 [水位] GLM 5h窗 20% 周 7%(09-04 10:00刷新) | Copilot 积分不限量 已用3885(2026-09-01刷新) | 建议: ...
-[限制] down: 无 | reviewer 须异族（producer family ≠ 壳 family） | DeepSeek 仅链尾兜底
+[限制] down: 无 | retired: 0 模型已下线 | reviewer 须异族（producer family ≠ 壳 family） | DeepSeek 仅链尾兜底
+[更新] 发现新版本：/switchman-update 或 /switchman-ignore
 ```
 
 同时日志可见 `[opencode-switchman] 已注入 N 只模型空壳（agent）`——N 随有凭证 provider 的模型面动态变化。
@@ -91,11 +92,11 @@ bun run build   # 生成 dist/opencode-switchman.js
 | `quota.glm / quota.deepseek / quota.copilot.enabled` | `true` | 额度控制逐池开关：glm / deepseek / copilot（无凭证自动跳过） |
 | `quota.glm.fiveHourReservePct` | `90` | GLM 5 小时窗预留水位（%）：达到即硬拦 GLM 壳避免用满 429；周额度仍只认 100% |
 | `quota.deepseek.lowBalanceWarnCny` | `10` | DeepSeek 余额预警阈值（元）：低于该值横幅 [水位] 提示（仅预警不硬拦） |
-| `cost.enabled` | `true` | models.dev 计价快照参与选链 tiebreaker |
+| `cost.enabled` | `true` | models.dev 计价快照作为加权模型评分的一个系数 |
 | `billingWindow.glmPeakHours / dsPeakRanges` | GLM 工作日 14–18 | 高峰窗口定义（影响选池排序） |
 | `providers.glm / providers.deepseek` | `["zhipuai-coding-plan","glm","zai"]` / `["deepseek"]` | 池对应的 provider id 清单（凭证收集用） |
-| `matrix.mode` | `auto` | 动态激活模式：`auto` 按宿主自动（desktop=可见模型 / cli=favorites），`app`/`tui` 强制指定，`legacy` 旧静态矩阵 |
-| `matrix.watch` | `true` | 实时监听可见模型 / favorites 变化，重算激活矩阵并增量探针 |
+| `matrix.mode` | `auto` | 动态激活模式：`auto` 按宿主自动（desktop=可见模型 / CLI/TUI=favorites），`app`/`tui` 强制指定，`legacy` 旧静态矩阵 |
+| `matrix.watch` | `true` | 双向同步 desktop 可见模型与 TUI favorites；配置面变化即重算激活矩阵并全量刷新探针 |
 | `banner.enabled` | `true` | 四行横幅注入开关 |
 | `rules.enabled` | `true` | 调度员规程（AGENTS.md）随包注入开关 |
 | `lanes` | 内置六档链 | 自定义各档壳链（覆盖内置偏好序） |
@@ -104,11 +105,20 @@ bun run build   # 生成 dist/opencode-switchman.js
 
 壳矩阵不再是静态清单，而是运行期动态构建、实时更新：
 
-- **desktop app**：激活矩阵 = 模型管理中的可见模型；**CLI/TUI**：激活矩阵 = favorites
-- 两者皆未设置时，自动回退为「当前活跃会话正在使用的模型」；多会话并行取并集，任何会话切换模型，矩阵在下一请求实时跟进
-- 模型管理 / favorites 变更实时监听（fs.watch + mtime 轮询兜底），重算激活矩阵并**增量探针**，全程 fail-open
-- 新增 provider 实时检测并横幅提示（agent 注册表运行期不可变，对应壳**重启 opencode 后自动纳入**，无需手动维护）
-- 启动即注入超集壳（有凭证 provider 的全部可对话模型 × models.dev 档位），`matrix.mode=legacy` 可完整回退旧静态矩阵行为
+- **desktop app** 可见模型与 **CLI/TUI** favorites 双向同步。`mtime` 决定更新方向；同毫秒平局不写任一侧，必要时使用默认 CLI 路径兜底。
+- 两者皆未设置时，自动回退为「当前活跃会话正在使用的模型」；多会话并行取并集，任何会话切换模型，矩阵在下一请求实时跟进。
+- 模型管理 / favorites 变更实时监听（fs.watch + mtime 轮询兜底）。任一配置面变化都会立即重算激活矩阵并触发**全量探针刷新**，不等待 TTL；10 分钟周期刷新继续负责自愈。
+- 新增 provider 实时检测并横幅提示（agent 注册表运行期不可变，对应壳**重启 opencode 后自动纳入**，无需手动维护）。
+- 启动即注入超集壳（有凭证 provider 的全部可对话模型 × models.dev 档位），`matrix.mode=legacy` 可完整回退旧静态矩阵行为。
+
+## 模型评分引擎
+
+路由现在是显式、可追溯的评分，而不是隐藏偏好序：
+
+- **base 能力分主导**：策展的 S/A/B/C 能力分按 exact 模型 id → 前缀 → family → global fallback 四路匹配，并记录命中路径。tier 分组不可逆：低档永远压不过高档。
+- **加权系数**：最终分数乘以 `effortFit × health × water × costBias × peak`。health 为 `ok=1.0` / `strained=0.6`；water 取两个窗口中更吃紧者，并会在 Copilot 富余且临期时反向提权烧积分；costBias 为订阅池 `1.0`、按量池 `0.7`、DeepSeek 空闲 `0.85`；GLM 高峰只做同档 `×0.93` 让位，绝不跨能力级出局。
+- **硬门不参与打分**：down、熔断、池耗尽、retired、实调隔离中的组合先出局再评分。`immediate` 紧急档改按探针延迟排序。
+- **决策日志**：每次横幅重建都会把各档候选与六因子评分写入 `state/routing-decisions.jsonl`，保留 200 行环形日志。
 
 ## 核心思想
 
@@ -129,7 +139,7 @@ opencode-switchman 把编排拆成三层，各司其职：
 |---|---|---|
 | **认知层** | 主模型（调度员）+ 随包注入的调度员规程 | 任务四维画像（认知强度×机械度×上下文×紧急度）、决定自做还是委派、选档选壳、写 DELEGATION_V1 委派 prompt |
 | **执行层** | 「模型×档位」空壳子代理（如 `glm-mx-53-high`） | 只绑定模型与思考档位，角色由委派 prompt 动态赋予（programmer/tester/reviewer 等 14 角色） |
-| **确定性层** | 插件本体 | 六闸拦截、ROUTE_META 硬校验、配额/成本感知选链、探针熔断自愈、四行横幅实时注入 |
+| **确定性层** | 插件本体 | 六闸拦截、ROUTE_META 硬校验、加权模型评分、配额/成本感知选链、探针 / 熔断 / 实调隔离自愈、四行横幅实时注入 |
 
 **Token 经济学为第一性原则**：返工是最贵的 token。由此派生六档认知分层——
 
@@ -142,7 +152,7 @@ opencode-switchman 把编排拆成三层，各司其职：
 | vision | observer 看图 | 视觉模型 |
 | review | reviewer / 专家席 审案 | **强制异模型族**（防同族盲区） |
 
-水位只影响排序（用满不浪费），唯一硬拦是「调用必失败」（额度确定耗尽）；DeepSeek 按量池恒居链尾兜底，自动路由绝不选它，点名才可用。
+水位只影响排序（用满不浪费），唯一硬拦是「调用必失败」（额度确定耗尽或硬门命中）；DeepSeek 按量池在自动路由中保持兜底链尾，除非用户点名，否则按量池评分更低。
 
 ## 工作原理
 
@@ -162,7 +172,7 @@ flowchart TD
     H -->|deny| J[报错附原因+改派候选<br/>主模型按链改派]
     I --> K{执行结果}
     K -->|成功| L[摘要回传主模型]
-    K -->|失败| M[event 钩子记账<br/>600s 窗 ≥2 败 → 熔断 600s]
+    K -->|失败| M[event 钩子记账<br/>classifyFailure + 隔离<br/>600s 窗 ≥2 败 → 熔断 600s]
     M --> D
     J --> D
     D -.每轮 LLM 请求.-> N[system.transform<br/>注入调度员规程 + 四行横幅<br/>路由/水位/限制 实时可见]
@@ -175,8 +185,8 @@ flowchart TD
 | 闸 | 判定 | 语义 |
 |---|---|---|
 | 1 注册表 | 壳未启用/未探测 | 禁派未注册面 |
-| 2 探针矩阵 | 组合实测 down | 拦明确不可用 |
-| 3 熔断 | 600s 窗内 ≥2 败 | 「连续失败熔断中，约 10 分钟自动恢复」 |
+| 2 探针矩阵 | 组合实测 down / retired | 拦明确不可用；连续 404 下线消失模型 |
+| 3 熔断 / 隔离 | 600s 窗内 ≥2 败或实调隔离中 | 「连续失败熔断中，约 10 分钟自动恢复」/「实调失败后隔离中」 |
 | 4 池耗尽 | 配额判定必失败 | 附人读原因（GLM 100% / Copilot 确定耗尽 / DS 欠费） |
 | 5 协议 | ROUTE_META 缺失/非法 | deny 附样例与合法值表 |
 | 6 语义 | 同族复审 / rw→ro 壳 / 图像→非视觉壳 / auto 误选付费兜底 | 「复审须异族视角」等 |
@@ -189,21 +199,25 @@ ROUTE_META {"lane":"main","role":"programmer","producer_family":"glm","capabilit
 
 ### 数据面（全部自动、fail-open）
 
-- **探针**：对三大额度池发起真实请求探活（其余供应商 fail-open 放行），矩阵落盘（TTL 600s），down 组合自动进降级链
-- **配额**：GLM monitor / DeepSeek balance / Copilot `copilot_internal/user` 直查，无代理、分层 TTL 缓存
-- **成本**：models.dev 计价快照，水位同分时便宜者前（tiebreaker 弱参与）
-- **横幅**：每轮系统提示注入 `[路由][水位][限制][更新]` 四行，调度员实时可见
-- **fail-open 铁律**：任何钩子异常只写 stderr 绝不阻塞主流程；配额未知不硬拦、熔断器与探针兜底
+- **探针**：对三大额度池发起真实请求探活（其余供应商 fail-open 放行），矩阵落盘（TTL 600s）。配置面变化立即全量刷新；平时由 10 分钟周期自愈。
+- **配额**：GLM monitor / DeepSeek balance / Copilot `copilot_internal/user` 直查，无代理、分层 TTL 缓存。
+- **失败分类**：厂商无关的 `classifyFailure` 归一为 `rate_limit / quota / auth / not_found / server / network / unknown`。探针 429 仅置 `strained`（降权留链）；实调 429 不再误置 Copilot 池耗尽，只有 402 或 403 且含 quota 文案才置耗尽。1 小时窗内连续 3 次 404 会自动 retired：链路排除、闸 deny、横幅标注。
+- **实调失败隔离**：探针 ok 但实际委派失败时，combo 进入内存隔离 30 分钟（`rate_limit` 类 10 分钟），所有会话即时感知，重启即清；它与既有 600s 熔断双轨并行。
+- **成本与评分**：models.dev 计价与策展能力分共同进入加权评分；硬门命中的候选先出局再评分。
+- **决策日志**：每次横幅重建把候选链与因子分写入 `state/routing-decisions.jsonl`（环形 200 行）。
+- **横幅**：每轮系统提示注入 `[路由][水位][限制][更新]` 四行，调度员实时可见。[限制] 行包含下线模型数量与降级标注；[更新] 行在发现新版本时给出升级 / 忽略命令入口。
+- **自更新**：启动检查缓存 24 小时。prod 模式对比 npm registry，可执行 `/switchman-update` 静默升级，随后横幅显示「已升级待重启」并提醒重启；`/switchman-ignore` 仅忽略本会话，重启后恢复提示。local 模式对比 `origin/main`，只提示手动更新并仅注册 `/switchman-ignore`。
+- **fail-open 铁律**：任何钩子异常只写 stderr 绝不阻塞主流程；配额未知不硬拦，熔断、探针与实调隔离互为独立事实源。
 
 ### 状态目录
 
-`~/.config/opencode/opencode-switchman/`：`shells.json`（可选自定义覆盖，缺省用插件内置矩阵）、`model-matrix.json`（探针）、`routing.json`（熔断）、`failures.log`（记账）、`*-quota.json` / `ds-balance.json`（配额缓存）、`costs.json`（计价）、`delegation-template.md`（委派模板全文）。
+`~/.config/opencode/opencode-switchman/`：`shells.json`（可选自定义覆盖，缺省用插件内置矩阵）、`model-matrix.json`（探针）、`routing.json`（熔断）、`routing-decisions.jsonl`（200 行评分审计环形日志）、`failures.log`（记账）、`*-quota.json` / `ds-balance.json`（配额缓存）、`costs.json`（计价）、`delegation-template.md`（委派模板全文）。
 
 ## 模型矩阵维护
 
-默认（`matrix.mode=auto`）矩阵在运行期动态构建：可见模型 / favorites / 会话模型自动激活，无需任何维护；模型临时 down 由探针自愈（每 10 分钟后台刷新，自动进降级/熔断）。
+默认（`matrix.mode=auto`）矩阵在运行期动态构建：desktop 可见模型与 TUI favorites 自动双向同步，会话模型兜底，任一配置面变化都会触发全量探针重算，无需任何维护；模型临时 down 由探针自愈（每 10 分钟后台刷新，自动进降级/熔断），连续 404 的消失模型会 retired，直到配置面再次变化。
 
-内置静态矩阵（13 模型 → 52 壳）仅作为 `legacy` 模式与运行期元数据的兜底。如需自定义静态面：
+内置静态矩阵仅作为 `legacy` 模式与运行期元数据的兜底。如需自定义 legacy 静态面：
 
 ```bash
 # 1. 同步权威启用面（opencode 模型管理中打开的模型，每行 provider/model-id）
@@ -217,9 +231,16 @@ bun run gen:shells
 
 ```bash
 bun install
-bun test            # 33 项行为契约 fixture（META/六闸/选链/熔断/配额判定）
+bun test            # 124 项行为契约 fixture（META/六闸/选链/评分/熔断/配额/更新）
 bunx tsc --noEmit   # 类型检查
 bun run build       # 重新生成矩阵并打包单文件 bundle
+```
+
+本地调试与正式包可用幂等脚本一键切换，切换后重启 opencode 生效：
+
+```bash
+bun run mode:local  # build + 指向本仓库
+bun run mode:prod   # 使用 npm 包；未安装时拒绝并打印安装命令
 ```
 
 ## 文档

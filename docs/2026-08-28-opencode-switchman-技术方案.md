@@ -300,7 +300,7 @@ effort → options 按 family 映射：gpt/grok/gemini 系 `{reasoningEffort}`�
 | 4000 字符窗口 | META 超窗不被解析 | DELEGATION_V1 固定头很短（<1k），规程要求 ROUTE_META 紧随角色契约之后 |
 | 多工具并用 | 与其他编排工具并用时状态互不感知 | 状态文件目录完全隔离（opencode-switchman/），无共享冲突 |
 
-## 6. 验收标准（行为契约 fixture，27+ 项）
+## 6. 验收标准（行为契约 fixture，124 项）
 
 1. **META 解析**：JSON/k=v 双格式、六键白名单、必填三键、前 4000 字符窗口、producer_family 拒池名（main/gcp 非法）、值小写；
 2. **六闸顺序**：矩阵 down deny / disabled＋矩阵非 down fail-open / 未探测面 deny、熔断 deny、池耗尽 deny、坏 META deny 附样例、同族 reviewer deny、rw→ro deny、image→非视觉 deny、auto→DeepSeek deny 附套餐首候选、user 点名放行；
@@ -341,3 +341,17 @@ AGENTS.md         调度员规程
 - **GLM 端点实测**：coding plan baseURL 为 `https://open.bigmodel.cn/api/coding/paas/v4`（普通 paas/v4 会 429 余额错误）；monitor 配额端点两条 TOKENS_LIMIT 按 (unit,number)=(3,5)/(6,1) 区分 5h 窗/周额度。
 - **本地代理仓库**（github-copilot-proxy，仅作端点/请求头早期参考，opencode-switchman 不依赖）。
 - **计价数据源**：models.dev `api.json`（三池计价同源＋reasoning_options 档位声明）；premium 倍率无公开 API（社区确认），docs.github.com 仅有静态表。
+
+## v2.0 增补（2026-08-29）
+
+> 追加说明：本节只记录 v2.0 相对 v1.2 的能力增量与设计约束，不重写前文历史方案。
+
+1. **动态激活矩阵升级**：desktop 可见模型与 TUI favorites 双向自动同步，`mtime` 仲裁更新方向；同毫秒平局不写入任一侧，避免来回抖动。CLI 路径缺省时使用默认路径 fallback。任一配置面变化立即触发激活矩阵重算与全量探针刷新，不等待 TTL；10 分钟周期刷新保留为常态自愈。
+2. **模型评分引擎**：选链从弱 tiebreaker 升级为显式加权评分。base 策展能力分按 exact → 前缀 → family → global 四路匹配，并记录命中来源；S/A/B/C tier 分组不可逆，低档永远不能靠水位、成本或高峰系数反超高档。
+3. **评分系数与硬门**：最终分数为 `base × effortFit × health × water × costBias × peak`。`health`：ok=1.0、strained=0.6；`water` 取两类额度窗口中最吃紧者，Copilot 富余且临期时可反向提权以消耗积分；`costBias`：订阅池 1.0、按量池 0.7、DeepSeek 空闲 0.85；`peak`：GLM 高峰仅 ×0.93 做同档让位，永不跨能力级出局。down、熔断、池耗尽、retired、实调隔离等硬门候选先出局，不参与打分；immediate 紧急档按探针延迟排序。
+4. **决策日志**：每次横幅重建将各档候选、剔除原因与六因子评分写入 `state/routing-decisions.jsonl`，按 200 行环形保留，用于解释「为什么链首是它」。
+5. **厂商无关失败分类层**：`classifyFailure` 统一归一 `rate_limit / quota / auth / not_found / server / network / unknown`。探针 429 置 `strained`，只降权不整链跳 DeepSeek；实调 429 不再误置 Copilot 池耗尽，仅 402 或 403 且含 quota 文案才置耗尽。1 小时窗内连续 3 次 404 自动 retired：链路排除、闸 deny、横幅 `[限制]` 标注「n 模型已下线」。
+6. **实调失败隔离**：探针 ok 但实际委派失败时，将 combo 写入进程内隔离表：普通失败 30 分钟，`rate_limit` 类 10 分钟；所有会话即时感知，重启即清。该隔离与既有 600s 熔断并行，分别处理「统计性连续失败」与「探针未覆盖的实调失败」。
+7. **自更新通知与命令**：启动检查带 24 小时缓存；prod 模式对比 npm registry，注册 `/switchman-update`（静默升级、横幅改「已升级待重启」、提示重启）与 `/switchman-ignore`（本会话忽略，重启恢复提示）。local 模式对比 `origin/main`，只提示手动更新并仅注册 `/switchman-ignore`。会话级忽略标记通过 `mtime` 与进程启动时间对比判定，早于本进程启动的忽略记录不生效。
+8. **本地/正式模式切换**：新增幂等脚本 `bun run mode:local`（build 后指向当前仓库）与 `bun run mode:prod`（切回 npm 包；未安装时拒绝并打印安装命令），切换后重启 opencode 生效。
+9. **横幅契约补强**：四行 `[路由][水位][限制][更新]` 继续逐行可解析；`[限制]` 行承载 retired 数量与降级标注，`[更新]` 行承载新版本提示及升级/忽略入口。

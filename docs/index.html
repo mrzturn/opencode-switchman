@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>opencode-switchman · Six-Lane Shell Matrix Orchestration Plugin</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;700&family=Noto+Sans+SC:wght@300;400;500;700;900&display=swap" rel="stylesheet">
@@ -16,7 +16,8 @@
   --disp:'Space Grotesk','Noto Sans SC',sans-serif;
 }
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);font-family:'Space Grotesk','Noto Sans SC',sans-serif;-webkit-font-smoothing:antialiased}
+html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);font-family:'Space Grotesk','Noto Sans SC',sans-serif;-webkit-font-smoothing:antialiased;font-size:16px;line-height:1.6}
+img{max-width:100%;height:auto}
 
 /* ===== ambient background ===== */
 .bg{position:fixed;inset:0;z-index:0;pointer-events:none}
@@ -45,7 +46,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);font
 .slide{position:fixed;inset:0;z-index:1;display:flex;padding:6vh 7vw;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:none;opacity:0;visibility:hidden;transform:translateY(26px) scale(.985);transition:opacity .55s ease,transform .55s cubic-bezier(.7,0,.3,1),visibility .55s}
 .slide::-webkit-scrollbar{display:none}
 .slide.on{opacity:1;visibility:visible;transform:none;z-index:2}
-.slide .inner{width:100%;max-width:1240px;margin:auto}
+.slide .inner{width:100%;max-width:1240px;margin:auto;min-width:0}
 
 .kicker{display:inline-flex;align-items:center;gap:10px;font-family:var(--mono);font-size:12px;letter-spacing:.32em;color:var(--cyan);text-transform:uppercase;margin-bottom:18px}
 .kicker::before{content:"";width:34px;height:1px;background:linear-gradient(90deg,var(--cyan),transparent)}
@@ -109,9 +110,9 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
 .stat{padding:22px 24px}
 .stat .n{font-family:var(--disp);font-size:38px;font-weight:700;background:linear-gradient(90deg,var(--cyan),var(--violet));-webkit-background-clip:text;background-clip:text;color:transparent}
 .stat .l{font-size:12.5px;color:var(--dim);margin-top:5px;letter-spacing:.05em}
-.mxnaming{margin-top:26px;font-family:var(--mono);font-size:14px;background:rgba(4,8,18,.7);border:1px solid var(--stroke);border-radius:12px;padding:18px 20px;line-height:2}
+.mxnaming{margin-top:26px;font-family:var(--mono);font-size:14px;background:rgba(4,8,18,.7);border:1px solid var(--stroke);border-radius:12px;padding:18px 20px;line-height:2;overflow-x:auto}
 .mxnaming .p{color:var(--emerald)}.mxnaming .m{color:var(--cyan)}.mxnaming .t{color:var(--violet)}.mxnaming .c{color:var(--faint)}
-.mgrid{display:grid;grid-template-columns:repeat(13,1fr);gap:7px;padding:26px}
+.mgrid{display:grid;grid-template-columns:repeat(12,1fr);gap:7px;padding:26px}
 .mcell{aspect-ratio:1;border-radius:5px;background:rgba(148,180,255,.07);border:1px solid rgba(148,180,255,.1);position:relative}
 .mcell.live{background:linear-gradient(135deg,rgba(34,211,238,.5),rgba(167,139,250,.5));border-color:transparent;box-shadow:0 0 12px rgba(34,211,238,.35);animation:cellglow 3.2s ease-in-out infinite}
 @keyframes cellglow{50%{box-shadow:0 0 22px rgba(167,139,250,.55);filter:brightness(1.35)}}
@@ -180,7 +181,7 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
 .codebox .bar i{width:10px;height:10px;border-radius:50%}
 .codebox .bar i:nth-child(1){background:#fb7185}.codebox .bar i:nth-child(2){background:#fbbf24}.codebox .bar i:nth-child(3){background:#34d399}
 .codebox .bar span{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--faint)}
-.codebox pre{padding:22px 24px;font-family:var(--mono);font-size:13.5px;line-height:2.05;color:#c8d3ea;overflow-x:auto}
+.codebox pre{padding:22px 24px;font-family:var(--mono);font-size:13px;line-height:2.05;color:#c8d3ea;overflow-x:auto;max-width:100%}
 .tk-k{color:var(--violet)}.tk-s{color:var(--emerald)}.tk-n{color:var(--amber)}.tk-c{color:var(--faint)}.tk-p{color:var(--cyan)}
 .checklist{list-style:none;display:flex;flex-direction:column;gap:13px}
 .checklist li{display:flex;gap:14px;align-items:flex-start;font-size:14px;color:var(--dim);line-height:1.65;font-weight:300}
@@ -191,7 +192,7 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
 .bannerbox{max-width:960px;margin:0 auto}
 .brow{display:grid;grid-template-columns:92px 1fr;gap:0;background:#060a16;border:1px solid var(--stroke);border-radius:14px;overflow:hidden;margin-bottom:14px;box-shadow:0 16px 44px rgba(0,0,0,.45)}
 .brow .bl{display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:13px;letter-spacing:.1em;border-right:1px solid rgba(148,180,255,.12)}
-.brow .bt{padding:17px 24px;font-family:var(--mono);font-size:12.5px;color:#b9c4dd;line-height:1.9}
+.brow .bt{padding:17px 24px;font-family:var(--mono);font-size:12.5px;color:#b9c4dd;line-height:1.9;overflow-x:auto;min-width:0}
 .brow.b1 .bl{color:var(--cyan);background:rgba(34,211,238,.06)}
 .brow.b2 .bl{color:var(--emerald);background:rgba(52,211,153,.06)}
 .brow.b3 .bl{color:var(--violet);background:rgba(167,139,250,.06)}
@@ -217,11 +218,11 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
 .close h2 .grad{background:linear-gradient(92deg,var(--cyan),var(--violet),var(--emerald));-webkit-background-clip:text;background-clip:text;color:transparent}
 .close .sub{margin:22px auto 40px}
 .close .chips{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-bottom:46px}
-.cmd{display:inline-flex;align-items:center;gap:14px;font-family:var(--mono);font-size:14px;background:rgba(34,211,238,.07);border:1px solid rgba(34,211,238,.35);border-radius:12px;padding:15px 28px;color:var(--cyan);box-shadow:0 0 40px rgba(34,211,238,.1)}
+.cmd{display:inline-flex;align-items:center;gap:14px;font-family:var(--mono);font-size:14px;background:rgba(34,211,238,.07);border:1px solid rgba(34,211,238,.35);border-radius:12px;padding:15px 28px;color:var(--cyan);box-shadow:0 0 40px rgba(34,211,238,.1);overflow-x:auto;max-width:100%}
 .cmd .ps{color:var(--faint)}
 
 .topnav{position:fixed;top:20px;right:24px;z-index:60;display:flex;gap:10px;align-items:center}
-.lang,.gh{font-family:var(--mono);font-size:11px;letter-spacing:.18em;color:var(--dim);border:1px solid var(--stroke);border-radius:999px;padding:7px 16px;background:rgba(8,12,24,.55);backdrop-filter:blur(8px);text-decoration:none;display:inline-flex;align-items:center;gap:8px;transition:color .3s,border-color .3s}
+.lang,.gh{font-family:var(--mono);font-size:11px;letter-spacing:.18em;color:var(--dim);border:1px solid var(--stroke);border-radius:999px;padding:7px 16px;background:rgba(8,12,24,.55);backdrop-filter:blur(8px);text-decoration:none;display:inline-flex;align-items:center;gap:8px;transition:color .3s,border-color .3s;min-height:40px}
 .lang:hover,.gh:hover{color:var(--cyan);border-color:rgba(34,211,238,.45)}
 .gh svg{width:13px;height:13px;fill:currentColor}
 
@@ -229,18 +230,35 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
 .navbtns{position:fixed;right:24px;bottom:52px;z-index:60;display:flex;gap:10px}
 .nv{width:42px;height:42px;border-radius:50%;border:1px solid var(--stroke);background:rgba(8,12,24,.55);backdrop-filter:blur(8px);color:var(--dim);font-size:20px;line-height:1;cursor:pointer;transition:color .3s,border-color .3s;font-family:var(--disp);padding:0}
 .nv:hover{color:var(--cyan);border-color:rgba(34,211,238,.45)}
-.navbtns@media (max-width:980px){
+@media (max-width:980px){
   .quad,.layers,.lanes,.brain,.heal,.mxwrap,.codewrap{grid-template-columns:1fr}
   .hookflow{grid-template-columns:repeat(2,1fr)}
   .hookflow::before{display:none}
   .dots{display:none}
 }
+@media (max-width:768px){
+  .slide{padding:6.5vh 5vw 72px}
+  .slide .inner{margin:0 auto}
+  .quad,.layers,.lanes,.brain,.heal,.mxwrap,.codewrap,.hookflow{grid-template-columns:1fr;gap:14px}
+  .mxstats{grid-template-columns:1fr;gap:12px}
+  .hookflow::before{display:none}
+  .gate{grid-template-columns:42px 1fr;grid-template-areas:"gn name" "gn test" "gn act";gap:4px 14px;padding:13px 16px;border-radius:12px}
+  .gate .gn{grid-area:gn;font-size:20px;align-self:center}
+  .gate .gname{grid-area:name;font-size:14.5px}
+  .gate .gtest{grid-area:test}
+  .gate .gact{grid-area:act;text-align:left;font-size:12px}
+  .brow{grid-template-columns:1fr}
+  .brow .bl{justify-content:flex-start;min-height:40px;padding:9px 14px;border-right:0;border-bottom:1px solid rgba(148,180,255,.12)}
+  .brow .bt{font-size:12px;padding:12px 14px;white-space:nowrap}
+  .codebox pre{font-size:12px;padding:16px;line-height:1.85}
+  .mxnaming{font-size:12px;white-space:nowrap}
+}
 @media (max-width:640px){
-  .slide{padding:7vh 6vw 64px}
+  .slide{padding:6vh 5vw 72px}
   .kicker{font-size:10.5px;letter-spacing:.22em;margin-bottom:12px}
   .kicker::before{width:22px}
-  h2.title{font-size:clamp(24px,7vw,30px);margin-bottom:8px}
-  .sub{font-size:13.5px;margin-bottom:22px}
+  h2.title{font-size:clamp(24px,7vw,30px);margin-bottom:8px;line-height:1.18}
+  .sub{font-size:16px;line-height:1.7;margin-bottom:20px}
   .quad,.layers,.lanes,.brain,.heal{gap:12px}
   .pain{padding:20px 18px}.pain h3{font-size:17px}.pain p{font-size:13px}
   .layer{padding:22px 18px;min-height:0}
@@ -250,7 +268,7 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
   .mxwrap{gap:20px}
   .mxstats{gap:10px}
   .stat{padding:14px 16px}.stat .n{font-size:26px}
-  .mxnaming{font-size:11px;padding:14px;line-height:1.9}
+  .mxnaming{font-size:12px;padding:14px;line-height:1.8}
   .mgrid{gap:4px;padding:16px}
   .mlegend{gap:12px;font-size:9.5px;padding:0 16px 14px;flex-wrap:wrap}
   .mcap{font-size:10px;padding-bottom:14px}
@@ -268,20 +286,20 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
   .gate .gtest{grid-area:test}
   .gate .gact{grid-area:act;text-align:left;font-size:11.5px}
   .codewrap{gap:18px}
-  .codebox pre{font-size:11px;padding:16px;line-height:1.95}
+  .codebox pre{font-size:12px;padding:14px;line-height:1.8}
   .checklist li{font-size:13px}
-  .brow{grid-template-columns:64px 1fr}
+  .brow{grid-template-columns:1fr}
   .brow .bl{font-size:11px}
-  .brow .bt{font-size:10.5px;padding:12px 14px}
+  .brow .bt{font-size:12px;padding:12px 14px;line-height:1.75}
   .banner-cap{font-size:12px}
   .cover .badge{font-size:10px;letter-spacing:.25em;padding:7px 16px;margin-bottom:22px}
   .cover h1{font-size:clamp(30px,10.5vw,52px)}
-  .cover .tagline{font-size:13px;margin-top:16px}
+  .cover .tagline{font-size:16px;line-height:1.65;margin-top:16px}
   .cover .chips{margin-top:24px;gap:8px}
   .chip{font-size:10.5px;padding:7px 11px}
   .close h2{font-size:clamp(26px,8vw,40px)}
-  .close .sub{font-size:13px;margin-bottom:26px}
-  .cmd{font-size:11px;padding:12px 16px;gap:8px;flex-wrap:wrap;justify-content:center}
+  .close .sub{font-size:16px;line-height:1.65;margin-bottom:24px}
+  .cmd{font-size:12px;padding:12px 14px;gap:8px;justify-content:flex-start;white-space:nowrap}
   .brand,.hint{display:none}
   .counter{right:14px;bottom:12px;font-size:10.5px}
   .navbtns{right:14px;bottom:58px}
@@ -304,9 +322,9 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
   <div class="inner">
     <div class="kicker e rv" data-d="1" style="justify-content:center">GET STARTED</div>
     <h2 class="rv" data-d="2">The advanced play for multi-subscribers:<br><span class="grad">every token spent where it counts</span></h2>
-    <p class="sub rv" data-d="3" style="max-width:720px">75 behavior-contract fixtures all green as the safety net · every opencode provider plugs in · glm / deepseek / copilot quota control</p>
+    <p class="sub rv" data-d="3" style="max-width:720px">124 behavior-contract fixtures all green as the safety net · every opencode provider plugs in · glm / deepseek / copilot quota control</p>
     <div class="chips rv" data-d="4">
-      <span class="chip">Six cognitive lanes</span><span class="chip">Six deterministic gates</span><span class="chip">Four hooks, full lifecycle</span><span class="chip">Probe + breaker self-healing</span><span class="chip">Cross-family review enforced</span>
+      <span class="chip">Six cognitive lanes</span><span class="chip">Weighted scoring engine</span><span class="chip">Traceable decisions</span><span class="chip">Failure isolation</span><span class="chip">Self-update commands</span>
     </div>
     <div class="cmd rv" data-d="5"><span class="ps">$</span> npm install opencode-switchman<span style="opacity:.4;margin:0 4px">·</span>plugin: ["opencode-switchman"]</div>
   </div>
@@ -316,12 +334,12 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
   <div class="inner">
     <div class="badge rv" data-d="1">OPENCODE ORCHESTRATION PLUGIN</div>
     <h1 class="rv" data-d="2">opencode-<span class="fx">switchman</span></h1>
-    <p class="tagline rv" data-d="3">Turn the main model into a <b>dispatcher</b> · Six-lane shell matrix · Deterministic gating × Quota-aware routing</p>
+    <p class="tagline rv" data-d="3">Turn the main model into a <b>dispatcher</b> · Six-lane shell matrix · Deterministic gating × Weighted scoring</p>
     <div class="chips rv" data-d="4">
-      <span class="chip">dynamic shell matrix · live activation from visible models / favorites</span>
+      <span class="chip">dynamic shell matrix · desktop visible models ↔ TUI favorites</span>
       <span class="chip"><b>6</b> cognitive lanes</span>
       <span class="chip"><b>6</b> deterministic gates</span>
-      <span class="chip"><b>4</b> lifecycle hooks</span>
+      <span class="chip"><b>124</b> behavior fixtures</span>
       <span class="chip">every provider · quota control for glm / deepseek / copilot</span>
     </div>
   </div>
@@ -333,9 +351,9 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
     <div class="kicker a rv" data-d="1" style="justify-content:center">CORE VALUE</div>
     <h2 class="title rv" data-d="2" style="font-size:clamp(32px,4.8vw,56px)">Fully-automated model matrix<span class="grad"> + autonomous decisions</span></h2>
     <h2 class="title rv" data-d="3" style="font-size:clamp(22px,2.6vw,34px);margin-top:10px">= every token lands exactly where it matters<span class="grad">. Not one wasted.</span></h2>
-    <p class="sub rv" data-d="4" style="margin:28px auto 0;max-width:760px">The activation matrix rebuilds itself in real time from <b>visible models / favorites / live sessions</b>; six deterministic gates and quota-aware routing run on their own — you decide, the matrix spends.</p>
+    <p class="sub rv" data-d="4" style="margin:28px auto 0;max-width:760px">The activation matrix rebuilds itself in real time from <b>desktop visible models / TUI favorites / live sessions</b>; six gates and weighted scoring run on their own — you decide, the matrix spends.</p>
     <div class="rv" data-d="5" style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-top:36px">
-      <span class="chip">Dynamic activation matrix</span><span class="chip">Six deterministic gates</span><span class="chip">Quota-aware routing</span><span class="chip">Probe &amp; breaker self-healing</span>
+      <span class="chip">Dynamic activation matrix</span><span class="chip">Weighted scoring engine</span><span class="chip">Quota-aware routing</span><span class="chip">Probe / breaker / isolation self-healing</span>
     </div>
   </div>
 </section>
@@ -374,8 +392,8 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
       </div>
       <div class="layer glass l3 rv" data-d="5">
         <div class="tag">LAYER 03</div><h3>Deterministic layer</h3><div class="en">DETERMINISTIC</div>
-        <p>The plugin itself: zero probability, pure rules — every dispatcher decision is held inside hard constraints.</p>
-        <ul><li>Six-gate interception · ROUTE_META hard validation</li><li>Quota / cost-aware lane selection</li><li>Probe + breaker self-healing · four-line banner injection</li></ul>
+        <p>The plugin itself: zero probability, pure rules — every dispatcher decision is held inside hard constraints and explainable scores.</p>
+        <ul><li>Six-gate interception · ROUTE_META hard validation</li><li>Capability-tiered weighted scoring</li><li>Probe / breaker / isolation self-healing · four-line banner injection</li></ul>
       </div>
     </div>
   </div>
@@ -385,15 +403,15 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
 <section class="slide">
   <div class="inner">
     <div class="kicker e rv" data-d="1">THE MATRIX / Shell matrix</div>
-    <h2 class="title rv" data-d="2">52 empty shells,<span class="grad"> all in place at a single startup</span></h2>
+    <h2 class="title rv" data-d="2">Dynamic shells,<span class="grad"> activated from the surface you actually use</span></h2>
     <div class="mxwrap">
       <div>
-        <p class="sub rv" data-d="3" style="margin-bottom:0">At startup the <b>config hook</b> injects the full "model × lane" shell matrix into the agent registry — a shell is merely a <b>binding of model and thinking tier</b>; the role is assigned dynamically by the delegation prompt. Probes check liveness every <b>10 minutes</b> in the background; down combinations automatically enter the degradation chain — <b>zero manual upkeep</b>.</p>
+        <p class="sub rv" data-d="3" style="margin-bottom:0">At startup the <b>config hook</b> injects the "model × effort" shell matrix into the agent registry. Desktop visible models and TUI favorites sync both ways with mtime arbitration; any surface change triggers a full probe recomputation immediately, while the <b>10-minute</b> refresh keeps the matrix self-healing — <b>zero manual upkeep</b>.</p>
         <div class="mxstats">
-          <div class="stat glass rv" data-d="4"><div class="n">13→52</div><div class="l">models → empty shells, full matrix</div></div>
+          <div class="stat glass rv" data-d="4"><div class="n">N×E</div><div class="l">visible models × declared efforts</div></div>
           <div class="stat glass rv" data-d="4"><div class="n">10min</div><div class="l">probe interval · TTL 600s</div></div>
           <div class="stat glass rv" data-d="5"><div class="n">6×N</div><div class="l">six lanes × every provider</div></div>
-          <div class="stat glass rv" data-d="5"><div class="n">0</div><div class="l">keys stored separately (auth read-only)</div></div>
+          <div class="stat glass rv" data-d="5"><div class="n">sync</div><div class="l">visible models ↔ favorites</div></div>
         </div>
         <div class="mxnaming rv" data-d="6">
           <span class="c">shell =</span> <span class="p">copilot</span><span class="c">/</span><span class="p">glm</span><span class="c">/</span><span class="p">ds</span> <span class="c">-mx-</span> <span class="m">model short name</span> <span class="c">-</span><span class="t">off|low|high|max</span>
@@ -413,7 +431,7 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
   <div class="inner">
     <div class="kicker rv" data-d="1">SIX LANES / Six cognitive lanes</div>
     <h2 class="title rv" data-d="2">Token economics first principles: <span class="grad">rework is the most expensive token</span></h2>
-    <p class="sub rv" data-d="3">Six lanes by cognitive intensity, each backed by an optimal shell chain computed live by the plugin from matrix / watermarks / breakers / cost.</p>
+    <p class="sub rv" data-d="3">Six lanes by cognitive intensity, each backed by an optimal shell chain computed live by the plugin from capability tier / effort fit / health / watermarks / cost / peak windows.</p>
     <div class="lanes">
       <div class="lane glass l-eco rv" data-d="3"><div class="ln">economy <s>LANE_1</s></div><h3>Scan & count</h3><p>clerk / scouter cheap sweeps — built for context protection.</p><div class="models">lightweight models · low tier</div></div>
       <div class="lane glass l-mec rv" data-d="4"><div class="ln">mechanical <s>LANE_2</s></div><h3>Regression & scripts</h3><p>tester / ops mechanical execution — high-frequency, verifiable.</p><div class="models">lightweight models · high tier</div></div>
@@ -430,12 +448,12 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
   <div class="inner">
     <div class="kicker v rv" data-d="1">LIFECYCLE HOOKS / Four hooks</div>
     <h2 class="title rv" data-d="2">Hooked into <span class="grad">every heartbeat</span> of opencode's lifecycle</h2>
-    <p class="sub rv" data-d="3">Four hooks cover the full chain: startup injection → dispatch interception → failure accounting → per-turn prompt injection.</p>
+    <p class="sub rv" data-d="3">Four hooks cover the full chain: startup injection → dispatch interception → classified failure accounting → per-turn prompt injection.</p>
     <div class="hookflow">
       <div class="hook glass h1 rv" data-d="3"><div class="dot"></div><div class="api">config</div><h3>Startup injection</h3><p>Injects the full shell matrix into cfg.agent at opencode startup, and collects credentials across all providers (auth read-only, zero separate storage).</p></div>
       <div class="hook glass h2 rv" data-d="4"><div class="dot"></div><div class="api">tool.execute.before</div><h3>Dispatch interception</h3><p>Runs six-gate deterministic validation before the task tool executes; on deny it attaches the reason plus a redirect candidate, and the main model reassigns seamlessly along the chain.</p></div>
-      <div class="hook glass h3 rv" data-d="5"><div class="dot"></div><div class="api">event</div><h3>Failure accounting</h3><p>Failures are written to failures.log; ≥2 failures in a 600s window trip the breaker for 600s, auto-recovering in about 10 minutes.</p></div>
-      <div class="hook glass h4 rv" data-d="6"><div class="dot"></div><div class="api">system.transform</div><h3>Per-turn injection</h3><p>Injects the dispatcher protocol plus the four-line banner into every LLM request — routing / watermarks / limits stay live and visible to the dispatcher.</p></div>
+      <div class="hook glass h3 rv" data-d="5"><div class="dot"></div><div class="api">event</div><h3>Failure classification</h3><p>Normalizes rate_limit / quota / auth / not_found / server / network / unknown, trips 600s breakers, and isolates real-dispatch failures for 10–30 minutes.</p></div>
+      <div class="hook glass h4 rv" data-d="6"><div class="dot"></div><div class="api">system.transform</div><h3>Per-turn injection</h3><p>Injects dispatcher rules plus the four-line banner into every LLM request; every rebuild logs scored candidates to routing-decisions.jsonl.</p></div>
     </div>
     <div class="hooknote glass rv" data-d="7">
       <span class="bolt">⚡</span>
@@ -452,8 +470,8 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
     <p class="sub rv" data-d="3">When the main model dispatches a sub-agent, the plugin validates deterministically before the task tool executes — order is priority.</p>
     <div class="gates">
       <div class="gate glass rv" data-d="3"><div class="gn">01</div><div class="gname">Registry gate</div><div class="gtest">shell not enabled / not probed</div><div class="gact">deny → <b>no dispatch to unregistered faces</b></div></div>
-      <div class="gate glass rv" data-d="3"><div class="gn">02</div><div class="gname">Probe matrix gate</div><div class="gtest">combo probed down</div><div class="gact">deny → <b>block known-unavailable</b></div></div>
-      <div class="gate glass rv" data-d="4"><div class="gn">03</div><div class="gname">Circuit-breaker gate</div><div class="gtest">≥2 failures in a 600s window</div><div class="gact">deny → <b>auto-recovers in ~10 min</b></div></div>
+      <div class="gate glass rv" data-d="3"><div class="gn">02</div><div class="gname">Probe / retired gate</div><div class="gtest">combo down or model retired</div><div class="gact">deny → <b>block unavailable or vanished models</b></div></div>
+      <div class="gate glass rv" data-d="4"><div class="gn">03</div><div class="gname">Breaker / isolation gate</div><div class="gtest">600s breaker or 10–30min real-failure isolation</div><div class="gact">deny → <b>auto-recovers without poisoning the pool</b></div></div>
       <div class="gate glass rv" data-d="4"><div class="gn">04</div><div class="gname">Pool exhaustion gate</div><div class="gtest">quota check will fail</div><div class="gact">deny → <b>human-readable reason</b> (GLM 100% / credits exhausted / DS overdue)</div></div>
       <div class="gate glass rv" data-d="5"><div class="gn">05</div><div class="gname">Protocol gate</div><div class="gtest">ROUTE_META missing / invalid</div><div class="gact">deny → <b>attach sample + valid-value table</b>, auto-correct</div></div>
       <div class="gate glass rv" data-d="5"><div class="gn">06</div><div class="gname">Semantic gate</div><div class="gtest">same-family review / rw→ro / image→non-vision shell</div><div class="gact">deny → <b>review requires cross-family view</b> and other semantic constraints</div></div>
@@ -464,14 +482,14 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
 <!-- S8 BRAIN -->
 <section class="slide">
   <div class="inner">
-    <div class="kicker e rv" data-d="1">AUTO DECISION / Automated decisions</div>
-    <h2 class="title rv" data-d="2">Lane selection isn't guesswork — <span class="grad">it's a live data plane</span></h2>
-    <p class="sub rv" data-d="3">Candidate chains are computed live by the plugin from matrix, watermarks, breakers and cost — the main model just dispatches to the chain head.</p>
+    <div class="kicker e rv" data-d="1">SCORING ENGINE / Automated decisions</div>
+    <h2 class="title rv" data-d="2">Lane selection isn't guesswork — <span class="grad">it's explicit weighted scoring</span></h2>
+    <p class="sub rv" data-d="3">Candidate chains are computed live from curated capability tiers and six coefficients — the main model dispatches to the chain head, and the score trail is logged.</p>
     <div class="brain">
-      <div class="decision glass rv" data-d="3"><span class="di">🎯</span><h3>Quota-aware ordering<code>quota-aware</code></h3><p>GLM monitor / DeepSeek balance / Copilot internal queried directly, tiered TTL caching. <b>Watermarks only affect ordering</b> (weekly quota used up, not wasted); the only hard block is "the call will definitely fail".</p></div>
-      <div class="decision glass rv" data-d="4"><span class="di">📈</span><h3>Peak avoidance + cost tiebreaker<code>cost-aware</code></h3><p>GLM weekday 14:00–18:00 peak auto-yields to the Copilot equivalent; models.dev pricing snapshots join lane selection — <b>on equal watermarks, the cheaper one goes first</b>.</p></div>
-      <div class="decision glass rv" data-d="5"><span class="di">🧬</span><h3>Cross-family review enforced<code>cross-family</code></h3><p>The review chain first strips shells sharing the producer's family, <b>same family counts as self-review</b> — only different blind spots can catch problems.</p></div>
-      <div class="decision glass rv" data-d="6"><span class="di">🛟</span><h3>Fallback & terminal-failure protocol<code>fallback</code></h3><p>DeepSeek's metered pool always sits at the chain tail as fallback, never chosen by auto-routing; if an entire lane is unavailable, the <b>terminal-failure protocol</b> fires: state it explicitly plus two options, never silently downgrade.</p></div>
+      <div class="decision glass rv" data-d="3"><span class="di">🎯</span><h3>Capability tiers are irreversible<code>S/A/B/C</code></h3><p>Curated base scores match exact → prefix → family → global fallback. <b>A lower tier can never outrank a higher tier</b>, even with better water or cost.</p></div>
+      <div class="decision glass rv" data-d="4"><span class="di">📈</span><h3>Six-factor coefficient<code>weighted</code></h3><p>Score = base × effortFit × health × water × costBias × peak. Probe 429 becomes strained health, not a pool-wide jump to another vendor.</p></div>
+      <div class="decision glass rv" data-d="5"><span class="di">🧬</span><h3>Water, cost and peak stay bounded<code>bounded</code></h3><p>Two quota windows use the tighter pressure; Copilot surplus near expiry can be boosted; GLM peak is only ×0.93 same-tier yield, never cross-tier exile.</p></div>
+      <div class="decision glass rv" data-d="6"><span class="di">🧾</span><h3>Traceable decisions<code>jsonl</code></h3><p>Every banner rebuild writes candidates and factor scores into a 200-line routing-decisions.jsonl ring buffer; immediate urgency still sorts by probe latency.</p></div>
     </div>
   </div>
 </section>
@@ -513,9 +531,9 @@ ROUTE_META <span class="tk-p">{</span>
     <div class="bannerbox">
       <div class="brow b1 rv" data-d="3"><div class="bl">[Routing]</div><div class="bt">economy: glm-53f-low→ds-v4fv-off <span class="hl-c">|</span> mechanical: glm-53f-high→ds-v4fv-off <span class="hl-c">|</span> main: ds-v4p-high <span class="hl-c">|</span> hard: ds-v4p-max …</div></div>
       <div class="brow b2 rv" data-d="4"><div class="bl">[Watermark]</div><div class="bt">GLM 5h window <span class="hl-e">23%</span> weekly <span class="hl-e">7%</span> <span class="hl-v">(refresh 09-04 10:00)</span> <span class="hl-c">|</span> Copilot credits unlimited used 3885 <span class="hl-c">|</span> <span class="hl-a">tip: push hard tasks to glm, save credits for key work</span></div></div>
-      <div class="brow b3 rv" data-d="5"><div class="bl">[Limits]</div><div class="bt">down: <span class="hl-e">none</span> <span class="hl-c">|</span> reviewer must be cross-family <span class="hl-v">(producer family ≠ shell family)</span> <span class="hl-c">|</span> DeepSeek tail fallback only</div></div>
-      <div class="brow b4 rv" data-d="6"><div class="bl">[Update]</div><div class="bt">prompts an upgrade when a new plugin version is available <span class="hl-c">—</span> can be disabled via banner.enabled</div></div>
-      <p class="banner-cap rv" data-d="7">The banner is the "dispatch basis" — <b>the roster and six-lane chains follow the three live system-prompt lines</b>; the main model never needs to memorize static config.</p>
+      <div class="brow b3 rv" data-d="5"><div class="bl">[Limits]</div><div class="bt">down: <span class="hl-e">none</span> <span class="hl-c">|</span> retired: <span class="hl-a">0 models</span> <span class="hl-c">|</span> reviewer must be cross-family <span class="hl-v">(producer family ≠ shell family)</span> <span class="hl-c">|</span> DeepSeek tail fallback only</div></div>
+      <div class="brow b4 rv" data-d="6"><div class="bl">[Update]</div><div class="bt">new version available <span class="hl-c">→</span> run <span class="hl-e">/switchman-update</span> or <span class="hl-a">/switchman-ignore</span>; local mode shows manual update guidance</div></div>
+      <p class="banner-cap rv" data-d="7">The banner is the "dispatch basis" — <b>routing, watermarks, limits and update status are all line-parsable</b>; the main model never needs to memorize static config.</p>
     </div>
   </div>
 </section>
@@ -524,12 +542,12 @@ ROUTE_META <span class="tk-p">{</span>
 <section class="slide">
   <div class="inner">
     <div class="kicker r rv" data-d="1">SELF-HEALING / Self-healing data plane</div>
-    <h2 class="title rv" data-d="2">Probe · Breaker · <span class="grad">fail-open</span></h2>
-    <p class="sub rv" data-d="3">The data plane runs fully automatically: liveness, quota, pricing, breakers — no manual intervention.</p>
+    <h2 class="title rv" data-d="2">Probe · Breaker · Isolation · <span class="grad">fail-open</span></h2>
+    <p class="sub rv" data-d="3">The data plane runs fully automatically: liveness, quota, pricing, scoring, classified failures and updates — no manual intervention.</p>
     <div class="heal">
-      <div class="healc glass h1 rv" data-d="3"><div class="ic">🛰️</div><h3>Probe matrix</h3><p>Sends real requests to the three quota pools to check liveness (other providers fail open); the matrix is persisted with TTL 600s. A temporarily-down model needs no upkeep — the 10-minute refresh auto-moves it into the degradation chain.</p><div class="foot">model-matrix.json · probe/10min</div></div>
-      <div class="healc glass h2 rv" data-d="4"><div class="ic">🔥</div><h3>Breaker self-healing</h3><p>Failures are logged by the event hook; ≥2 failures in a 600s sliding window trip the shell for 600s — "breaker open during consecutive failures, auto-recovers in ~10 minutes".</p><div class="foot">routing.json · failures.log</div></div>
-      <div class="healc glass h3 rv" data-d="5"><div class="ic">🫀</div><h3>fail-open law</h3><p>Any hook exception only writes to stderr and never blocks the main flow; unknown quota is never hard-blocked, breaker and probe back each other up — <b style="color:var(--emerald)">the plugin never stalls your workflow</b>.</p><div class="foot">fail-open · zero-block</div></div>
+      <div class="healc glass h1 rv" data-d="3"><div class="ic">🛰️</div><h3>Probe matrix</h3><p>Sends real requests to the three quota pools to check liveness. Surface changes trigger a full refresh immediately; the 10-minute cycle keeps temporary failures in the degradation chain.</p><div class="foot">model-matrix.json · probe/10min</div></div>
+      <div class="healc glass h2 rv" data-d="4"><div class="ic">🔥</div><h3>Classify + isolate</h3><p>Failures become rate_limit / quota / auth / not_found / server / network / unknown. Real-dispatch failures isolate a combo for 10–30 minutes; 3 consecutive 404s retire a model.</p><div class="foot">routing.json · failures.log</div></div>
+      <div class="healc glass h3 rv" data-d="5"><div class="ic">⬆️</div><h3>Self-update path</h3><p>Startup checks cache for 24h. Production installs expose /switchman-update for silent upgrade plus restart notice; /switchman-ignore is session-scoped and resets on restart.</p><div class="foot">[更新] · commands</div></div>
     </div>
   </div>
 </section>
@@ -561,10 +579,10 @@ addEventListener('touchstart',e=>{sx=e.touches[0].clientX;sy=e.touches[0].client
 addEventListener('touchend',e=>{const dx=e.changedTouches[0].clientX-sx,dy=e.changedTouches[0].clientY-sy;if(Math.abs(dx)>60&&Math.abs(dx)>Math.abs(dy)*1.2)go(i+(dx<0?1:-1))},{passive:true});
 /* matrix cells */
 const mg=document.getElementById('mgrid');
-for(let k=0;k<52;k++){const c=document.createElement('div');c.className='mcell'+(Math.random()>.24?' live':'');c.style.animationDelay=(-Math.random()*3)+'s';mg.appendChild(c)}
+for(let k=0;k<72;k++){const c=document.createElement('div');c.className='mcell'+(Math.random()>.24?' live':'');c.style.animationDelay=(-Math.random()*3)+'s';mg.appendChild(c)}
 /* matrix rain */
 const rain=document.getElementById('rain');
-const glyphs=['0','1','{','}','→','λ','Σ','#','glm','ds','52','mx'];
+const glyphs=['0','1','{','}','→','λ','Σ','#','glm','ds','score','mx'];
 for(let k=0;k<26;k++){const s=document.createElement('span');s.textContent=glyphs[k%glyphs.length];s.style.left=(Math.random()*100)+'%';s.style.animationDuration=(7+Math.random()*11)+'s';s.style.animationDelay=(-Math.random()*14)+'s';rain.appendChild(s)}
 document.getElementById('prev').addEventListener('click',e=>{e.stopPropagation();go(i-1)});
 document.getElementById('next').addEventListener('click',e=>{e.stopPropagation();go(i+1)});
