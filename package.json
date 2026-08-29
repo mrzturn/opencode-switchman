@@ -1,6 +1,6 @@
 {
   "name": "opencode-switchman",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "OpenCode 编排插件：六档壳矩阵调度（ROUTE_META 硬校验 / 熔断自愈 / 探针 / 三池配额感知 / 成本感知 tiebreaker）",
   "license": "MIT",
   "repository": {

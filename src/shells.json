@@ -1,6 +1,6 @@
 {
   "_note": "opencode-switchman 全量矩阵：权威启用面（模型管理打开的模型，scripts/visible-models.txt）× 全部声明思考档位（models.dev reasoning_options，toggle→off）。scripts/gen-shells.ts 生成，勿手改；模型开关变化后同步 pin 文件并重跑 bun run gen:shells。六档链 lanes＝矩阵上的静态偏好序。",
-  "generated_at": "2026-08-29T14:52:46.366Z",
+  "generated_at": "2026-08-29T15:47:19.220Z",
   "counts": {
     "shells": 52,
     "visible_models": 13
