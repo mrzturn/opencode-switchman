@@ -25,6 +25,7 @@ import { costOf, refreshCosts, costsStale } from "./cost"
 import { refreshMatrixIfStale, refreshActiveMatrixIfStale, probeKeys } from "./probe"
 import { injectShells, injectShellDefs } from "./shells"
 import { buildBanner } from "./banner"
+import { refreshSelfUpdate, updateBannerText } from "./selfupdate"
 import {
   recordFailure, cleanRoutingExpired, markRealFailure, realFailedComboKeys,
   REAL_FAIL_TTL_MS, RATE_LIMIT_TTL_MS, noteModelNotFound, retiredModelKeys, filterRetiredShells,
@@ -352,6 +353,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         billing: peak,
         advice: routingAdvice(states),
         matrixInfo,
+        update: updateBannerText(),
       })
       // [水位] 行需要原始配额数据 → 二次组装（banner 纯函数吃快照；这里补真实 quota）
       const lines2 = buildBanner({
@@ -363,6 +365,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         advice: routingAdvice(states),
         dsLowWarnCny: options.quota!.deepseek!.lowBalanceWarnCny,
         matrixInfo,
+        update: updateBannerText(),
       })
       // [2026-08-29]-[评分引擎决策日志：每次横幅重建（15s 缓存失效）追加各 lane 评分明细；fail-open 不阻塞]
       try {
@@ -418,6 +421,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           const { registry } = currentContext()
           const n = injectShells(cfg, registry)
           console.log(`[opencode-switchman] 已注入 ${n} 只模型空壳（agent，legacy 静态矩阵）`)
+          // [2026-08-29]-[配置钩子触发自更新检查]-[检查异步且失败不阻塞启动]
+          refreshSelfUpdate().then((state) => { if (state?.outdated) clearBannerCache() }).catch(() => {})
           return
         }
         // [2026-08-29]-[超集注入：config 一次（cfg.agent 运行期不可变）→运行期激活门控]
@@ -469,6 +474,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         manager.recompute(configured)
         manager.start()
         console.log(`[opencode-switchman] 已注入 ${injected.size} 只超集壳（${supersetModels.length} 模型×档位，模式=${runMode}，冲突 ${conflicts.size}；激活门控运行中）`)
+        // [2026-08-29]-[配置钩子触发自更新检查]-[检查异步且失败不阻塞启动]
+        refreshSelfUpdate().then((state) => { if (state?.outdated) clearBannerCache() }).catch(() => {})
       } catch (exc) {
         console.error(`[opencode-switchman] config 钩子 fail-open: ${exc}`)
       }
