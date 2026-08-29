@@ -19,7 +19,7 @@ import { checkShell, shellLikeName, denyUninjected } from "../src/gates"
 import { buildBanner } from "../src/banner"
 import { readJson, paths, loadManifest } from "../src/state"
 import { injectShells } from "../src/shells"
-import { chatParamsModelKey, sessionDeletedId, sessionCreatedInfo } from "../src/index"
+import { chatParamsModelKey, sessionDeletedId, sessionCreatedInfo } from "../src/helpers"
 import { LANE_ORDER } from "../src/types"
 import type { GateSnapshot, ShellRegEntry } from "../src/types"
 

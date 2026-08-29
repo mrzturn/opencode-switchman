@@ -28,6 +28,9 @@ import { LANE_ORDER } from "./types"
 import type { SwitchmanOptions, Lane, LaneResult, Pool, ShellRegEntry, ModelKey } from "./types"
 import { detectMode, readConfigured, normalizeProviderListResponse } from "./activation"
 import type { MatrixModeOption } from "./activation"
+// [2026-08-29]-[事件/参数形状提取纯函数迁至 helpers.ts：入口禁导出非插件函数，否则
+//  opencode 会把它们当插件工厂调用产生 null hooks，炸掉 config 钩子与 provider.list]-[修复启动报错]
+import { chatParamsModelKey, sessionDeletedId, sessionCreatedInfo } from "./helpers"
 import { MatrixManager } from "./matrix-manager"
 import { laneBaseChain } from "./lane-policy"
 import {
@@ -75,33 +78,6 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 }
 
 interface Credentials { glmKey?: string; dsKey?: string; copilotToken?: string; glmBaseURL?: string; deepseekBaseURL?: string }
-
-// ---- 事件/参数形状提取（纯函数，供 hook 单测） ----
-// [2026-08-29]-[修复复审P1-chat.params 形状：input.model 是 Model 对象（plugin/src/index.ts:248，
-//  schema model.ts:16 providerID + id），provider 是 ProviderContext 对象——非字符串]
-export function chatParamsModelKey(input: unknown): ModelKey | null {
-  const m = (input as any)?.model
-  const providerID = typeof m?.providerID === "string" ? m.providerID : ""
-  const id = typeof m?.id === "string" ? m.id : ""
-  return providerID && id ? (`${providerID}/${id}` as ModelKey) : null
-}
-
-// [2026-08-29]-[修复复审P1-session.deleted 形状：事件 properties 为 {info:{id,...}}（sdk types.gen.ts:576-580）；
-//  保留 .sessionID/.session.id 兜底链兼容旧形状]
-export function sessionDeletedId(properties: unknown): string | null {
-  const p = (properties ?? {}) as any
-  const id = p?.info?.id ?? p?.sessionID ?? p?.session?.id
-  return typeof id === "string" && id ? id : null
-}
-
-/** session.created 事件 → {id, agent}（properties.info；agent 供预注册分类）
- *  注：sdk types.gen.ts 的 Session 类型缺 agent 字段，但运行时 SessionSchema.Info 含 agent（clone schema/src/session.ts:224-238），此处按运行时形状实现 */
-export function sessionCreatedInfo(properties: unknown): { id: string; agent: string } | null {
-  const info = (properties as any)?.info
-  const id = info?.id
-  const agent = info?.agent
-  return typeof id === "string" && id && typeof agent === "string" && agent ? { id, agent } : null
-}
 
 export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   const options = normalizeOptions(rawOptions)
