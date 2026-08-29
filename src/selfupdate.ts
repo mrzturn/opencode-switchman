@@ -2,6 +2,7 @@
 import { execFileSync } from "node:child_process"
 import { mkdirSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
+import { fileURLToPath } from "node:url"
 import { homedir } from "node:os"
 import { paths, readJson, withPathLock, writeJsonAtomic } from "./state"
 import { PLUGIN_VERSION } from "./version"
@@ -18,12 +19,27 @@ export interface SelfUpdateState {
 
 const UPDATE_TTL_MS = 24 * 60 * 60 * 1000
 
+// [2026-08-29]-[修复P0：桌面端 opencode 模块加载器不提供 import.meta.dir（bun/CLI 有）——
+//  config 钩子一进 detectLoadMode 即 TypeError split，fail-open 吞掉后零壳注入、派发全灭；
+//  回退 import.meta.url（ESM 规范保证存在）解析目录]-
+function moduleDir(): string {
+  const meta = import.meta as any
+  if (typeof meta.dir === "string" && meta.dir) return meta.dir
+  const url = typeof meta.url === "string" ? meta.url : ""
+  if (url.startsWith("file://")) {
+    try {
+      return fileURLToPath(url)
+    } catch { /* fallthrough */ }
+  }
+  return decodeURIComponent(url).replace(/^file:\/\//, "")
+}
+
 export function modeOfDistPath(dir: string): LoadMode {
   return dir.split(/[\\/]+/).includes("node_modules") ? "prod" : "local"
 }
 
 export function detectLoadMode(): LoadMode {
-  return modeOfDistPath(import.meta.dir)
+  return modeOfDistPath(moduleDir())
 }
 
 /** 正数表示 latest 较 current 新；预发布标记按规格忽略。 */
@@ -54,7 +70,7 @@ export function readSelfUpdateState(): SelfUpdateState | null {
 }
 
 function localUpdateState(): SelfUpdateState {
-  const root = dirname(import.meta.dir)
+  const root = dirname(moduleDir())
   const latest = execFileSync("git", ["ls-remote", "https://github.com/mrzturn/opencode-switchman.git", "refs/heads/main"], {
     timeout: 8_000, encoding: "utf8",
   }).trim().split(/\s+/)[0]
