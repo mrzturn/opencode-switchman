@@ -82,7 +82,7 @@ After starting opencode, every system prompt of the primary model carries a live
 [限制] down: none | reviewer must be hetero-family (producer family ≠ shell family) | DeepSeek tail-only fallback
 ```
 
-The log also shows `[opencode-switchman] injected 52 model shells (agents)`.
+The log also shows `[opencode-switchman] injected N model shells (agents)` — N varies dynamically with the model surface of credentialed providers.
 
 ### Options
 
@@ -201,17 +201,17 @@ ROUTE_META {"lane":"main","role":"programmer","producer_family":"glm","capabilit
 
 ## Maintaining the model matrix
 
-The bundled matrix reflects the author's enabled surface (13 models → 52 shells). If yours differs, regenerate from source:
+By default (`matrix.mode=auto`) the matrix is built at runtime: visible models / favorites / session models are activated automatically — zero upkeep. Temporary model outages self-heal via probes (10-minute background refresh, automatic degradation/breaking).
+
+The bundled static matrix (13 models → 52 shells) serves only `legacy` mode and runtime metadata fallback. To customize the static surface:
 
 ```bash
 # 1. Sync the authoritative enabled surface (models visible in opencode model management, one provider/model-id per line)
 $EDITOR scripts/visible-models.txt
-# 2. Regenerate the matrix (fetches effort tiers from models.dev)
+# 2. Regenerate the bundled matrix (fetches effort tiers from models.dev)
 bun run gen:shells
-# 3. Restart opencode
+# 3. Restart opencode (takes effect in legacy mode)
 ```
-
-Temporary model outages need no maintenance — the probe refreshes every 10 minutes in the background and feeds degradation/breaking automatically.
 
 ## Development & Verification
 

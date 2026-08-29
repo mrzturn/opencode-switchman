@@ -82,7 +82,7 @@ bun run build   # 生成 dist/opencode-switchman.js
 [限制] down: 无 | reviewer 须异族（producer family ≠ 壳 family） | DeepSeek 仅链尾兜底
 ```
 
-同时日志可见 `[opencode-switchman] 已注入 52 只模型空壳（agent）`。
+同时日志可见 `[opencode-switchman] 已注入 N 只模型空壳（agent）`——N 随有凭证 provider 的模型面动态变化。
 
 ### 配置项
 
@@ -201,17 +201,17 @@ ROUTE_META {"lane":"main","role":"programmer","producer_family":"glm","capabilit
 
 ## 模型矩阵维护
 
-内置矩阵基于作者的启用面（13 模型 → 52 壳）。你的模型管理与之不同时，从源码重生成：
+默认（`matrix.mode=auto`）矩阵在运行期动态构建：可见模型 / favorites / 会话模型自动激活，无需任何维护；模型临时 down 由探针自愈（每 10 分钟后台刷新，自动进降级/熔断）。
+
+内置静态矩阵（13 模型 → 52 壳）仅作为 `legacy` 模式与运行期元数据的兜底。如需自定义静态面：
 
 ```bash
 # 1. 同步权威启用面（opencode 模型管理中打开的模型，每行 provider/model-id）
 $EDITOR scripts/visible-models.txt
-# 2. 重生成矩阵（拉取 models.dev 档位声明）
+# 2. 重生成内置矩阵（拉取 models.dev 档位声明）
 bun run gen:shells
-# 3. 重启 opencode
+# 3. 重启 opencode（legacy 模式生效）
 ```
-
-模型临时 down 无需维护——探针每 10 分钟后台刷新，自动进降级/熔断。
 
 ## 开发与验证
 
