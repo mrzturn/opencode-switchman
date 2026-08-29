@@ -2,6 +2,8 @@
 
 **English** | [中文](./README.zh.md)
 
+> ### 🎯 Fully-automated model matrix ＋ autonomous decisions ＝ every token lands exactly where it matters. Not one wasted.
+
 > **🎬 [Live Presentation Deck](https://mrzturn.github.io/opencode-switchman/)**(GitHub Pages, works on desktop & mobile)
 >
 > [![opencode-switchman capability overview](docs/assets/preview-en.png)](https://mrzturn.github.io/opencode-switchman/)
@@ -92,9 +94,21 @@ The log also shows `[opencode-switchman] injected 52 model shells (agents)`.
 | `cost.enabled` | `true` | models.dev pricing snapshot as chain tiebreaker |
 | `billingWindow.glmPeakHours / dsPeakRanges` | GLM weekdays 14–18 | Peak window definitions (affect pool ordering) |
 | `providers.glm / providers.deepseek` | `["zhipuai-coding-plan","glm","zai"]` / `["deepseek"]` | Provider-id lists per pool (for credential collection) |
+| `matrix.mode` | `auto` | Dynamic activation mode: `auto` by host (desktop = visible models / cli = favorites), `app`/`tui` force a mode, `legacy` restores the static matrix |
+| `matrix.watch` | `true` | Watch visible-model / favorites changes live; recompute the active matrix and probe incrementally |
 | `banner.enabled` | `true` | Four-line banner injection |
 | `rules.enabled` | `true` | Bundled dispatcher rules (AGENTS.md) injection |
 | `lanes` | built-in chains | Custom per-lane shell chains (override built-in preference order) |
+
+## Dynamic Activation Matrix
+
+The shell matrix is no longer a static list — it is built at runtime and updated in real time:
+
+- **Desktop app**: active matrix = visible models from model management; **CLI/TUI**: active matrix = favorites
+- With neither configured, it falls back to "the models your live sessions are actually using"; concurrent sessions are unioned, and any model switch is followed in real time on the next request
+- Model-management / favorites changes are watched live (fs.watch + mtime polling fallback), recomputing the active matrix with **incremental probing** — fail-open throughout
+- Newly added providers are detected in real time with a banner notice (the agent registry is immutable at runtime, so their shells are **registered automatically after restarting opencode** — zero manual maintenance)
+- A superset of shells (every conversation-capable model of credentialed providers × models.dev tiers) is injected at startup; `matrix.mode=legacy` fully restores the old static behavior
 
 ## Core Ideas
 

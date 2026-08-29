@@ -2,6 +2,8 @@
 
 [English](./README.md) | **中文**
 
+> ### 🎯 全自动模型矩阵 ＋ 自主决策 ＝ 让每一个 token 都花在最该花的地方，一个都不浪费
+
 > **🎬 [在线演示文稿 · 能力全览](https://mrzturn.github.io/opencode-switchman/index.zh.html)**（GitHub Pages，支持手机滑动翻页）
 >
 > [![opencode-switchman 能力介绍演示](docs/assets/preview.png)](https://mrzturn.github.io/opencode-switchman/index.zh.html)
@@ -92,9 +94,21 @@ bun run build   # 生成 dist/opencode-switchman.js
 | `cost.enabled` | `true` | models.dev 计价快照参与选链 tiebreaker |
 | `billingWindow.glmPeakHours / dsPeakRanges` | GLM 工作日 14–18 | 高峰窗口定义（影响选池排序） |
 | `providers.glm / providers.deepseek` | `["zhipuai-coding-plan","glm","zai"]` / `["deepseek"]` | 池对应的 provider id 清单（凭证收集用） |
+| `matrix.mode` | `auto` | 动态激活模式：`auto` 按宿主自动（desktop=可见模型 / cli=favorites），`app`/`tui` 强制指定，`legacy` 旧静态矩阵 |
+| `matrix.watch` | `true` | 实时监听可见模型 / favorites 变化，重算激活矩阵并增量探针 |
 | `banner.enabled` | `true` | 四行横幅注入开关 |
 | `rules.enabled` | `true` | 调度员规程（AGENTS.md）随包注入开关 |
 | `lanes` | 内置六档链 | 自定义各档壳链（覆盖内置偏好序） |
+
+## 动态激活矩阵
+
+壳矩阵不再是静态清单，而是运行期动态构建、实时更新：
+
+- **desktop app**：激活矩阵 = 模型管理中的可见模型；**CLI/TUI**：激活矩阵 = favorites
+- 两者皆未设置时，自动回退为「当前活跃会话正在使用的模型」；多会话并行取并集，任何会话切换模型，矩阵在下一请求实时跟进
+- 模型管理 / favorites 变更实时监听（fs.watch + mtime 轮询兜底），重算激活矩阵并**增量探针**，全程 fail-open
+- 新增 provider 实时检测并横幅提示（agent 注册表运行期不可变，对应壳**重启 opencode 后自动纳入**，无需手动维护）
+- 启动即注入超集壳（有凭证 provider 的全部可对话模型 × models.dev 档位），`matrix.mode=legacy` 可完整回退旧静态矩阵行为
 
 ## 核心思想
 
