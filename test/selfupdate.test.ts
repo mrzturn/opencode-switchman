@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { bannerTextOf, compareSemver, modeOfDistPath } from "../src/selfupdate"
+import { mkdtempSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { bannerTextOf, compareSemver, ensureUpgradeCommand, modeOfDistPath } from "../src/selfupdate"
+import { readFileSync, existsSync } from "node:fs"
 import type { SelfUpdateState } from "../src/selfupdate"
 
 describe("插件自更新纯函数", () => {
@@ -23,5 +27,22 @@ describe("插件自更新纯函数", () => {
     expect(bannerTextOf(prod)).toContain("有新版 0.0.2（当前 0.0.1）")
     expect(bannerTextOf(local)).toContain("git pull && bun run mode:local")
     expect(bannerTextOf({ ...prod, outdated: false })).toBeNull()
+  })
+})
+
+describe("一键升级命令资产", () => {
+  test("prod 写入 /switchman-update（npm 静默安装模板），local 删除残留", () => {
+    const base = mkdtempSync(join(tmpdir(), "sw-cmd-"))
+    ensureUpgradeCommand("prod", base)
+    const file = join(base, "command", "switchman-update.md")
+    const md = readFileSync(file, "utf8")
+    expect(md).toContain("npm install opencode-switchman@latest")
+    expect(md).toContain("description:")
+    ensureUpgradeCommand("local", base)
+    expect(existsSync(file)).toBe(false)
+  })
+  test("upgradeCommandMd：local 模式文案不含一键升级入口", () => {
+    expect(bannerTextOf({ checked_at: "", mode: "local", current: "0.0.1", latest: "", outdated: true })).not.toContain("/switchman-update")
+    expect(bannerTextOf({ checked_at: "", mode: "prod", current: "0.0.1", latest: "9.9.9", outdated: true })).toContain("/switchman-update")
   })
 })

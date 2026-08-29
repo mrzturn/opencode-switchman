@@ -25,7 +25,7 @@ import { costOf, refreshCosts, costsStale } from "./cost"
 import { refreshMatrixIfStale, refreshActiveMatrixIfStale, probeKeys } from "./probe"
 import { injectShells, injectShellDefs } from "./shells"
 import { buildBanner } from "./banner"
-import { refreshSelfUpdate, updateBannerText } from "./selfupdate"
+import { refreshSelfUpdate, updateBannerText, ensureUpgradeCommand, detectLoadMode } from "./selfupdate"
 import {
   recordFailure, cleanRoutingExpired, markRealFailure, realFailedComboKeys,
   REAL_FAIL_TTL_MS, RATE_LIMIT_TTL_MS, noteModelNotFound, retiredModelKeys, filterRetiredShells,
@@ -416,6 +416,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       try {
         collectCreds(cfg)
         creds.copilotToken = creds.copilotToken ?? readAuthStore().githubToken
+        // [2026-08-29]-[一键升级命令资产：prod 注册 /switchman-update，local 删除残留——legacy/动态两路都生效]-
+        ensureUpgradeCommand(detectLoadMode())
         if (!dynamic) {
           // legacy：静态 shells.json 路径（行为与 v1.2 逐字节一致）
           const { registry } = currentContext()
