@@ -304,7 +304,7 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
   <div class="inner">
     <div class="kicker e rv" data-d="1" style="justify-content:center">GET STARTED</div>
     <h2 class="rv" data-d="2">多订阅者的高级玩法：<br><span class="grad">让每一分 token 都花在刀刃上</span></h2>
-    <p class="sub rv" data-d="3" style="max-width:720px">75 项行为契约 fixture 全绿兜底 · 状态目录全量落盘可审计 · 三池任意组合、无凭证自动跳过</p>
+    <p class="sub rv" data-d="3" style="max-width:720px">75 项行为契约 fixture 全绿兜底 · 全供应商即插即用 · glm / deepseek / copilot 额度控制</p>
     <div class="chips rv" data-d="4">
       <span class="chip">六档认知分层</span><span class="chip">六闸确定性拦截</span><span class="chip">四钩子全生命周期</span><span class="chip">探针熔断自愈</span><span class="chip">强制异族复审</span>
     </div>
@@ -322,7 +322,7 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
       <span class="chip"><b>6</b> 档认知分层</span>
       <span class="chip"><b>6</b> 闸确定性拦截</span>
       <span class="chip"><b>4</b> 个生命周期钩子</span>
-      <span class="chip">三池配额感知</span>
+      <span class="chip">全供应商接入 · 三池额度控制</span>
     </div>
   </div>
 </section>
@@ -392,7 +392,7 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
         <div class="mxstats">
           <div class="stat glass rv" data-d="4"><div class="n">13→52</div><div class="l">模型 → 空壳 动态激活</div></div>
           <div class="stat glass rv" data-d="4"><div class="n">10min</div><div class="l">探针周期 · TTL 600s</div></div>
-          <div class="stat glass rv" data-d="5"><div class="n">6×3</div><div class="l">六档链 × 三大模型池</div></div>
+          <div class="stat glass rv" data-d="5"><div class="n">6×N</div><div class="l">六档链 × 全供应商</div></div>
           <div class="stat glass rv" data-d="5"><div class="n">0</div><div class="l">密钥另存（auth 只读）</div></div>
         </div>
         <div class="mxnaming rv" data-d="6">
@@ -432,7 +432,7 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
     <h2 class="title rv" data-d="2">钩入 opencode 生命周期的<span class="grad">每一次心跳</span></h2>
     <p class="sub rv" data-d="3">四个钩子覆盖「启动注入 → 派发拦截 → 失败记账 → 每轮提示注入」全链路。</p>
     <div class="hookflow">
-      <div class="hook glass h1 rv" data-d="3"><div class="dot"></div><div class="api">config</div><h3>启动注入</h3><p>opencode 启动即注入全量壳矩阵到 cfg.agent，同步完成三池凭证收集（auth 只读、零另存）。</p></div>
+      <div class="hook glass h1 rv" data-d="3"><div class="dot"></div><div class="api">config</div><h3>启动注入</h3><p>opencode 启动即注入全量壳矩阵到 cfg.agent，同步完成全供应商凭证收集（auth 只读、零另存）。</p></div>
       <div class="hook glass h2 rv" data-d="4"><div class="dot"></div><div class="api">tool.execute.before</div><h3>派发拦截</h3><p>task 工具执行前做六闸确定性校验，deny 时附原因＋改派候选，主模型按链无缝改派。</p></div>
       <div class="hook glass h3 rv" data-d="5"><div class="dot"></div><div class="api">event</div><h3>失败记账</h3><p>执行失败写入 failures.log，600s 窗内 ≥2 败自动触发熔断 600s，约 10 分钟自愈恢复。</p></div>
       <div class="hook glass h4 rv" data-d="6"><div class="dot"></div><div class="api">system.transform</div><h3>每轮注入</h3><p>每轮 LLM 请求注入调度员规程＋四行横幅，路由 / 水位 / 限制对调度员实时可见。</p></div>
@@ -527,7 +527,7 @@ ROUTE_META <span class="tk-p">{</span>
     <h2 class="title rv" data-d="2">探针 · 熔断 · <span class="grad">fail-open</span></h2>
     <p class="sub rv" data-d="3">数据面全部自动运行：探活、配额、计价、熔断——无需任何人工干预。</p>
     <div class="heal">
-      <div class="healc glass h1 rv" data-d="3"><div class="ic">🛰️</div><h3>探针矩阵</h3><p>对三池发起真实请求探活，矩阵落盘 TTL 600s。模型临时 down 无需维护——10 分钟周期刷新，自动进降级链。</p><div class="foot">model-matrix.json · probe/10min</div></div>
+      <div class="healc glass h1 rv" data-d="3"><div class="ic">🛰️</div><h3>探针矩阵</h3><p>对三大额度池发起真实请求探活（其余供应商 fail-open 放行），矩阵落盘 TTL 600s。模型临时 down 无需维护——10 分钟周期刷新，自动进降级链。</p><div class="foot">model-matrix.json · probe/10min</div></div>
       <div class="healc glass h2 rv" data-d="4"><div class="ic">🔥</div><h3>熔断自愈</h3><p>执行失败由 event 钩子记账，600s 滑窗内 ≥2 败即熔断该壳 600s——「连续失败熔断中，约 10 分钟自动恢复」。</p><div class="foot">routing.json · failures.log</div></div>
       <div class="healc glass h3 rv" data-d="5"><div class="ic">🫀</div><h3>fail-open 铁律</h3><p>任何钩子异常只写 stderr 绝不阻塞主流程；配额未知不硬拦、熔断器与探针互为兜底——<b style="color:var(--emerald)">插件永不卡死你的工作流</b>。</p><div class="foot">fail-open · zero-block</div></div>
     </div>

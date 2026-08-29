@@ -8,7 +8,7 @@
 >
 > [![opencode-switchman 能力介绍演示](docs/assets/preview.png)](https://mrzturn.github.io/opencode-switchman/index.zh.html)
 
-OpenCode 六档壳矩阵编排插件——让主模型成为调度员，把任务按「认知档位」委派给跨三大模型池的子代理空壳，插件层做确定性拦截与配额感知路由。
+OpenCode 六档壳矩阵编排插件——让主模型成为调度员，把任务按「认知档位」委派给跨任意 opencode 供应商的子代理空壳，插件层做确定性拦截；glm / deepseek / copilot 三池额外享有配额感知路由。
 
 如果你同时持有多个模型订阅（GitHub Copilot premium 积分、智谱 GLM Coding Plan、DeepSeek 按量余额），却总是一个模型用到天荒地老、水位盲飞、高峰全价硬扛——opencode-switchman 就是为你准备的。
 
@@ -17,7 +17,7 @@ OpenCode 六档壳矩阵编排插件——让主模型成为调度员，把任�
 ### 前置条件
 
 - [opencode](https://opencode.ai)（桌面端或 CLI）
-- 至少配置一个受支持的模型池（三池可任意组合，全部可选）：
+- 任意 opencode 供应商均可接入，以下三池额外享有额度控制（可任意组合，全部可选）：
   - **GitHub Copilot**：opencode 内 GitHub 登录（`/connect`）即可
   - **GLM**：自定义 provider（`zhipuai-coding-plan`，baseURL `https://open.bigmodel.cn/api/coding/paas/v4` + apiKey）
   - **DeepSeek**：自定义 provider（`deepseek` + apiKey）
@@ -88,7 +88,7 @@ bun run build   # 生成 dist/opencode-switchman.js
 
 | 选项 | 默认 | 说明 |
 |---|---|---|
-| `quota.glm / quota.deepseek / quota.copilot.enabled` | `true` | 三池配额感知逐池开关（无凭证自动跳过） |
+| `quota.glm / quota.deepseek / quota.copilot.enabled` | `true` | 额度控制逐池开关：glm / deepseek / copilot（无凭证自动跳过） |
 | `quota.glm.fiveHourReservePct` | `90` | GLM 5 小时窗预留水位（%）：达到即硬拦 GLM 壳避免用满 429；周额度仍只认 100% |
 | `quota.deepseek.lowBalanceWarnCny` | `10` | DeepSeek 余额预警阈值（元）：低于该值横幅 [水位] 提示（仅预警不硬拦） |
 | `cost.enabled` | `true` | models.dev 计价快照参与选链 tiebreaker |
@@ -189,7 +189,7 @@ ROUTE_META {"lane":"main","role":"programmer","producer_family":"glm","capabilit
 
 ### 数据面（全部自动、fail-open）
 
-- **探针**：对三池发起真实请求探活，矩阵落盘（TTL 600s），down 组合自动进降级链
+- **探针**：对三大额度池发起真实请求探活（其余供应商 fail-open 放行），矩阵落盘（TTL 600s），down 组合自动进降级链
 - **配额**：GLM monitor / DeepSeek balance / Copilot `copilot_internal/user` 直查，无代理、分层 TTL 缓存
 - **成本**：models.dev 计价快照，水位同分时便宜者前（tiebreaker 弱参与）
 - **横幅**：每轮系统提示注入 `[路由][水位][限制][更新]` 四行，调度员实时可见

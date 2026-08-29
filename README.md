@@ -8,7 +8,7 @@
 >
 > [![opencode-switchman capability overview](docs/assets/preview-en.png)](https://mrzturn.github.io/opencode-switchman/)
 
-A six-lane shell-matrix orchestration plugin for OpenCode — turns your primary model into a dispatcher that delegates tasks by cognitive tier to bare subagent shells across three model pools, while the plugin layer enforces deterministic gating and quota-aware routing.
+A six-lane shell-matrix orchestration plugin for OpenCode — turns your primary model into a dispatcher that delegates tasks by cognitive tier to bare subagent shells across any opencode provider, while the plugin layer enforces deterministic gating; glm / deepseek / copilot additionally get quota-aware routing.
 
 If you hold multiple model subscriptions (GitHub Copilot premium credits, Zhipu GLM Coding Plan, DeepSeek pay-as-you-go balance) but keep burning a single model forever, blind to water levels and peak pricing — opencode-switchman is built for you.
 
@@ -17,7 +17,7 @@ If you hold multiple model subscriptions (GitHub Copilot premium credits, Zhipu 
 ### Prerequisites
 
 - [opencode](https://opencode.ai) (desktop app or CLI)
-- At least one supported model pool (any combination, all optional):
+- Any opencode provider works out of the box; the following three additionally get quota control (any combination, all optional):
   - **GitHub Copilot**: just sign in via GitHub in opencode (`/connect`)
   - **GLM**: custom provider (`zhipuai-coding-plan`, baseURL `https://open.bigmodel.cn/api/coding/paas/v4` + apiKey)
   - **DeepSeek**: custom provider (`deepseek` + apiKey)
@@ -189,7 +189,7 @@ ROUTE_META {"lane":"main","role":"programmer","producer_family":"glm","capabilit
 
 ### Data plane (fully automatic, fail-open)
 
-- **Probe**: fires real requests against all three pools, persists a matrix (TTL 600s); down combos drop out of chains automatically
+- **Probe**: fires real requests against the three quota pools (other providers fail open), persists a matrix (TTL 600s); down combos drop out of chains automatically
 - **Quotas**: direct queries — GLM monitor / DeepSeek balance / Copilot `copilot_internal/user` — no proxy, tiered TTL caches
 - **Costs**: models.dev pricing snapshot; on equal water-level scores the cheaper shell sorts first (weak tiebreaker)
 - **Banner**: `[路由][水位][限制][更新]` four lines injected into every system prompt, keeping the dispatcher informed

@@ -304,7 +304,7 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
   <div class="inner">
     <div class="kicker e rv" data-d="1" style="justify-content:center">GET STARTED</div>
     <h2 class="rv" data-d="2">The advanced play for multi-subscribers:<br><span class="grad">every token spent where it counts</span></h2>
-    <p class="sub rv" data-d="3" style="max-width:720px">75 behavior-contract fixtures all green as the safety net · state directory fully persisted and auditable · any combination of three pools, credentials auto-skipped when absent</p>
+    <p class="sub rv" data-d="3" style="max-width:720px">75 behavior-contract fixtures all green as the safety net · every opencode provider plugs in · glm / deepseek / copilot quota control</p>
     <div class="chips rv" data-d="4">
       <span class="chip">Six cognitive lanes</span><span class="chip">Six deterministic gates</span><span class="chip">Four hooks, full lifecycle</span><span class="chip">Probe + breaker self-healing</span><span class="chip">Cross-family review enforced</span>
     </div>
@@ -322,7 +322,7 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
       <span class="chip"><b>6</b> cognitive lanes</span>
       <span class="chip"><b>6</b> deterministic gates</span>
       <span class="chip"><b>4</b> lifecycle hooks</span>
-      <span class="chip">quota-aware across 3 pools</span>
+      <span class="chip">every provider · quota control for glm / deepseek / copilot</span>
     </div>
   </div>
 </section>
@@ -392,7 +392,7 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
         <div class="mxstats">
           <div class="stat glass rv" data-d="4"><div class="n">13→52</div><div class="l">models → empty shells, full matrix</div></div>
           <div class="stat glass rv" data-d="4"><div class="n">10min</div><div class="l">probe interval · TTL 600s</div></div>
-          <div class="stat glass rv" data-d="5"><div class="n">6×3</div><div class="l">six lanes × three model pools</div></div>
+          <div class="stat glass rv" data-d="5"><div class="n">6×N</div><div class="l">six lanes × every provider</div></div>
           <div class="stat glass rv" data-d="5"><div class="n">0</div><div class="l">keys stored separately (auth read-only)</div></div>
         </div>
         <div class="mxnaming rv" data-d="6">
@@ -432,7 +432,7 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
     <h2 class="title rv" data-d="2">Hooked into <span class="grad">every heartbeat</span> of opencode's lifecycle</h2>
     <p class="sub rv" data-d="3">Four hooks cover the full chain: startup injection → dispatch interception → failure accounting → per-turn prompt injection.</p>
     <div class="hookflow">
-      <div class="hook glass h1 rv" data-d="3"><div class="dot"></div><div class="api">config</div><h3>Startup injection</h3><p>Injects the full shell matrix into cfg.agent at opencode startup, and collects credentials across the three pools (auth read-only, zero separate storage).</p></div>
+      <div class="hook glass h1 rv" data-d="3"><div class="dot"></div><div class="api">config</div><h3>Startup injection</h3><p>Injects the full shell matrix into cfg.agent at opencode startup, and collects credentials across all providers (auth read-only, zero separate storage).</p></div>
       <div class="hook glass h2 rv" data-d="4"><div class="dot"></div><div class="api">tool.execute.before</div><h3>Dispatch interception</h3><p>Runs six-gate deterministic validation before the task tool executes; on deny it attaches the reason plus a redirect candidate, and the main model reassigns seamlessly along the chain.</p></div>
       <div class="hook glass h3 rv" data-d="5"><div class="dot"></div><div class="api">event</div><h3>Failure accounting</h3><p>Failures are written to failures.log; ≥2 failures in a 600s window trip the breaker for 600s, auto-recovering in about 10 minutes.</p></div>
       <div class="hook glass h4 rv" data-d="6"><div class="dot"></div><div class="api">system.transform</div><h3>Per-turn injection</h3><p>Injects the dispatcher protocol plus the four-line banner into every LLM request — routing / watermarks / limits stay live and visible to the dispatcher.</p></div>
@@ -527,7 +527,7 @@ ROUTE_META <span class="tk-p">{</span>
     <h2 class="title rv" data-d="2">Probe · Breaker · <span class="grad">fail-open</span></h2>
     <p class="sub rv" data-d="3">The data plane runs fully automatically: liveness, quota, pricing, breakers — no manual intervention.</p>
     <div class="heal">
-      <div class="healc glass h1 rv" data-d="3"><div class="ic">🛰️</div><h3>Probe matrix</h3><p>Sends real requests to the three pools to check liveness; the matrix is persisted with TTL 600s. A temporarily-down model needs no upkeep — the 10-minute refresh auto-moves it into the degradation chain.</p><div class="foot">model-matrix.json · probe/10min</div></div>
+      <div class="healc glass h1 rv" data-d="3"><div class="ic">🛰️</div><h3>Probe matrix</h3><p>Sends real requests to the three quota pools to check liveness (other providers fail open); the matrix is persisted with TTL 600s. A temporarily-down model needs no upkeep — the 10-minute refresh auto-moves it into the degradation chain.</p><div class="foot">model-matrix.json · probe/10min</div></div>
       <div class="healc glass h2 rv" data-d="4"><div class="ic">🔥</div><h3>Breaker self-healing</h3><p>Failures are logged by the event hook; ≥2 failures in a 600s sliding window trip the shell for 600s — "breaker open during consecutive failures, auto-recovers in ~10 minutes".</p><div class="foot">routing.json · failures.log</div></div>
       <div class="healc glass h3 rv" data-d="5"><div class="ic">🫀</div><h3>fail-open law</h3><p>Any hook exception only writes to stderr and never blocks the main flow; unknown quota is never hard-blocked, breaker and probe back each other up — <b style="color:var(--emerald)">the plugin never stalls your workflow</b>.</p><div class="foot">fail-open · zero-block</div></div>
     </div>
