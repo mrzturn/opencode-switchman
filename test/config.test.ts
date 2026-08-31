@@ -29,20 +29,20 @@ describe("用户水位配置", () => {
   test("缺文件生成带 schema/version/providers 中文注释的完整模板", () => {
     const home = sandbox(); const loaded = load(home)
     const body = readFileSync(loaded.path, "utf8")
-    expect(loaded.generated).toBe(true); expect(body).toContain('"$schema"'); expect(body).toContain('"version"'); expect(body).toContain('"deepseek-api"'); expect(body).toContain("配置语义")
+    expect(loaded.generated).toBe(true); expect(body).toContain('"$schema"'); expect(body).toContain('"version"'); expect(body).toContain('"deepseek"'); expect(body).toContain("配置语义")
   })
   test("有效文件仅内存补缺，不改变原字节及 mtime", () => {
     const home = sandbox(), dir = join(home, ".config", "opencode"); mkdirSync(dir, { recursive: true })
-    const path = join(dir, "opencode-switchman.jsonc"), body = '{"version":1,"providers":{"deepseek-api":{"enabled":false}}}'
+    const path = join(dir, "opencode-switchman.jsonc"), body = '{"version":1,"providers":{"deepseek":{"enabled":false}}}'
     writeFileSync(path, body); const before = statSync(path).mtimeMs
     const loaded = load(home)
     expect(readFileSync(path, "utf8")).toBe(body); expect(statSync(path).mtimeMs).toBe(before); expect(loaded.config.providers["github-copilot"]).toBeTruthy()
   })
   test("显式 false/null/空数组与未知字段保留，非法值只在内存回退", () => {
-    const raw = configOf({ providers: { "deepseek-api": { enabled: false, observe: null, peak: { timezone: "local", ranges: [] }, unknown: [] } }, extra: null })
+    const raw = configOf({ providers: { "deepseek": { enabled: false, observe: null, peak: { timezone: "local", ranges: [] }, unknown: [] } }, extra: null })
     const r = validateUserConfig(raw)
-    expect(r.config.providers["deepseek-api"].enabled).toBe(false); expect(r.config.providers["deepseek-api"].peak.ranges).toEqual([])
-    expect((r.config.providers["deepseek-api"] as any).unknown).toEqual([]); expect((r.config as any).extra).toBeNull(); expect(r.diagnostics.some((d) => d.code === "SWM030")).toBe(true)
+    expect(r.config.providers["deepseek"].enabled).toBe(false); expect(r.config.providers["deepseek"].peak.ranges).toEqual([])
+    expect((r.config.providers["deepseek"] as any).unknown).toEqual([]); expect((r.config as any).extra).toBeNull(); expect(r.diagnostics.some((d) => d.code === "SWM030")).toBe(true)
   })
   test("坏文件备份后重建；symlink 原文件绝不覆盖", () => {
     const home = sandbox(), dir = join(home, ".config", "opencode"); mkdirSync(dir, { recursive: true }); const path = join(dir, "opencode-switchman.jsonc")
@@ -63,17 +63,17 @@ describe("用户水位配置", () => {
   })
   test("区间诊断拆分、跨日/跨周/DST/local 求值与重叠检出", () => {
     for (const [ranges, code] of [[[{ days: [0], start: "09:00", end: "10:00" }], "SWM032"], [[{ days: [1], start: "9:00", end: "10:00" }], "SWM033"], [[{ days: [1], start: "09:00", end: "09:00" }], "SWM034"], [[{ days: [1], start: "09:00", end: "11:00" }, { days: [1], start: "10:00", end: "12:00" }], "SWM035"]] as any) {
-      const c = configOf(); c.providers["deepseek-api"].peak.ranges = ranges; expect(validateUserConfig(c).diagnostics.some((d) => d.code === code)).toBe(true)
+      const c = configOf(); c.providers["deepseek"].peak.ranges = ranges; expect(validateUserConfig(c).diagnostics.some((d) => d.code === code)).toBe(true)
     }
-    const c = configOf(); c.providers["deepseek-api"].peak = { timezone: "America/New_York", ranges: [{ days: [7], start: "23:00", end: "02:00" }] }
-    c.providers["deepseek-api"].peak.ranges = [{ days: [6], start: "23:00", end: "02:00" }]
+    const c = configOf(); c.providers["deepseek"].peak = { timezone: "America/New_York", ranges: [{ days: [7], start: "23:00", end: "02:00" }] }
+    c.providers["deepseek"].peak.ranges = [{ days: [6], start: "23:00", end: "02:00" }]
     expect(evaluatePeakSchedules(new Date("2026-03-08T06:30:00Z"), c, "deepseek")).toBe(true) // DST 切换周 Sunday 01:30, from Saturday range
-    c.providers["deepseek-api"].peak.ranges = [{ days: [1], start: "23:00", end: "02:00" }]
+    c.providers["deepseek"].peak.ranges = [{ days: [1], start: "23:00", end: "02:00" }]
     expect(evaluatePeakSchedules(new Date("2026-03-10T05:30:00Z"), c, "deepseek")).toBe(true) // Tuesday 01:30, Monday cross-day
-    c.providers["deepseek-api"].peak = { timezone: "local", ranges: [] }; expect(evaluatePeakSchedules(new Date(), c, "deepseek")).toBe(false)
+    c.providers["deepseek"].peak = { timezone: "local", ranges: [] }; expect(evaluatePeakSchedules(new Date(), c, "deepseek")).toBe(false)
   })
   test("配置键/别名映射及默认 routing 关闭时三处一致 fail-open", () => {
-    expect(providerKeyForPool("glm")).toBe("glm-coding-plan-cn"); expect(poolForProviderId("zhipuai-coding-plan")).toBe("glm"); expect(poolForProviderId("github-copilot-oauth")).toBe("copilot"); expect(poolForProviderId("deepseek-api")).toBe("deepseek")
+    expect(providerKeyForPool("glm")).toBe("zhipuai-coding-plan"); expect(poolForProviderId("zhipuai-coding-plan")).toBe("glm"); expect(poolForProviderId("github-copilot-oauth")).toBe("copilot"); expect(poolForProviderId("deepseek")).toBe("deepseek")
     const policy = routePolicy(validateUserConfig(configOf()).config); expect(Object.values(policy).every((x) => !x.routing)).toBe(true)
     expect(scoreShell({ modelId: "x", effort: "high", lane: "main", pool: "glm", matrixStatus: "ok", latencyMs: null, peakActive: false, immediate: false, water: { glmFiveHourPct: 80, routing: { glm: false } } }).water).toBe(1)
     for (const pool of ["glm", "copilot", "deepseek"] as const) {
@@ -96,13 +96,13 @@ describe("用户水位配置", () => {
   })
   test("[去厂商化] billing 字段：内置出厂缺省、非法值回退（SWM036）、自定义键默认 api", () => {
     const r = validateUserConfig(configOf())
-    expect(r.config.providers["glm-coding-plan-cn"].billing).toBe("subscription")
-    expect(r.config.providers["deepseek-api"].billing).toBe("api")
+    expect(r.config.providers["zhipuai-coding-plan"].billing).toBe("subscription")
+    expect(r.config.providers["deepseek"].billing).toBe("api")
     expect(r.config.providers["github-copilot"].billing).toBe("subscription")
-    const bad = configOf({ providers: { "deepseek-api": { billing: "free" as any } } })
+    const bad = configOf({ providers: { "deepseek": { billing: "free" as any } } })
     const rb = validateUserConfig(bad)
-    expect(rb.diagnostics.some((d) => d.code === "SWM036" && d.path === "providers.deepseek-api.billing")).toBe(true)
-    expect(rb.config.providers["deepseek-api"].billing).toBe("api")
+    expect(rb.diagnostics.some((d) => d.code === "SWM036" && d.path === "providers.deepseek.billing")).toBe(true)
+    expect(rb.config.providers["deepseek"].billing).toBe("api")
     // 自定义 provider 键：合法、内存补全通用缺省（api 计费、无高峰）
     const custom = validateUserConfig(configOf({ providers: { "my-gateway": { enabled: true } } }))
     expect(custom.diagnostics.some((d) => d.path?.startsWith("providers.my-gateway"))).toBe(false)
@@ -117,7 +117,7 @@ describe("用户水位配置", () => {
       },
     })).config
     expect(billingOfProvider(config, "my-gateway")).toBe("subscription")
-    expect(billingOfProvider(config, "deepseek-api")).toBe("api")
+    expect(billingOfProvider(config, "deepseek")).toBe("api")
     expect(billingOfProvider(config, "zhipuai-coding-plan")).toBe("subscription") // 别名归一到内置键
     expect(billingOfProvider(config, "totally-unknown")).toBe("api") // 无配置自定义键回退通用缺省
     expect(providerPeakActive(new Date(2026, 7, 31, 9, 30), config, "my-gateway")).toBe(true) // 周一 09:30 命中自定义高峰
@@ -128,11 +128,11 @@ describe("用户水位配置", () => {
   test("[终审P1-1] routingPeakActive：enabled:false 时高峰不参与路由；事实口径 providerPeakActive 不受影响", () => {
     const config = validateUserConfig(configOf()).config // 内置键出厂 enabled:false
     const now = new Date(2026, 7, 31, 15, 0) // 周一 15:00（GLM 出厂高峰 14-18 内）
-    expect(providerPeakActive(now, config, "glm-coding-plan-cn")).toBe(true) // 事实口径：正在高峰
-    expect(routingPeakActive(now, config, "glm-coding-plan-cn")).toBe(false) // 路由口径：enabled=false 不生效
-    const enabled = validateUserConfig(configOf({ providers: { "deepseek-api": { enabled: true } } })).config
-    expect(routingPeakActive(new Date(2026, 7, 31, 10, 0), enabled, "deepseek-api")).toBe(true) // 周一 10:00 在 DS 出厂高峰
-    expect(routingPeakActive(new Date(2026, 7, 31, 13, 0), enabled, "deepseek-api")).toBe(false)
+    expect(providerPeakActive(now, config, "zhipuai-coding-plan")).toBe(true) // 事实口径：正在高峰
+    expect(routingPeakActive(now, config, "zhipuai-coding-plan")).toBe(false) // 路由口径：enabled=false 不生效
+    const enabled = validateUserConfig(configOf({ providers: { "deepseek": { enabled: true } } })).config
+    expect(routingPeakActive(new Date(2026, 7, 31, 10, 0), enabled, "deepseek")).toBe(true) // 周一 10:00 在 DS 出厂高峰
+    expect(routingPeakActive(new Date(2026, 7, 31, 13, 0), enabled, "deepseek")).toBe(false)
   })
   test("[终审P1] providerEntry 精确键优先：自定义别名键与内置规范键并存时精确键胜出", () => {
     const config = validateUserConfig(configOf({

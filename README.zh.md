@@ -74,7 +74,7 @@ bun run build   # 生成 dist/opencode-switchman.js
 
 ### 供应商水位配置
 
-首次启动会在 OpenCode 配置目录创建 `opencode-switchman.jsonc`（优先级：`OPENCODE_CONFIG_DIR`、`$XDG_CONFIG_HOME/opencode`、`~/.config/opencode`）。随包内置稳定供应商键 `deepseek-api`、`glm-coding-plan-cn`、`github-copilot`，且**任意 opencode 官方/自定义 provider 键均合法**——未知键按自定义 provider 处理（通用缺省参与编排；对内置键的近似拼写 doctor 会给 warn 建议）。`observe` 控制配额查询与横幅展示，`enabled` 独立控制水位、高峰和耗尽是否参与路由（默认分别为 `true`、`false`）。`billing` 显式声明计费结构——`subscription`（评分系数 1.0）或 `api`（0.85，同 tier 内沉底）；这是计费优先级的唯一来源（不从 models.dev/auth 推断）。高峰区间使用 ISO 周日 `1`–`7` 和 `[start,end)` 的 `HH:mm`；默认 GLM 工作日 14:00–18:00，DeepSeek 工作日 09:00–12:00、14:00–18:00。可运行 `/switchman-doctor` 获取本地、脱敏且不联网的诊断报告。
+首次启动会在 OpenCode 配置目录创建 `opencode-switchman.jsonc`（优先级：`OPENCODE_CONFIG_DIR`、`$XDG_CONFIG_HOME/opencode`、`~/.config/opencode`）。随包内置稳定供应商键 `deepseek`、`zhipuai-coding-plan`、`github-copilot`（与 opencode 官方 provider ID 一致），且**任意 opencode 官方/自定义 provider 键均合法**——未知键按自定义 provider 处理（通用缺省参与编排；对内置键的近似拼写 doctor 会给 warn 建议）。`observe` 控制配额查询与横幅展示，`enabled` 独立控制水位、高峰和耗尽是否参与路由（默认分别为 `true`、`false`）。`billing` 显式声明计费结构——`subscription`（评分系数 1.0）或 `api`（0.85，同 tier 内沉底）；这是计费优先级的唯一来源（不从 models.dev/auth 推断）。高峰区间使用 ISO 周日 `1`–`7` 和 `[start,end)` 的 `HH:mm`；默认 GLM 工作日 14:00–18:00，DeepSeek 工作日 09:00–12:00、14:00–18:00。可运行 `/switchman-doctor` 获取本地、脱敏且不联网的诊断报告。
 
 ### 验证安装
 

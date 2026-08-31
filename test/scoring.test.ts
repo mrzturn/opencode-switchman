@@ -181,11 +181,11 @@ describe("rankCandidates", () => {
       rankable({ key: "cp-s", modelId: "gpt-5.6", pool: "copilot", family: "gpt", latencyMs: 80 }),
     ]
     const registry = {
-      "ds-s": shellReg({ name: "ds-s", pool: "deepseek", provider: "deepseek-api", modelId: "deepseek-v4-pro", family: "deepseek" }),
+      "ds-s": shellReg({ name: "ds-s", pool: "deepseek", provider: "deepseek", modelId: "deepseek-v4-pro", family: "deepseek" }),
       "glm-a": shellReg({ name: "glm-a", provider: "zhipuai-coding-plan" }),
       "cp-s": shellReg({ name: "cp-s", pool: "copilot", provider: "github-copilot", modelId: "gpt-5.6", family: "gpt" }),
     }
-    const r = rankCandidates(shells, ctx({ registry, billingBoostOf: (provider) => provider === "deepseek-api" ? BILLING_API_BOOST : 1.0 }))
+    const r = rankCandidates(shells, ctx({ registry, billingBoostOf: (provider) => provider === "deepseek" ? BILLING_API_BOOST : 1.0 }))
     // tier 分组优先：S 组内 api 计费（0.85）排订阅（1.0）之后，但仍先于 A 组——系数沉底而非池名硬门
     expect(r.ranked.map((s) => s.key)).toEqual(["cp-s", "ds-s", "glm-a"])
     expect(r.breakdowns.get("cp-s")!.tier).toBe("S")

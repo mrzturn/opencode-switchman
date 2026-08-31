@@ -134,7 +134,7 @@ export function loadUserConfig(ctx: { env?: Record<string, string | undefined>; 
 }
 export function routePolicy(config: UserConfig, legacy?: Partial<Record<Pool, boolean>>): RoutePolicy {
   const out: RoutePolicy = Object.create(null)
-  for (const pool of ["copilot", "glm", "deepseek"] as Pool[]) { const p = config.providers[{ copilot: "github-copilot", glm: "glm-coding-plan-cn", deepseek: "deepseek-api" }[pool] as ProviderKey]; out[pool] = { observe: legacy?.[pool] ?? p.observe, routing: p.enabled } }
+  for (const pool of ["copilot", "glm", "deepseek"] as Pool[]) { const p = config.providers[{ copilot: "github-copilot", glm: "zhipuai-coding-plan", deepseek: "deepseek" }[pool] as ProviderKey]; out[pool] = { observe: legacy?.[pool] ?? p.observe, routing: p.enabled } }
   return out
 }
 
@@ -174,5 +174,5 @@ export function routingPeakActive(now: Date, cfg: UserConfig, providerId: string
 }
 
 export function evaluatePeakSchedules(now: Date, cfg: UserConfig, pool: Pool): boolean {
-  return providerPeakActive(now, cfg, { copilot: "github-copilot", glm: "glm-coding-plan-cn", deepseek: "deepseek-api" }[pool] as ProviderKey)
+  return providerPeakActive(now, cfg, { copilot: "github-copilot", glm: "zhipuai-coding-plan", deepseek: "deepseek" }[pool] as ProviderKey)
 }

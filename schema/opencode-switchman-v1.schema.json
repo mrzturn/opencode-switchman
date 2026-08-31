@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "properties": {"version":{"type":"integer"},"providers":{"type":"object","additionalProperties":{"$ref":"#/$defs/provider"},"properties":{"deepseek-api":{"$ref":"#/$defs/provider"},"glm-coding-plan-cn":{"$ref":"#/$defs/provider"},"github-copilot":{"$ref":"#/$defs/provider"}}},"extensions":{"type":"object"}},
+  "properties": {"version":{"type":"integer"},"providers":{"type":"object","additionalProperties":{"$ref":"#/$defs/provider"},"properties":{"deepseek":{"$ref":"#/$defs/provider"},"zhipuai-coding-plan":{"$ref":"#/$defs/provider"},"github-copilot":{"$ref":"#/$defs/provider"}}},"extensions":{"type":"object"}},
   "$defs":{"provider":{"type":"object","properties":{"enabled":{"type":"boolean"},"observe":{"type":"boolean"},"billing":{"type":"string","enum":["subscription","api"]},"peak":{"type":"object","properties":{"timezone":{"type":"string"},"ranges":{"type":"array","items":{"type":"object","properties":{"days":{"type":"array","items":{"type":"integer","minimum":1,"maximum":7}},"start":{"type":"string","pattern":"^([01]\\d|2[0-3]):[0-5]\\d$"},"end":{"type":"string","pattern":"^([01]\\d|2[0-3]):[0-5]\\d$"}}}}}}}}}
 }

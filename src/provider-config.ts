@@ -4,7 +4,7 @@
 //  池（Pool）概念仅保留给配额抓取（有抓取器的 provider 才有水位数据）]
 import type { Pool } from "./types"
 
-export type ProviderKey = "deepseek-api" | "glm-coding-plan-cn" | "github-copilot"
+export type ProviderKey = "deepseek" | "zhipuai-coding-plan" | "github-copilot"
 export type BillingKind = "subscription" | "api"
 export interface PeakRange { days: number[]; start: string; end: string }
 export interface ProviderUserConfig { enabled: boolean; observe: boolean; billing: BillingKind; peak: { timezone: string; ranges: PeakRange[] } }
@@ -12,8 +12,8 @@ export interface ProviderUserConfig { enabled: boolean; observe: boolean; billin
 const SPECS: Array<{ key: ProviderKey; pool: Pool; aliases: string[]; defaults: ProviderUserConfig }> = [
   // billing 是出厂配置数据（同 peak 高峰表性质），不是编排规则：订阅计费的两家出厂即标 subscription，
   // 用户可在 jsonc 里改；自定义 provider 一律默认 api。
-  { key: "deepseek-api", pool: "deepseek", aliases: ["deepseek", "deepseek-api"], defaults: { enabled: false, observe: true, billing: "api", peak: { timezone: "local", ranges: [{ days: [1, 2, 3, 4, 5], start: "09:00", end: "12:00" }, { days: [1, 2, 3, 4, 5], start: "14:00", end: "18:00" }] } } },
-  { key: "glm-coding-plan-cn", pool: "glm", aliases: ["zhipuai-coding-plan", "glm", "zai"], defaults: { enabled: false, observe: true, billing: "subscription", peak: { timezone: "local", ranges: [{ days: [1, 2, 3, 4, 5], start: "14:00", end: "18:00" }] } } },
+  { key: "deepseek", pool: "deepseek", aliases: ["deepseek", "deepseek-api"], defaults: { enabled: false, observe: true, billing: "api", peak: { timezone: "local", ranges: [{ days: [1, 2, 3, 4, 5], start: "09:00", end: "12:00" }, { days: [1, 2, 3, 4, 5], start: "14:00", end: "18:00" }] } } },
+  { key: "zhipuai-coding-plan", pool: "glm", aliases: ["zhipuai-coding-plan", "glm-coding-plan-cn", "glm", "zai"], defaults: { enabled: false, observe: true, billing: "subscription", peak: { timezone: "local", ranges: [{ days: [1, 2, 3, 4, 5], start: "14:00", end: "18:00" }] } } },
   { key: "github-copilot", pool: "copilot", aliases: ["github-copilot", "github-copilot-oauth", "copilot"], defaults: { enabled: false, observe: true, billing: "subscription", peak: { timezone: "local", ranges: [] } } },
 ]
 
@@ -30,7 +30,7 @@ export function providerKeyForPool(pool: Pool): ProviderKey { return SPECS.find(
 export function resolveProviderKey(id: string): ProviderKey | string {
   const exact = SPECS.find((x) => x.aliases.includes(id))
   if (exact) return exact.key
-  if (/^(zhipuai|glm|zai)/.test(id)) return "glm-coding-plan-cn"
+  if (/^(zhipuai|glm|zai)/.test(id)) return "zhipuai-coding-plan"
   if (id.includes("copilot")) return "github-copilot"
   return id
 }
@@ -65,7 +65,7 @@ export function renderDefaultConfigJsonc(): string {
   "version": 1,
   "providers": {
     // 任意 opencode 官方/自定义 provider 键均合法（未命中内置表按自定义处理，billing 默认 api）。
-    "deepseek-api": {
+    "deepseek": {
       // 水位/高峰/耗尽是否参与路由排序与硬拦；false 不影响查询与展示。
       "enabled": false,
       // 是否后台查询用量/余额并展示在横幅。
@@ -82,7 +82,7 @@ export function renderDefaultConfigJsonc(): string {
         ]
       }
     },
-    "glm-coding-plan-cn": {
+    "zhipuai-coding-plan": {
       "enabled": false,
       "observe": true,
       "billing": "subscription",

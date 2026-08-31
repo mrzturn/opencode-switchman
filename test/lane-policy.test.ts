@@ -13,8 +13,8 @@ const shells = [
   { name: "cp-high-ro", modelId: "cp", provider: "github-copilot", pool: "copilot", effort: "high", capability: "ro", vision: false, cost: 2 },
   { name: "glm-high", modelId: "glm", provider: "zhipuai-coding-plan", pool: "glm", effort: "high", capability: "rw", vision: false, cost: 1 },
   { name: "glm-high-ro", modelId: "glm", provider: "zhipuai-coding-plan", pool: "glm", effort: "high", capability: "ro", vision: false, cost: 1 },
-  { name: "ds-high", modelId: "ds", provider: "deepseek-api", pool: "deepseek", effort: "high", capability: "rw", vision: false, cost: 0 },
-  { name: "ds-high-ro", modelId: "ds", provider: "deepseek-api", pool: "deepseek", effort: "high", capability: "ro", vision: false, cost: 0 },
+  { name: "ds-high", modelId: "ds", provider: "deepseek", pool: "deepseek", effort: "high", capability: "rw", vision: false, cost: 0 },
+  { name: "ds-high-ro", modelId: "ds", provider: "deepseek", pool: "deepseek", effort: "high", capability: "ro", vision: false, cost: 0 },
   { name: "cp-medium", modelId: "cp-medium", provider: "github-copilot", pool: "copilot", effort: "medium", capability: "rw", vision: false },
   { name: "vision-high", modelId: "vision", provider: "zhipuai-coding-plan", pool: "glm", effort: "high", capability: "rw", vision: true },
   { name: "review-glm-rw", modelId: "review", provider: "zhipuai-coding-plan", pool: "glm", effort: "high", capability: "rw", vision: false },
@@ -28,7 +28,7 @@ const resolvers = { billingBoostOf: (provider: string) => defaultBillingOf(provi
 describe("候选链算法", () => {
   test("[终审P0-1] tier 分组主键：S/api(0.85) 不落 A/subscription(0.85) 之后（同亲和同乘积）", () => {
     const mix = [
-      { name: "s-api", modelId: "s-api", provider: "deepseek-api", pool: "deepseek", effort: "high", capability: "rw", vision: false, cost: 9 },
+      { name: "s-api", modelId: "s-api", provider: "deepseek", pool: "deepseek", effort: "high", capability: "rw", vision: false, cost: 9 },
       { name: "a-sub", modelId: "a-sub", provider: "github-copilot", pool: "copilot", effort: "high", capability: "rw", vision: false, cost: 0 },
     ]
     const cap = (id: string) => (id === "s-api" ? { score: 1.0, tier: "S" as const } : { score: 0.85, tier: "A" as const })
@@ -56,7 +56,7 @@ describe("候选链算法", () => {
   test("未注入解析器时无计费偏置（纯能力×亲和×成本裁决）；订阅显式标记可反转 api 沉底", () => {
     // 无 resolvers：ds cost 0 → 同分时按成本裁决居前（无池名规则）
     expect(computeLaneChain(shells, capability, "economy")).toEqual(["cp-medium", "ds-high", "glm-high", "cp-high"])
-    // 显式把 deepseek-api 标 subscription（1.0）后不再沉底，回到成本裁决序
+    // 显式把 deepseek 标 subscription（1.0）后不再沉底，回到成本裁决序
     const flat = { billingBoostOf: () => 1.0 }
     expect(computeLaneChain(shells, capability, "economy", flat)).toEqual(["cp-medium", "ds-high", "glm-high", "cp-high"])
     expect(computeLaneChain([
