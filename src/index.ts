@@ -1,7 +1,7 @@
 // opencode-switchman 插件入口——唯一 OpenCode API 适配层（v1.2）
-// 钩子面：config(壳注入+凭证收集) / chat.params(会话→agent 映射) /
+// 钩子面：config(壳注入+凭证收集+/handover 命令注入) / chat.params(会话→agent 映射) /
 //         experimental.chat.system.transform(调度员规程＋横幅注入，壳子代理跳过) /
-//         tool.execute.before(六闸 deny) / event(失败记账→熔断)
+//         tool.execute.before(六闸 deny) / event(失败记账→熔断) / tool(handover 交接工具)
 // [fail-open 铁律：任何钩子异常只写 stderr，绝不阻塞主流程；核心逻辑全部在纯函数层]
 import type { Plugin } from "@opencode-ai/plugin"
 import { writeFileSync } from "node:fs"
@@ -9,6 +9,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { AGENTS_MD } from "./assets/agents-md"
 import { DELEGATION_TEMPLATE } from "./assets/delegation-template"
+import { createHandoverTool, HANDOVER_COMMAND_TEMPLATE, HANDOVER_COMMAND_DESCRIPTION } from "./handover"
 import {
   loadContext, buildRegistry, loadManifest, laneShells, paths,
   cleanExpired, ensureStateDir, stateDir, loadSupersetShells, writeJsonAtomic,
@@ -471,6 +472,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   }
 
   return {
+    tool: { handover: createHandoverTool(input) },
+
     config: async (cfg: Record<string, any>) => {
       try {
         // [2026-08-31]-[配置钩子首步装载用户水位配置；路由快照本启动内一致]-[fail-open]
@@ -486,6 +489,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         creds.copilotToken = creds.copilotToken ?? readAuthStore().githubToken
         // [2026-08-29]-[一键升级命令资产：prod 注册 /switchman-update，local 删除残留——legacy/动态两路都生效]-
         ensureUpdateCommands(detectLoadMode())
+        // [2026-08-31]-[/handover 交接命令：cfg.command 运行期注入，覆盖同名用户自定义命令时以用户为准]-
+        cfg.command = { handover: { template: HANDOVER_COMMAND_TEMPLATE, description: HANDOVER_COMMAND_DESCRIPTION }, ...cfg.command }
         if (!dynamic) {
           // legacy：静态 shells.json 路径（行为与 v1.2 逐字节一致）
           const { registry } = currentContext()
