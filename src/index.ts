@@ -22,6 +22,7 @@ import { logDecision } from "./scoring"
 import type { WaterFactor, DecisionRecord } from "./scoring"
 import { quotaView, readAuthStore, markCopilotGatewayExhausted } from "./quota"
 import { costOf, refreshCosts, costsStale } from "./cost"
+import { refreshCapability, capabilityStale } from "./capability"
 import { refreshMatrixIfStale, refreshActiveMatrixIfStale, probeKeys } from "./probe"
 import { injectShells, injectShellDefs } from "./shells"
 import { buildBanner } from "./banner"
@@ -69,6 +70,14 @@ function normalizeOptions(raw: unknown): SwitchmanOptions {
     // [2026-08-29]-[动态矩阵：mode 默认 auto（OPENCODE_CLIENT 判定）；legacy=静态 shells.json 原路径。
     // 激活面变化对派发闸「下一请求生效」（watch/切模即时重算，但已发出的请求不受影响）]
     matrix: { mode: o.matrix?.mode ?? "auto", watch: o.matrix?.watch ?? true },
+    // [2026-08-31]-[动态能力分级默认开启：无 key 走 OpenRouter 公开源；失败 fail-open 回退策展表]
+    capability: {
+      enabled: o.capability?.enabled ?? true,
+      source: o.capability?.source ?? "auto",
+      apiKey: o.capability?.apiKey,
+      tierThresholds: o.capability?.tierThresholds,
+      lmarenaCheck: o.capability?.lmarenaCheck ?? false,
+    },
   }
 }
 
@@ -199,6 +208,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       ensureStateAssets()
       creds.copilotToken = creds.copilotToken ?? readAuthStore().githubToken
       if (costsStale() && options.cost!.enabled) refreshCosts().catch(() => {})
+      // [2026-08-31]-[动态能力分级：与探针同频调度（TTL 24h 内自动跳过实际拉取）]
+      if (capabilityStale() && options.capability!.enabled) refreshCapability(options.capability!).catch(() => {})
       if (dynamic && manager) refreshActiveMatrixIfStale(probeEndpoints(), manager.activeMatrixKeys()).catch(() => {})
       else refreshMatrixIfStale(probeEndpoints()).catch(() => {})
       quotaView(creds as any, { enabled: {
@@ -222,6 +233,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             copilot: options.quota!.copilot!.enabled!,
           } })
           if (costsStale() && options.cost!.enabled) refreshCosts().catch(() => {})
+          // [2026-08-31]-[动态能力分级：10min 周期同频检查，capabilityStale/TTL 24h 门控实际拉取]
+          if (capabilityStale() && options.capability!.enabled) refreshCapability(options.capability!).catch(() => {})
         } catch { /* fail-open */ }
       }, 600_000)
       if (typeof timer === "object" && timer !== null && "unref" in timer) (timer as any).unref()

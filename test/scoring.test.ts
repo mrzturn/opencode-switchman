@@ -1,11 +1,19 @@
 // 模型评分引擎 fixture（bun test）
 // 沙箱：SWITCHMAN_STATE 指向临时目录；baseScore/scoreShell/rankCandidates/logDecision 纯函数直测。
 import { describe, test, expect, beforeAll } from "bun:test"
-import { mkdtempSync, mkdirSync, readFileSync } from "node:fs"
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 process.env.SWITCHMAN_STATE = mkdtempSync(join(tmpdir(), "switchman-sc-"))
+
+// [2026-08-31]-[机制测试与能力排名数据解耦：写空壳 capability.json（models={} 有效但无条目）——
+//  磁盘索引独占语义下全部回退策展表，档位断言不随内置快照/实时数据漂移]
+mkdirSync(process.env.SWITCHMAN_STATE, { recursive: true })
+writeFileSync(
+  join(process.env.SWITCHMAN_STATE, "capability.json"),
+  JSON.stringify({ source: "artificial-analysis", version: "fixed-empty", fetched_at: Date.now() / 1000, thresholds: { S: 62, A: 55, B: 45 }, models: {} }),
+)
 
 import { baseScore, GLOBAL_MEDIAN_SCORE } from "../src/model-ranks"
 import { scoreShell, rankCandidates, logDecision } from "../src/scoring"

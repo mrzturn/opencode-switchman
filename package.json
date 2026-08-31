@@ -33,6 +33,7 @@
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "gen:shells": "bun scripts/gen-shells.ts",
+    "gen:capability": "bun scripts/gen-capability-default.ts",
     "build": "bun run gen:shells && bun scripts/gen-version.ts && bun build src/index.ts --target=node --format=esm --outfile=dist/opencode-switchman.js",
     "prepublishOnly": "bun install --frozen-lockfile && bun run build && bun test",
     "pack": "bun run build && npm pack",

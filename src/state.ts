@@ -23,6 +23,8 @@ export const paths = () => {
     copilotQuota: join(dir, "copilot-quota.json"),
     dsQuota: join(dir, "ds-balance.json"),
     costs: join(dir, "costs.json"),
+    // [2026-08-31]-[动态能力分级缓存（source/version/fetched_at + 模型指数表；TTL 24h last-good）]
+    capability: join(dir, "capability.json"),
     // [2026-08-29]-[动态矩阵 v1.3 新增状态文件]
     modelCatalog: join(dir, "model-catalog.json"),
     shellSuperset: join(dir, "shell-superset.json"),
@@ -42,6 +44,7 @@ export const QUOTA_TTL = 300
 export const QUOTA_TTL_HOT = 60
 export const PROBE_TTL = 600
 export const COSTS_TTL = 24 * 3600
+export const CAPABILITY_TTL = 24 * 3600
 
 export function nowIso(): string {
   const d = new Date()

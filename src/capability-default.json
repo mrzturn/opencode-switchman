@@ -1,0 +1,1211 @@
+{
+  "_meta": {
+    "generated_at": "2026-08-31T00:47:36.486Z",
+    "generator": "bun run gen:capability",
+    "upstream": "openrouter.ai /api/v1/models?sort=coding-high-to-low（coding 序位 rank 分）",
+    "note": "离线/拉取失败的随包默认能力排名；随版本手动迭代（重跑 gen:capability 刷新）"
+  },
+  "bundled": true,
+  "source": "openrouter",
+  "version": "bundled-or-1787897375",
+  "fetched_at": 1788137256.486,
+  "score_kind": "rank",
+  "thresholds": {
+    "S": 80,
+    "A": 60,
+    "B": 40
+  },
+  "models": {
+    "claude-opus-5": {
+      "score": 100
+    },
+    "claude-opus-5-batch": {
+      "score": 99.7
+    },
+    "gpt-5.6-sol": {
+      "score": 99.5
+    },
+    "grok-4.6": {
+      "score": 99.2
+    },
+    "gpt-5.6-terra": {
+      "score": 99
+    },
+    "claude-fable-5": {
+      "score": 98.7
+    },
+    "claude-fable-5-batch": {
+      "score": 98.5
+    },
+    "kimi-k3": {
+      "score": 98.2
+    },
+    "kimi-k3-batch": {
+      "score": 98
+    },
+    "gemini-3.7-flash": {
+      "score": 97.7
+    },
+    "gemini-3.7-flash-batch": {
+      "score": 97.5
+    },
+    "gpt-5.5": {
+      "score": 97.2
+    },
+    "glm-5.3": {
+      "score": 97
+    },
+    "claude-opus-4.8": {
+      "score": 96.7
+    },
+    "claude-opus-4.8-batch": {
+      "score": 96.5
+    },
+    "claude-opus-4.7": {
+      "score": 96.2
+    },
+    "claude-opus-4.7-batch": {
+      "score": 95.9
+    },
+    "grok-4.5": {
+      "score": 95.7
+    },
+    "muse-spark-1.2": {
+      "score": 95.4
+    },
+    "qwen3.8-2.4t-a95b": {
+      "score": 95.2
+    },
+    "qwen3.8-2.4t-a95b-batch": {
+      "score": 94.9
+    },
+    "qwen3.8-max": {
+      "score": 94.7
+    },
+    "claude-sonnet-5": {
+      "score": 94.4
+    },
+    "claude-sonnet-5-batch": {
+      "score": 94.2
+    },
+    "glm-5.3-flash": {
+      "score": 93.9
+    },
+    "glm-5.3-flash-batch": {
+      "score": 93.7
+    },
+    "gpt-5.6-luna": {
+      "score": 93.4
+    },
+    "muse-spark-1.1": {
+      "score": 93.2
+    },
+    "gpt-5.4": {
+      "score": 92.9
+    },
+    "gemini-3.5-flash": {
+      "score": 92.7
+    },
+    "gemini-3.5-flash-batch": {
+      "score": 92.4
+    },
+    "gemini-3.6-flash": {
+      "score": 92.2
+    },
+    "gemini-3.6-flash-batch": {
+      "score": 91.9
+    },
+    "deepseek-v4-flash-0731": {
+      "score": 91.6
+    },
+    "deepseek-v4-flash-0731-batch": {
+      "score": 91.4
+    },
+    "deepseek-v4-pro-0813": {
+      "score": 91.1
+    },
+    "deepseek-v4-pro-0813-batch": {
+      "score": 90.9
+    },
+    "gemini-3.1-pro-preview": {
+      "score": 90.6
+    },
+    "gemini-3.1-pro-preview-batch": {
+      "score": 90.4
+    },
+    "glm-5.2": {
+      "score": 90.1
+    },
+    "glm-5.2-free": {
+      "score": 89.9
+    },
+    "qwen3.8-27b": {
+      "score": 89.6
+    },
+    "qwen3.7-max": {
+      "score": 89.4
+    },
+    "claude-sonnet-4.6": {
+      "score": 89.1
+    },
+    "claude-sonnet-4.6-batch": {
+      "score": 88.9
+    },
+    "kimi-k2.6": {
+      "score": 88.6
+    },
+    "kimi-k2.7-code": {
+      "score": 88.4
+    },
+    "mimo-v2.5-pro": {
+      "score": 88.1
+    },
+    "kat-coder-pro-v2": {
+      "score": 87.8
+    },
+    "deepseek-v4-pro": {
+      "score": 87.6
+    },
+    "nex-n2-pro": {
+      "score": 87.3
+    },
+    "hy3-preview": {
+      "score": 87.1
+    },
+    "minimax-m3": {
+      "score": 86.8
+    },
+    "minimax-m3-batch": {
+      "score": 86.6
+    },
+    "minimax-m3-free": {
+      "score": 86.3
+    },
+    "mimo-v2.5": {
+      "score": 86.1
+    },
+    "deepseek-v4-flash": {
+      "score": 85.8
+    },
+    "gpt-5.4-mini": {
+      "score": 85.6
+    },
+    "gpt-5.4-nano": {
+      "score": 85.3
+    },
+    "qwen3.7-plus": {
+      "score": 85.1
+    },
+    "glm-5.1": {
+      "score": 84.8
+    },
+    "qwen3.6-plus": {
+      "score": 84.6
+    },
+    "qwen3.6-27b": {
+      "score": 84.3
+    },
+    "inkling-small": {
+      "score": 84.1
+    },
+    "inkling-small-batch": {
+      "score": 83.8
+    },
+    "inkling-small-free": {
+      "score": 83.5
+    },
+    "solar-pro4": {
+      "score": 83.3
+    },
+    "minimax-m2.7": {
+      "score": 83
+    },
+    "minimax-m2.7-free": {
+      "score": 82.8
+    },
+    "claude-sonnet-4.5": {
+      "score": 82.5
+    },
+    "claude-sonnet-4.5-batch": {
+      "score": 82.3
+    },
+    "inkling": {
+      "score": 82
+    },
+    "inkling-batch": {
+      "score": 81.8
+    },
+    "inkling-free": {
+      "score": 81.5
+    },
+    "grok-build-0.1": {
+      "score": 81.3
+    },
+    "ling-3.0-flash": {
+      "score": 81
+    },
+    "gpt-5.1": {
+      "score": 80.8
+    },
+    "gemini-3.5-flash-lite": {
+      "score": 80.5
+    },
+    "gemini-3.5-flash-lite-batch": {
+      "score": 80.3
+    },
+    "nemotron-3-ultra-550b-a55b": {
+      "score": 80
+    },
+    "nemotron-3-ultra-550b-a55b-batch": {
+      "score": 79.7
+    },
+    "nemotron-3-ultra-550b-a55b-free": {
+      "score": 79.5
+    },
+    "qwen3.5-397b-a17b": {
+      "score": 79.2
+    },
+    "mistral-medium-3-5": {
+      "score": 79
+    },
+    "mistral-medium-3-5-batch": {
+      "score": 78.7
+    },
+    "kimi-k2.5": {
+      "score": 78.5
+    },
+    "glm-4.6": {
+      "score": 78.2
+    },
+    "qwen3.5-122b-a10b": {
+      "score": 78
+    },
+    "longcat-2.0": {
+      "score": 77.7
+    },
+    "glm-4.7": {
+      "score": 77.5
+    },
+    "deepseek-v3.2": {
+      "score": 77.2
+    },
+    "claude-haiku-4.5": {
+      "score": 77
+    },
+    "claude-haiku-4.5-batch": {
+      "score": 76.7
+    },
+    "deepseek-v3.1-terminus": {
+      "score": 76.5
+    },
+    "gemma-4-31b-it": {
+      "score": 76.2
+    },
+    "gemma-4-31b-it-batch": {
+      "score": 75.9
+    },
+    "gemma-4-31b-it-free": {
+      "score": 75.7
+    },
+    "grok-4.3": {
+      "score": 75.4
+    },
+    "qwen3.6-35b-a3b": {
+      "score": 75.2
+    },
+    "o1": {
+      "score": 74.9
+    },
+    "step-3.7-flash": {
+      "score": 74.7
+    },
+    "gemma-4-26b-a4b-it": {
+      "score": 74.4
+    },
+    "gemma-4-26b-a4b-it-free": {
+      "score": 74.2
+    },
+    "gpt-5": {
+      "score": 73.9
+    },
+    "nemotron-3-super-120b-a12b": {
+      "score": 73.7
+    },
+    "nemotron-3-super-120b-a12b-free": {
+      "score": 73.4
+    },
+    "claude-sonnet-4": {
+      "score": 73.2
+    },
+    "qwen3.5-35b-a3b": {
+      "score": 72.9
+    },
+    "north-mini-code-free": {
+      "score": 72.7
+    },
+    "qwen3-coder-next": {
+      "score": 72.4
+    },
+    "gemini-3.1-flash-lite-preview": {
+      "score": 72.2
+    },
+    "gemini-2.5-pro": {
+      "score": 71.9
+    },
+    "gemini-2.5-pro-batch": {
+      "score": 71.6
+    },
+    "devstral-2512": {
+      "score": 71.4
+    },
+    "mercury-2": {
+      "score": 71.1
+    },
+    "gpt-oss-120b": {
+      "score": 70.9
+    },
+    "gpt-oss-120b-batch": {
+      "score": 70.6
+    },
+    "qwen3.5-9b": {
+      "score": 70.4
+    },
+    "qwen3.5-9b-batch": {
+      "score": 70.1
+    },
+    "command-a": {
+      "score": 69.9
+    },
+    "nemotron-3.5-lightning": {
+      "score": 69.6
+    },
+    "nemotron-3.5-lightning-free": {
+      "score": 69.4
+    },
+    "mistral-small-2603": {
+      "score": 69.1
+    },
+    "mistral-small-2603-batch": {
+      "score": 68.9
+    },
+    "trinity-large-thinking": {
+      "score": 68.6
+    },
+    "deepseek-r1": {
+      "score": 68.4
+    },
+    "gpt-4o-2024-05-13": {
+      "score": 68.1
+    },
+    "nova-2-lite-v1": {
+      "score": 67.8
+    },
+    "qwen3-235b-a22b-thinking-2507": {
+      "score": 67.6
+    },
+    "gpt-4-turbo": {
+      "score": 67.3
+    },
+    "deepseek-chat-v3-0324": {
+      "score": 67.1
+    },
+    "kimi-k2-thinking": {
+      "score": 66.8
+    },
+    "gpt-oss-20b": {
+      "score": 66.6
+    },
+    "gpt-oss-20b-batch": {
+      "score": 66.3
+    },
+    "mistral-medium-3.1": {
+      "score": 66.1
+    },
+    "mistral-medium-3.1-batch": {
+      "score": 65.8
+    },
+    "gpt-4.1-mini": {
+      "score": 65.6
+    },
+    "mistral-large-2512": {
+      "score": 65.3
+    },
+    "mistral-large-2512-batch": {
+      "score": 65.1
+    },
+    "qwen3-next-80b-a3b-thinking": {
+      "score": 64.8
+    },
+    "llama-4-maverick": {
+      "score": 64.6
+    },
+    "o3-mini-high": {
+      "score": 64.3
+    },
+    "solar-pro-3": {
+      "score": 64.1
+    },
+    "gpt-5-mini": {
+      "score": 63.8
+    },
+    "qwen3-32b": {
+      "score": 63.5
+    },
+    "ministral-14b-2512": {
+      "score": 63.3
+    },
+    "nemotron-3-nano-30b-a3b": {
+      "score": 63
+    },
+    "nemotron-3-nano-omni-30b-a3b-reasoning-free": {
+      "score": 62.8
+    },
+    "qwen3-14b": {
+      "score": 62.5
+    },
+    "gpt-4": {
+      "score": 62.3
+    },
+    "qwen3-30b-a3b-thinking-2507": {
+      "score": 62
+    },
+    "llama-3.3-70b-instruct": {
+      "score": 61.8
+    },
+    "gpt-4o-mini": {
+      "score": 61.5
+    },
+    "gpt-4.1-nano": {
+      "score": 61.3
+    },
+    "gpt-3.5-turbo": {
+      "score": 61
+    },
+    "gemma-3-27b-it": {
+      "score": 60.8
+    },
+    "ministral-8b-2512": {
+      "score": 60.5
+    },
+    "ministral-8b-2512-batch": {
+      "score": 60.3
+    },
+    "granite-4.1-8b": {
+      "score": 60
+    },
+    "qwen3-8b": {
+      "score": 59.7
+    },
+    "llama-4-scout": {
+      "score": 59.5
+    },
+    "gemma-3-12b-it": {
+      "score": 59.2
+    },
+    "llama-3.1-8b-instruct": {
+      "score": 59
+    },
+    "ministral-3b-2512": {
+      "score": 58.7
+    },
+    "gemma-3-4b-it": {
+      "score": 58.5
+    },
+    "claude-fable-latest": {
+      "score": 58.2
+    },
+    "claude-haiku-latest": {
+      "score": 58
+    },
+    "claude-opus-latest": {
+      "score": 57.7
+    },
+    "claude-sonnet-latest": {
+      "score": 57.5
+    },
+    "deepseek-v4-flash-latest": {
+      "score": 57.2
+    },
+    "gemini-flash-latest": {
+      "score": 57
+    },
+    "gemini-pro-latest": {
+      "score": 56.7
+    },
+    "kimi-latest": {
+      "score": 56.5
+    },
+    "gpt-latest": {
+      "score": 56.2
+    },
+    "gpt-mini-latest": {
+      "score": 55.9
+    },
+    "grok-latest": {
+      "score": 55.7
+    },
+    "glm-latest": {
+      "score": 55.4
+    },
+    "aion-2.0": {
+      "score": 55.2
+    },
+    "aion-3.0": {
+      "score": 54.9
+    },
+    "aion-3.0-mini": {
+      "score": 54.7
+    },
+    "aion-rp-llama-3.1-8b": {
+      "score": 54.4
+    },
+    "nova-lite-v1": {
+      "score": 54.2
+    },
+    "nova-micro-v1": {
+      "score": 53.9
+    },
+    "nova-premier-v1": {
+      "score": 53.7
+    },
+    "nova-pro-v1": {
+      "score": 53.4
+    },
+    "magnum-v4-72b": {
+      "score": 53.2
+    },
+    "claude-3-haiku": {
+      "score": 52.9
+    },
+    "claude-opus-4": {
+      "score": 52.7
+    },
+    "claude-opus-4.1": {
+      "score": 52.4
+    },
+    "claude-opus-4.1-batch": {
+      "score": 52.2
+    },
+    "claude-opus-4.5": {
+      "score": 51.9
+    },
+    "claude-opus-4.5-batch": {
+      "score": 51.6
+    },
+    "claude-opus-4.6": {
+      "score": 51.4
+    },
+    "claude-opus-4.6-batch": {
+      "score": 51.1
+    },
+    "claude-opus-4.7-fast": {
+      "score": 50.9
+    },
+    "claude-opus-4.8-fast": {
+      "score": 50.6
+    },
+    "claude-opus-5-fast": {
+      "score": 50.4
+    },
+    "ernie-4.5-vl-424b-a47b": {
+      "score": 50.1
+    },
+    "seed-1.6": {
+      "score": 49.9
+    },
+    "seed-1.6-flash": {
+      "score": 49.6
+    },
+    "seed-2-1-turbo": {
+      "score": 49.4
+    },
+    "seed-2.0-code": {
+      "score": 49.1
+    },
+    "seed-2.0-lite": {
+      "score": 48.9
+    },
+    "seed-2.0-mini": {
+      "score": 48.6
+    },
+    "ui-tars-1.5-7b": {
+      "score": 48.4
+    },
+    "command-r-08-2024": {
+      "score": 48.1
+    },
+    "command-r-plus-08-2024": {
+      "score": 47.8
+    },
+    "command-r7b-12-2024": {
+      "score": 47.6
+    },
+    "deepseek-chat": {
+      "score": 47.3
+    },
+    "deepseek-chat-v3.1": {
+      "score": 47.1
+    },
+    "deepseek-r1-0528": {
+      "score": 46.8
+    },
+    "deepseek-r1-distill-llama-70b": {
+      "score": 46.6
+    },
+    "deepseek-v3.2-exp": {
+      "score": 46.3
+    },
+    "deepseek-v4-flash-vision-exp": {
+      "score": 46.1
+    },
+    "dots-3-note-preview-free": {
+      "score": 45.8
+    },
+    "gemini-2.5-flash": {
+      "score": 45.6
+    },
+    "gemini-2.5-flash-image": {
+      "score": 45.3
+    },
+    "gemini-2.5-flash-lite": {
+      "score": 45.1
+    },
+    "gemini-2.5-flash-lite-batch": {
+      "score": 44.8
+    },
+    "gemini-2.5-flash-batch": {
+      "score": 44.6
+    },
+    "gemini-2.5-pro-preview-05-06": {
+      "score": 44.3
+    },
+    "gemini-2.5-pro-preview": {
+      "score": 44.1
+    },
+    "gemini-3-flash-preview": {
+      "score": 43.8
+    },
+    "gemini-3-flash-preview-batch": {
+      "score": 43.5
+    },
+    "gemini-3-pro-image": {
+      "score": 43.3
+    },
+    "gemini-3-pro-image-preview": {
+      "score": 43
+    },
+    "gemini-3.1-flash-image": {
+      "score": 42.8
+    },
+    "gemini-3.1-flash-image-preview": {
+      "score": 42.5
+    },
+    "gemini-3.1-flash-lite": {
+      "score": 42.3
+    },
+    "gemini-3.1-flash-lite-batch": {
+      "score": 42
+    },
+    "gemini-3.1-flash-lite-image": {
+      "score": 41.8
+    },
+    "gemini-3.1-pro-preview-customtools": {
+      "score": 41.5
+    },
+    "gemma-2-27b-it": {
+      "score": 41.3
+    },
+    "lyria-3-clip-preview": {
+      "score": 41
+    },
+    "lyria-3-pro-preview": {
+      "score": 40.8
+    },
+    "mythomax-l2-13b": {
+      "score": 40.5
+    },
+    "granite-4.0-h-micro": {
+      "score": 40.3
+    },
+    "ling-3.0-flash-fin-free": {
+      "score": 40
+    },
+    "kat-coder-air-v2.5": {
+      "score": 39.7
+    },
+    "kat-coder-pro-v2.5": {
+      "score": 39.5
+    },
+    "lfm-2.5-2.6b-free": {
+      "score": 39.2
+    },
+    "weaver": {
+      "score": 39
+    },
+    "llama-3.1-70b-instruct": {
+      "score": 38.7
+    },
+    "llama-3.2-1b-instruct": {
+      "score": 38.5
+    },
+    "llama-3.2-3b-instruct": {
+      "score": 38.2
+    },
+    "llama-guard-4-12b": {
+      "score": 38
+    },
+    "muse-glimmer-30b": {
+      "score": 37.7
+    },
+    "muse-glimmer-30b-batch": {
+      "score": 37.5
+    },
+    "muse-spark-1.2-contributor": {
+      "score": 37.2
+    },
+    "phi-4": {
+      "score": 37
+    },
+    "wizardlm-2-8x22b": {
+      "score": 36.7
+    },
+    "minimax-01": {
+      "score": 36.5
+    },
+    "minimax-m1": {
+      "score": 36.2
+    },
+    "minimax-m2": {
+      "score": 35.9
+    },
+    "minimax-m2-her": {
+      "score": 35.7
+    },
+    "minimax-m2.1": {
+      "score": 35.4
+    },
+    "minimax-m2.5": {
+      "score": 35.2
+    },
+    "codestral-2508": {
+      "score": 34.9
+    },
+    "codestral-2508-batch": {
+      "score": 34.7
+    },
+    "mistral-large": {
+      "score": 34.4
+    },
+    "mistral-large-2407": {
+      "score": 34.2
+    },
+    "mistral-medium-3": {
+      "score": 33.9
+    },
+    "mistral-nemo": {
+      "score": 33.7
+    },
+    "mistral-saba": {
+      "score": 33.4
+    },
+    "mistral-small-24b-instruct-2501": {
+      "score": 33.2
+    },
+    "mistral-small-3.1-24b-instruct": {
+      "score": 32.9
+    },
+    "mistral-small-3.2-24b-instruct": {
+      "score": 32.7
+    },
+    "mixtral-8x22b-instruct": {
+      "score": 32.4
+    },
+    "voxtral-small-24b-2507": {
+      "score": 32.2
+    },
+    "kimi-k2": {
+      "score": 31.9
+    },
+    "kimi-k2-0905": {
+      "score": 31.6
+    },
+    "morph-v3-fast": {
+      "score": 31.4
+    },
+    "morph-v3-large": {
+      "score": 31.1
+    },
+    "nex-n2-mini": {
+      "score": 30.9
+    },
+    "hermes-3-llama-3.1-405b": {
+      "score": 30.6
+    },
+    "hermes-3-llama-3.1-70b": {
+      "score": 30.4
+    },
+    "hermes-4-405b": {
+      "score": 30.1
+    },
+    "hermes-4-70b": {
+      "score": 29.9
+    },
+    "nemotron-3.5-content-safety-free": {
+      "score": 29.6
+    },
+    "gpt-3.5-turbo-0613": {
+      "score": 29.4
+    },
+    "gpt-3.5-turbo-16k": {
+      "score": 29.1
+    },
+    "gpt-3.5-turbo-instruct": {
+      "score": 28.9
+    },
+    "gpt-4-turbo-preview": {
+      "score": 28.6
+    },
+    "gpt-4.1": {
+      "score": 28.4
+    },
+    "gpt-4o": {
+      "score": 28.1
+    },
+    "gpt-4o-2024-08-06": {
+      "score": 27.8
+    },
+    "gpt-4o-2024-11-20": {
+      "score": 27.6
+    },
+    "gpt-4o-mini-2024-07-18": {
+      "score": 27.3
+    },
+    "gpt-5-image": {
+      "score": 27.1
+    },
+    "gpt-5-image-mini": {
+      "score": 26.8
+    },
+    "gpt-5-nano": {
+      "score": 26.6
+    },
+    "gpt-5-pro": {
+      "score": 26.3
+    },
+    "gpt-5.1-codex": {
+      "score": 26.1
+    },
+    "gpt-5.1-codex-max": {
+      "score": 25.8
+    },
+    "gpt-5.1-codex-mini": {
+      "score": 25.6
+    },
+    "gpt-5.2": {
+      "score": 25.3
+    },
+    "gpt-5.2-chat": {
+      "score": 25.1
+    },
+    "gpt-5.2-codex": {
+      "score": 24.8
+    },
+    "gpt-5.2-pro": {
+      "score": 24.6
+    },
+    "gpt-5.3-codex": {
+      "score": 24.3
+    },
+    "gpt-5.4-image-2": {
+      "score": 24.1
+    },
+    "gpt-5.4-pro": {
+      "score": 23.8
+    },
+    "gpt-5.5-pro": {
+      "score": 23.5
+    },
+    "gpt-5.6-luna-pro": {
+      "score": 23.3
+    },
+    "gpt-5.6-sol-pro": {
+      "score": 23
+    },
+    "gpt-5.6-terra-pro": {
+      "score": 22.8
+    },
+    "gpt-audio": {
+      "score": 22.5
+    },
+    "gpt-audio-mini": {
+      "score": 22.3
+    },
+    "gpt-chat-latest": {
+      "score": 22
+    },
+    "gpt-oss-safeguard-20b": {
+      "score": 21.8
+    },
+    "o1-pro": {
+      "score": 21.5
+    },
+    "o3": {
+      "score": 21.3
+    },
+    "o3-mini": {
+      "score": 21
+    },
+    "o3-pro": {
+      "score": 20.8
+    },
+    "o4-mini": {
+      "score": 20.5
+    },
+    "o4-mini-high": {
+      "score": 20.3
+    },
+    "auto": {
+      "score": 20
+    },
+    "auto-beta": {
+      "score": 19.7
+    },
+    "bodybuilder": {
+      "score": 19.5
+    },
+    "free": {
+      "score": 19.2
+    },
+    "fusion": {
+      "score": 19
+    },
+    "pareto-code": {
+      "score": 18.7
+    },
+    "perceptron-mk1": {
+      "score": 18.5
+    },
+    "sonar": {
+      "score": 18.2
+    },
+    "sonar-deep-research": {
+      "score": 18
+    },
+    "sonar-pro": {
+      "score": 17.7
+    },
+    "sonar-pro-search": {
+      "score": 17.5
+    },
+    "sonar-reasoning-pro": {
+      "score": 17.2
+    },
+    "laguna-s-2.1": {
+      "score": 17
+    },
+    "laguna-s-2.1-free": {
+      "score": 16.7
+    },
+    "laguna-xs-2.1": {
+      "score": 16.5
+    },
+    "laguna-xs-2.1-free": {
+      "score": 16.2
+    },
+    "qwen-2.5-72b-instruct": {
+      "score": 15.9
+    },
+    "qwen-2.5-7b-instruct": {
+      "score": 15.7
+    },
+    "qwen-2.5-coder-32b-instruct": {
+      "score": 15.4
+    },
+    "qwen-plus": {
+      "score": 15.2
+    },
+    "qwen-plus-2025-07-28": {
+      "score": 14.9
+    },
+    "qwen2.5-vl-72b-instruct": {
+      "score": 14.7
+    },
+    "qwen3-235b-a22b": {
+      "score": 14.4
+    },
+    "qwen3-235b-a22b-2507": {
+      "score": 14.2
+    },
+    "qwen3-30b-a3b": {
+      "score": 13.9
+    },
+    "qwen3-30b-a3b-instruct-2507": {
+      "score": 13.7
+    },
+    "qwen3-coder-30b-a3b-instruct": {
+      "score": 13.4
+    },
+    "qwen3-coder": {
+      "score": 13.2
+    },
+    "qwen3-coder-flash": {
+      "score": 12.9
+    },
+    "qwen3-coder-plus": {
+      "score": 12.7
+    },
+    "qwen3-max": {
+      "score": 12.4
+    },
+    "qwen3-max-thinking": {
+      "score": 12.2
+    },
+    "qwen3-next-80b-a3b-instruct": {
+      "score": 11.9
+    },
+    "qwen3-vl-235b-a22b-instruct": {
+      "score": 11.6
+    },
+    "qwen3-vl-235b-a22b-thinking": {
+      "score": 11.4
+    },
+    "qwen3-vl-30b-a3b-instruct": {
+      "score": 11.1
+    },
+    "qwen3-vl-30b-a3b-thinking": {
+      "score": 10.9
+    },
+    "qwen3-vl-32b-instruct": {
+      "score": 10.6
+    },
+    "qwen3-vl-8b-instruct": {
+      "score": 10.4
+    },
+    "qwen3-vl-8b-thinking": {
+      "score": 10.1
+    },
+    "qwen3.5-27b": {
+      "score": 9.9
+    },
+    "qwen3.5-flash-02-23": {
+      "score": 9.6
+    },
+    "qwen3.5-plus-02-15": {
+      "score": 9.4
+    },
+    "qwen3.5-plus-20260420": {
+      "score": 9.1
+    },
+    "qwen3.6-flash": {
+      "score": 8.9
+    },
+    "qwen3.6-max-preview": {
+      "score": 8.6
+    },
+    "qwen3.7-flash": {
+      "score": 8.4
+    },
+    "qwen3.8-flash": {
+      "score": 8.1
+    },
+    "reka-edge": {
+      "score": 7.8
+    },
+    "reka-flash-3": {
+      "score": 7.6
+    },
+    "relace-apply-3": {
+      "score": 7.3
+    },
+    "relace-search": {
+      "score": 7.1
+    },
+    "fugu-ultra": {
+      "score": 6.8
+    },
+    "sakana-namazu": {
+      "score": 6.6
+    },
+    "l3-lunaris-8b": {
+      "score": 6.3
+    },
+    "l3.1-euryale-70b": {
+      "score": 6.1
+    },
+    "l3.3-euryale-70b": {
+      "score": 5.8
+    },
+    "step-3.5-flash": {
+      "score": 5.6
+    },
+    "hunyuan-a13b-instruct": {
+      "score": 5.3
+    },
+    "hy-mt2-1.8b": {
+      "score": 5.1
+    },
+    "hy-mt2-30b-a3b": {
+      "score": 4.8
+    },
+    "hy-mt2-7b": {
+      "score": 4.6
+    },
+    "hy3": {
+      "score": 4.3
+    },
+    "hy4-preview": {
+      "score": 4.1
+    },
+    "cydonia-24b-v4.1": {
+      "score": 3.8
+    },
+    "skyfall-36b-v2": {
+      "score": 3.5
+    },
+    "unslopnemo-12b": {
+      "score": 3.3
+    },
+    "remm-slerp-l2-13b": {
+      "score": 3
+    },
+    "dolphin-mistral-24b-venice-edition": {
+      "score": 2.8
+    },
+    "palmyra-x5": {
+      "score": 2.5
+    },
+    "grok-4.20": {
+      "score": 2.3
+    },
+    "grok-4.20-multi-agent": {
+      "score": 2
+    },
+    "glm-4.5": {
+      "score": 1.8
+    },
+    "glm-4.5-air": {
+      "score": 1.5
+    },
+    "glm-4.5v": {
+      "score": 1.3
+    },
+    "glm-4.6v": {
+      "score": 1
+    },
+    "glm-4.7-flash": {
+      "score": 0.8
+    },
+    "glm-5": {
+      "score": 0.5
+    },
+    "glm-5-turbo": {
+      "score": 0.3
+    },
+    "glm-5v-turbo": {
+      "score": 0
+    }
+  },
+  "counts": {
+    "models": 396
+  }
+}

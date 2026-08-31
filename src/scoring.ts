@@ -4,7 +4,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { paths, withPathLock } from "./state"
 import type { Lane, Pool, Routing, ShellRegEntry } from "./types"
-import { baseScore, type Tier } from "./model-ranks"
+import { baseScoreDynamic } from "./capability"
+import type { Tier } from "./model-ranks"
 import { LANE_SPEC } from "./lane-policy"
 
 // ---- 水位因子（调用方从 poolStates/quotaView 归一后注入；缺省=全 1.0 fail-open）----
@@ -36,6 +37,8 @@ export interface ScoreInput {
 export interface ScoreBreakdown {
   base: number
   baseSource: string
+  /** [2026-08-31]-[动态能力分级：api 命中时为 capability.json 数据版本（决策日志追溯）；策展回退为 null] */
+  baseVersion?: string | null
   effortFit: number
   health: number
   water: number
@@ -94,9 +97,11 @@ function costBiasOf(pool: string, w: WaterFactor): number {
   return w.dsIdle ? 0.85 : 0.7
 }
 
-/** 单壳加权评分（纯函数；immediate 只影响排序不影响本函数乘积分） */
+/** 单壳加权评分（纯函数；immediate 只影响排序不影响本函数乘积分）
+ *  [2026-08-31]-[动态能力分级：base 来源切换为 baseScoreDynamic（api → 策展表 fail-open 回退），
+ *  乘积链 total=base*effortFit*health*water*costBias*peak 保持不变] */
 export function scoreShell(input: ScoreInput): ScoreBreakdown {
-  const base = baseScore(input.modelId)
+  const base = baseScoreDynamic(input.modelId)
   const effortFit = effortFitOf(input.lane, input.effort)
   const health = healthOf(input.matrixStatus)
   const water = waterOf(String(input.pool), input.water)
@@ -106,6 +111,7 @@ export function scoreShell(input: ScoreInput): ScoreBreakdown {
   return {
     base: base.score,
     baseSource: base.source,
+    baseVersion: base.version,
     effortFit,
     health,
     water,

@@ -225,6 +225,21 @@ export interface GateSnapshot {
 }
 
 // 插件 options（["opencode-switchman", {...}] 元组形式）
+// [2026-08-31]-[动态能力分级：第三方权威指数（AA v2 主源/OpenRouter 备源）→ capability.json
+//  （TTL 24h）→ baseScore 的 api 覆盖层；回退链＝实时 api → 随包内置默认排名（gen:capability
+//  生成的官方排名快照，随版本手动迭代）→ 策展表；离线/429 fail-open 不阻塞委派]
+export interface CapabilityTierThresholds { S?: number; A?: number; B?: number }
+export interface CapabilityOptions {
+  enabled?: boolean
+  /** auto（默认）=有 apiKey 先 AA、失败/无 key 转 OpenRouter；也可显式指定单源 */
+  source?: "auto" | "artificial-analysis" | "openrouter"
+  /** Artificial Analysis Data API key（x-api-key；也可走 ARTIFICIAL_ANALYSIS_API_KEY 环境变量） */
+  apiKey?: string
+  /** 绝对阈值（默认 S>=62/A>=55/B>=45，intelligence index 0-100 口径）或 "quantile"（p80/p60/p40 分位） */
+  tierThresholds?: CapabilityTierThresholds | "quantile"
+  /** LMArena（api.wulong.dev ELO）可选交叉校验：仅日志告警不影响评分，默认 false */
+  lmarenaCheck?: boolean
+}
 export interface GlmQuotaOptions {
   enabled?: boolean
   /** 5 小时窗预留水位（%）：达到即硬拦 GLM 壳，避免用满触发 429；默认 90，周额度仍只认 100% */
@@ -252,4 +267,5 @@ export interface SwitchmanOptions {
   rules?: { enabled?: boolean }
   lanes?: Partial<Record<Lane, string[]>>
   matrix?: MatrixOptions
+  capability?: CapabilityOptions
 }

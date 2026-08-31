@@ -7,6 +7,14 @@ import { join } from "node:path"
 
 process.env.SWITCHMAN_STATE = mkdtempSync(join(tmpdir(), "switchman-fx-"))
 
+// [2026-08-31]-[机制测试与能力排名数据解耦：空壳 capability.json 使档位断言只锚定策展表，
+//  不随内置默认快照/实时排名数据漂移（磁盘索引独占，未命中即回退策展表）]
+mkdirSync(process.env.SWITCHMAN_STATE, { recursive: true })
+writeFileSync(
+  join(process.env.SWITCHMAN_STATE, "capability.json"),
+  JSON.stringify({ source: "artificial-analysis", version: "fixed-empty", fetched_at: Date.now() / 1000, thresholds: { S: 62, A: 55, B: 45 }, models: {} }),
+)
+
 import { parseRouteMeta, metaErrorHint } from "../src/meta"
 import { checkShell } from "../src/gates"
 import {
@@ -328,9 +336,12 @@ describe("端到端与配额判定", () => {
     expect(deepseekExhausted({ status: "ok", exhausted: true })[0]).toBe(true)
   })
   test("33 pool_states + routingAdvice 契约：surplus/strained/healthy 与建议行", () => {
+    // [2026-08-31]-[修复日期敏感翻转：reset_date 硬编码过近会使 dl=1、runway>dl*1.3 判 surplus；
+    //  改动态 +10 天（dl∈[9,10] 时 runway≈1.4<dl*0.8 恒 strained，与运行日期解耦）]
+    const reset = new Date(Date.now() + 10 * 86400_000).toISOString().slice(0, 10)
     const states = poolStates({
       glm: { status: "ok", fetched_at: Date.now() / 1000, weekly: { used_pct: 10, reset_at: Date.now() / 1000 + 24 * 3600 } },
-      copilot: { status: "ok", fetched_at: Date.now() / 1000, reset_date: "2026-09-01", premium: { quota_id: "p", entitlement: 15000, used: 14000, remaining: 1000, percent_remaining: 6.7, unlimited: false, overage_permitted: false, has_quota: true, timestamp_utc: null } },
+      copilot: { status: "ok", fetched_at: Date.now() / 1000, reset_date: reset, premium: { quota_id: "p", entitlement: 15000, used: 14000, remaining: 1000, percent_remaining: 6.7, unlimited: false, overage_permitted: false, has_quota: true, timestamp_utc: null } },
     })
     expect(states.copilot?.state).toBe("strained")
     const advice = routingAdvice(states)
