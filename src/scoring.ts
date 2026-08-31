@@ -1,12 +1,21 @@
 // 模型评分引擎（纯函数核心）：显式加权评分 + 硬门 + tier 分组排序 + 决策日志
 // [2026-08-29]-[把 computeLane 规则式排序升级为可追溯显式加权评分；
 //  base（策展能力）压倒一切软系数：先按 tier 分组、组内再按乘积分排序]
+// [2026-08-31]-[去厂商化编排：删 dsLast 池名分组；total 扩为
+//  base×effortFit×health×water×costBias×peak×billingBoost×unknownPenalty——
+//  billing 仅由用户 jsonc 显式声明驱动（subscription=1.0/api=0.85），未知组（能力分级
+//  全链未命中的模型）同 tier 排已知之后；costBias 厂商规则已废除，恒 1.0 留作成本数据预留位]
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { paths, withPathLock } from "./state"
 import type { Lane, Pool, Routing, ShellRegEntry } from "./types"
 import { baseScoreDynamic } from "./capability"
+import { TIER_RANK, UNKNOWN_PENALTY } from "./model-ranks"
 import type { Tier } from "./model-ranks"
 import { LANE_SPEC } from "./lane-policy"
+
+/** [2026-08-31]-[去厂商化：api 计费系数（subscription=1.0）；取代按池名写死的链尾/按量惩罚] */
+export const BILLING_API_BOOST = 0.85
+export { UNKNOWN_PENALTY }
 
 // ---- 水位因子（调用方从 poolStates/quotaView 归一后注入；缺省=全 1.0 fail-open）----
 export interface WaterFactor {
@@ -18,8 +27,8 @@ export interface WaterFactor {
   copilotRemainingPct?: number | null
   /** Copilot 距重置天数 */
   copilotResetDays?: number | null
-  /** DS 空闲时段（5 折） */
-  dsIdle?: boolean
+  /** routing 关闭时水位影响必须中性化。 */
+  routing?: Partial<Record<Pool, boolean>>
 }
 
 export interface ScoreInput {
@@ -29,9 +38,12 @@ export interface ScoreInput {
   pool: Pool | string
   matrixStatus: string
   latencyMs: number | null
-  glmPeak: boolean
+  /** [2026-08-31]-[peak 泛化：该壳 provider 的计费高峰是否活跃（任意 provider；原 glm 专属规则废除）] */
+  peakActive: boolean
   immediate: boolean
   water: WaterFactor
+  /** [2026-08-31]-[订阅计费系数：subscription=1.0/api=0.85（调用方从用户配置解析）；缺省 1.0] */
+  billingBoost?: number
 }
 
 export interface ScoreBreakdown {
@@ -42,13 +54,16 @@ export interface ScoreBreakdown {
   effortFit: number
   health: number
   water: number
+  /** 恒 1.0（厂商规则已废除；预留给未来真实成本数据因子） */
   costBias: number
   peak: number
+  /** [2026-08-31]-[订阅计费系数（subscription=1.0/api=0.85）] */
+  billingBoost: number
+  /** [2026-08-31]-[未知组系数：base 来源为 global 兜底时 0.75，否则 1.0] */
+  unknownPenalty: number
   total: number
   tier: Tier
 }
-
-const TIER_RANK: Record<Tier, number> = { S: 0, A: 1, B: 2, C: 3 }
 
 function clampWater(v: number): number {
   return Math.min(1.0, Math.max(0.6, v))
@@ -67,8 +82,11 @@ function healthOf(matrixStatus: string): number {
   return matrixStatus === "strained" ? 0.6 : 1.0
 }
 
-/** water：水位富余 1.0 线性降至 0.6；>90% 已在上游硬拦 */
+/** water：水位富余 1.0 线性降至 0.6；>90% 已在上游硬拦。
+ *  [2026-08-31]-[去厂商化口径：池名仅作配额抓取数据面映射——有抓取器的 provider 才有水位数据，
+ *  未知/自定义 provider 一律 fail-open 1.0；water 系数本身不承载任何厂商商务偏好] */
 function waterOf(pool: string, w: WaterFactor): number {
+  if (w.routing?.[pool as Pool] === false) return 1.0
   if (pool === "glm") {
     const pcts = [w.glmFiveHourPct, w.glmWeeklyPct].filter((v): v is number => typeof v === "number")
     if (pcts.length === 0) return 1.0
@@ -89,25 +107,24 @@ function waterOf(pool: string, w: WaterFactor): number {
   return 1.0
 }
 
-/** costBias：订阅池 1.0 / 按量池（deepseek）0.7 */
-// [2026-08-29]-[复审遗留#3修正：DS 空闲=5折更便宜，惩罚应减轻（0.7→0.85）而非加重——
-//  costBias 越低越不优先，原规格 0.6 方向写反；按量池整体仍压在订阅池之下]-
-function costBiasOf(pool: string, w: WaterFactor): number {
-  if (pool !== "deepseek") return 1.0
-  return w.dsIdle ? 0.85 : 0.7
+/** costBias：恒 1.0——按池名写死的按量惩罚已废除（billingBoost 接管），预留给未来真实成本数据因子 */
+function costBiasOf(): number {
+  return 1.0
 }
 
 /** 单壳加权评分（纯函数；immediate 只影响排序不影响本函数乘积分）
- *  [2026-08-31]-[动态能力分级：base 来源切换为 baseScoreDynamic（api → 策展表 fail-open 回退），
- *  乘积链 total=base*effortFit*health*water*costBias*peak 保持不变] */
+ *  [2026-08-31]-[去厂商化：total=base*effortFit*health*water*costBias*peak*billingBoost*unknownPenalty；
+ *  unknownPenalty 由 base 来源推导（global 兜底=未知组），billingBoost 由调用方注入] */
 export function scoreShell(input: ScoreInput): ScoreBreakdown {
   const base = baseScoreDynamic(input.modelId)
   const effortFit = effortFitOf(input.lane, input.effort)
   const health = healthOf(input.matrixStatus)
   const water = waterOf(String(input.pool), input.water)
-  const costBias = costBiasOf(String(input.pool), input.water)
-  const peak = input.glmPeak && input.pool === "glm" ? 0.93 : 1.0
-  const total = base.score * effortFit * health * water * costBias * peak
+  const costBias = costBiasOf()
+  const peak = input.peakActive ? 0.93 : 1.0
+  const billingBoost = input.billingBoost ?? 1.0
+  const unknownPenalty = base.source === "global" ? UNKNOWN_PENALTY : 1.0
+  const total = base.score * effortFit * health * water * costBias * peak * billingBoost * unknownPenalty
   return {
     base: base.score,
     baseSource: base.source,
@@ -117,6 +134,8 @@ export function scoreShell(input: ScoreInput): ScoreBreakdown {
     water,
     costBias,
     peak,
+    billingBoost,
+    unknownPenalty,
     total,
     tier: base.tier,
   }
@@ -143,6 +162,7 @@ export interface RankContext {
   routing?: Routing | null
   registry?: Record<string, ShellRegEntry> | null
   quotaExhausted?: Partial<Record<Pool, boolean>>
+  routePolicy?: Partial<Record<Pool, { routing: boolean }>>
   retiredModels?: ReadonlySet<string>
   realFailedCombos?: ReadonlySet<string>
   producerFamily?: string | null
@@ -150,6 +170,10 @@ export interface RankContext {
   capability?: string | null
   /** [2026-08-29]-[复审P1-2(b)：v1.1「便宜者前」契约保留为同 tier 且 total 平局的 tiebreak] */
   costs?: ((modelId: string) => number | null) | null
+  /** [2026-08-31]-[去厂商化：provider→订阅计费系数（subscription=1.0/api=0.85；调用方从用户 jsonc 解析）] */
+  billingBoostOf?: (provider: string) => number
+  /** [2026-08-31]-[去厂商化：provider→计费高峰活跃（任意 provider 的 peak 配置求值）] */
+  peakOf?: (provider: string) => boolean
 }
 
 /** 硬门：矩阵 down（strained 非 down）/ 熔断 / 耗尽 / 退休 / 实调隔离 / 语义闸（与 computeLane 同源） */
@@ -162,7 +186,7 @@ function isGated(s: Rankable, ctx: RankContext): boolean {
   if (down && (s.key in down || (shell?.comboKey && shell.comboKey in down))) return true
   if (shell && ctx.retiredModels?.has(`${shell.provider}/${shell.modelId}`)) return true
   if (shell?.comboKey && ctx.realFailedCombos?.has(shell.comboKey)) return true
-  if (shell && ctx.quotaExhausted?.[shell.pool as Pool]) return true
+  if (shell && ctx.quotaExhausted?.[shell.pool as Pool] && ctx.routePolicy?.[shell.pool as Pool]?.routing !== false) return true
   if (ctx.lane === "review" && ctx.producerFamily && shell && String(shell.family) === String(ctx.producerFamily).toLowerCase()) return true
   if ((ctx.modality === "image" || ctx.modality === "vision") && shell && !shell.vision) return true
   if (ctx.capability === "rw" && shell?.capability === "ro") return true
@@ -170,7 +194,8 @@ function isGated(s: Rankable, ctx: RankContext): boolean {
 }
 
 /**
- * 硬门剔除 → 排序。immediate 只按 latency_ms 升序（DS 恒链尾）；normal 按 tier 分组、组内乘积分降序。
+ * 硬门剔除 → 排序。immediate 只按 latency_ms 升序；normal 按 tier 分组、组内乘积分降序。
+ * [2026-08-31]-[去厂商化：删 dsLast 池名分组——api/未知组由乘积系数自然沉底]
  * 返回 ranked（幸存者）+ breakdowns（key→明细，供决策日志追溯）。
  */
 export function rankCandidates<T extends Rankable>(
@@ -182,6 +207,7 @@ export function rankCandidates<T extends Rankable>(
   for (const s of shells) {
     if (isGated(s, ctx)) continue
     survivors.push(s)
+    const shell = ctx.registry?.[s.key]
     breakdowns.set(s.key, scoreShell({
       modelId: s.modelId,
       effort: s.effort,
@@ -189,18 +215,18 @@ export function rankCandidates<T extends Rankable>(
       pool: s.pool,
       matrixStatus: s.matrixStatus,
       latencyMs: s.latencyMs,
-      glmPeak: ctx.glmPeak,
+      peakActive: shell && ctx.peakOf ? Boolean(ctx.peakOf(shell.provider)) : (ctx.peakOf ? false : ctx.glmPeak && String(s.pool) === "glm"),
       immediate: ctx.immediate,
       water: ctx.water,
+      billingBoost: shell && ctx.billingBoostOf ? ctx.billingBoostOf(shell.provider) : ctx.billingBoostOf ? BILLING_API_BOOST : 1.0,
     }))
   }
-  const dsLast = (s: T) => (s.pool === "deepseek" ? 1 : 0)
   // [2026-08-29]-[复审P2-1：末位显式按入参序 tiebreak，不依赖排序实现稳定性]-
   const inputOrder = new Map(survivors.map((s, i) => [s.key, i]))
   if (ctx.immediate) {
     survivors.sort((a, b) =>
-      dsLast(a) - dsLast(b) ||
-      (a.latencyMs ?? Number.POSITIVE_INFINITY) - (b.latencyMs ?? Number.POSITIVE_INFINITY))
+      (a.latencyMs ?? Number.POSITIVE_INFINITY) - (b.latencyMs ?? Number.POSITIVE_INFINITY) ||
+      (inputOrder.get(a.key) ?? 0) - (inputOrder.get(b.key) ?? 0))
   } else {
     const costOf = ctx.costs
     const costOfKey = (s: T): number => {
@@ -211,8 +237,7 @@ export function rankCandidates<T extends Rankable>(
     survivors.sort((a, b) => {
       const ba = breakdowns.get(a.key)!
       const bb = breakdowns.get(b.key)!
-      return dsLast(a) - dsLast(b) ||
-        TIER_RANK[ba.tier] - TIER_RANK[bb.tier] ||
+      return TIER_RANK[ba.tier] - TIER_RANK[bb.tier] ||
         bb.total - ba.total ||
         costOfKey(a) - costOfKey(b) ||
         (inputOrder.get(a.key) ?? 0) - (inputOrder.get(b.key) ?? 0)

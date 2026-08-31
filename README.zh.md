@@ -72,28 +72,32 @@ bun run build   # 生成 dist/opencode-switchman.js
 
 > **从旧版（switchman.js）升级**：请删除旧的 `~/.config/opencode/plugins/switchman.js`，避免新旧两份插件同时注入；状态目录已迁移至 `~/.config/opencode/opencode-switchman/`（旧目录可删，全部状态自动重建）。
 
+### 供应商水位配置
+
+首次启动会在 OpenCode 配置目录创建 `opencode-switchman.jsonc`（优先级：`OPENCODE_CONFIG_DIR`、`$XDG_CONFIG_HOME/opencode`、`~/.config/opencode`）。随包内置稳定供应商键 `deepseek-api`、`glm-coding-plan-cn`、`github-copilot`，且**任意 opencode 官方/自定义 provider 键均合法**——未知键按自定义 provider 处理（通用缺省参与编排；对内置键的近似拼写 doctor 会给 warn 建议）。`observe` 控制配额查询与横幅展示，`enabled` 独立控制水位、高峰和耗尽是否参与路由（默认分别为 `true`、`false`）。`billing` 显式声明计费结构——`subscription`（评分系数 1.0）或 `api`（0.85，同 tier 内沉底）；这是计费优先级的唯一来源（不从 models.dev/auth 推断）。高峰区间使用 ISO 周日 `1`–`7` 和 `[start,end)` 的 `HH:mm`；默认 GLM 工作日 14:00–18:00，DeepSeek 工作日 09:00–12:00、14:00–18:00。可运行 `/switchman-doctor` 获取本地、脱敏且不联网的诊断报告。
+
 ### 验证安装
 
 启动 opencode 后，主模型每轮系统提示中会出现四行实时横幅（即调度依据）：
 
 ```
-[路由] economy: glm-53f-low→ds-v4fv-off | mechanical: glm-53f-high→ds-v4fv-off | main: glm-53-high→ds-v4p-high | ...
+[路由] economy: glm-53-low→claude5-low→gem31pro-low | mechanical: claude5-medium→gem31pro-medium→gem37f-medium | main: glm-53-high→ds-v4p-high→claude5-high | ...
 [水位] GLM 5h窗 20% 周 7%(09-04 10:00刷新) | Copilot 积分不限量 已用3885(2026-09-01刷新) | 建议: ...
-[限制] down: 无 | retired: 0 模型已下线 | reviewer 须异族（producer family ≠ 壳 family） | DeepSeek 仅链尾兜底
+[限制] down: 无 | retired: 0 模型已下线 | reviewer 须异族（producer family ≠ 壳 family） | api 计费与未知模型按系数沉底（billing=subscription 显式配置优先）
 [更新] 发现新版本：/switchman-update 或 /switchman-ignore
 ```
 
-同时日志可见 `[opencode-switchman] 已注入 N 只模型空壳（agent）`——N 随有凭证 provider 的模型面动态变化。
+同时日志可见 `[opencode-switchman] 已注入 N 只模型空壳（agent）`——N 随有凭证 provider 的模型面动态变化。六档候选由能力分×档位亲和×计费/未知组系数算法生成，并经 vision/review 结构门过滤，无任何厂商预留席位；运行期再按健康、水位与成本选出当前链首。
 
 ### 配置项
 
 | 选项 | 默认 | 说明 |
 |---|---|---|
-| `quota.glm / quota.deepseek / quota.copilot.enabled` | `true` | 额度控制逐池开关：glm / deepseek / copilot（无凭证自动跳过） |
+| `quota.glm / quota.deepseek / quota.copilot.enabled` | `true` | 已弃用→迁移到 `opencode-switchman.jsonc`；显式使用时提示 SWM042 |
 | `quota.glm.fiveHourReservePct` | `90` | GLM 5 小时窗预留水位（%）：达到即硬拦 GLM 壳避免用满 429；周额度仍只认 100% |
 | `quota.deepseek.lowBalanceWarnCny` | `10` | DeepSeek 余额预警阈值（元）：低于该值横幅 [水位] 提示（仅预警不硬拦） |
 | `cost.enabled` | `true` | models.dev 计价快照作为加权模型评分的一个系数 |
-| `billingWindow.glmPeakHours / dsPeakRanges` | GLM 工作日 14–18 | 高峰窗口定义（影响选池排序） |
+| `billingWindow.glmPeakHours / dsPeakRanges` | GLM 工作日 14–18 | 已弃用→迁移到 `opencode-switchman.jsonc`；显式使用时提示 SWM043 |
 | `providers.glm / providers.deepseek` | `["zhipuai-coding-plan","glm","zai"]` / `["deepseek"]` | 池对应的 provider id 清单（凭证收集用） |
 | `matrix.mode` | `auto` | 动态激活模式：`auto` 按宿主自动（desktop=可见模型 / CLI/TUI=favorites），`app`/`tui` 强制指定，`legacy` 旧静态矩阵 |
 | `matrix.watch` | `true` | 双向同步 desktop 可见模型与 TUI favorites；配置面变化即重算激活矩阵并全量刷新探针 |
@@ -116,7 +120,7 @@ bun run build   # 生成 dist/opencode-switchman.js
 路由现在是显式、可追溯的评分，而不是隐藏偏好序：
 
 - **base 能力分主导**：策展的 S/A/B/C 能力分按 exact 模型 id → 前缀 → family → global fallback 四路匹配，并记录命中路径。tier 分组不可逆：低档永远压不过高档。
-- **加权系数**：最终分数乘以 `effortFit × health × water × costBias × peak`。health 为 `ok=1.0` / `strained=0.6`；water 取两个窗口中更吃紧者，并会在 Copilot 富余且临期时反向提权烧积分；costBias 为订阅池 `1.0`、按量池 `0.7`、DeepSeek 空闲 `0.85`；GLM 高峰只做同档 `×0.93` 让位，绝不跨能力级出局。
+- **加权系数**：最终分数乘以 `effortFit × health × water × costBias × peak × billingBoost × unknownPenalty`。health 为 `ok=1.0` / `strained=0.6`；water 取两个窗口中更吃紧者，并会在 Copilot 富余且临期时反向提权烧积分；peak 对任意 provider 的高峰窗口做同档 `×0.93` 让位，绝不跨能力级出局。`billingBoost` 只由 `opencode-switchman.jsonc` 显式 `billing` 字段驱动（`subscription=1.0`、`api=0.85`）——编排规则零厂商硬编码；`unknownPenalty=0.75` 施加给精确→前缀→family 全链未命中的未知组模型，同 tier 排已知模型之后。
 - **硬门不参与打分**：down、熔断、池耗尽、retired、实调隔离中的组合先出局再评分。`immediate` 紧急档改按探针延迟排序。
 - **决策日志**：每次横幅重建都会把各档候选与六因子评分写入 `state/routing-decisions.jsonl`，保留 200 行环形日志。
 
@@ -152,7 +156,7 @@ opencode-switchman 把编排拆成三层，各司其职：
 | vision | observer 看图 | 视觉模型 |
 | review | reviewer / 专家席 审案 | **强制异模型族**（防同族盲区） |
 
-水位只影响排序（用满不浪费），唯一硬拦是「调用必失败」（额度确定耗尽或硬门命中）；DeepSeek 按量池在自动路由中保持兜底链尾，除非用户点名，否则按量池评分更低。
+水位只影响排序（用满不浪费），唯一硬拦是「调用必失败」（额度确定耗尽或硬门命中）；按量计费（`billing: "api"`）provider 在自动路由中不会被 deny——它们经 0.85 系数在同能力档内沉底，未知 provider 模型经 0.75 惩罚沉底，无需任何厂商专属的链尾席位或 deny 规则。
 
 ## 工作原理
 
@@ -189,7 +193,7 @@ flowchart TD
 | 3 熔断 / 隔离 | 600s 窗内 ≥2 败或实调隔离中 | 「连续失败熔断中，约 10 分钟自动恢复」/「实调失败后隔离中」 |
 | 4 池耗尽 | 配额判定必失败 | 附人读原因（GLM 100% / Copilot 确定耗尽 / DS 欠费） |
 | 5 协议 | ROUTE_META 缺失/非法 | deny 附样例与合法值表 |
-| 6 语义 | 同族复审 / rw→ro 壳 / 图像→非视觉壳 / auto 误选付费兜底 | 「复审须异族视角」等 |
+| 6 语义 | 同族复审 / rw→ro 壳 / 图像→非视觉壳 | 「复审须异族视角」等 |
 
 ROUTE_META 是嵌在委派 prompt 内的单行协议，六键六值，插件逐字段校验：
 

@@ -63,7 +63,7 @@ opencode 启动
 | 四维任务画像 | 认知强度（L 机械/M 常规/H 架构/X 核心安全）×机械度×上下文（S/M/L）×紧急度（immediate/normal/deferable）；自做＝≤2 小文件＋认知 L/M＋省<6k 底价 | 规程文字 |
 | 六档典型角色 | economy=clerk/scouter 扫描清点；mechanical=tester/ops 回归脚本；main=programmer/uiux/data-analyst；hard=planner 架构核心；vision=observer 看图；review=reviewer/planner 审案、专家席 | 六档链（shells.json lanes） |
 | 委派纪律 | 预期收益>6k 才委派；prompt 自包含（目标/已知事实/路径/输出格式）；只要摘要；标准编排 scouter→planner→reviewer 审案→programmer→tester→reviewer 复审（按规模裁剪） | DELEGATION_V1 模板 |
-| 上下文水位 | 单口径＝本会话累计读入 token；软水位 ≈60k 起扫描/读取默认委派；硬水位 ≈80k 停新委派新读取、收尾交付或拆会话 | 规程文字 |
+| 上下文水位 | 单口径＝本会话累计读入 token；软水位 ≈60k 起扫描/读取默认委派；硬水位 ≈80k 停新委派新读取、收尾交付或拆会话；【强制·不可违背】强制压缩水位 ≈100k 立即执行会话上下文压缩（摘要归档/拆会话，压缩前声明保留边界、压缩后核验关键事实，未完成前禁新增委派与大段读取） | 规程文字 |
 | 验证与复审 | 逻辑改动必验证；>20 行或多处调用交 tester；>300 行或核心/安全/数据逻辑交 reviewer，且**必须异模型族**（防同族盲区） | 六闸语义闸（同族 deny） |
 | 终端失败协议 | 任何委派/降级链尽头＝显式告知用户原因＋给 2 个可选项；认知角色（planner/reviewer/专家席）降级必须声明「已降级」 | 规程文字＋deny 附言兜底句 |
 | fail-open | 所有插件钩子异常只写 stderr，绝不阻塞主流程 | 四钩子统一 |

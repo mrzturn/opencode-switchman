@@ -32,6 +32,7 @@ export const paths = () => {
     // [2026-08-29]-[评分引擎决策日志（环形截断 200 行，JSONL）]
     decisions: join(dir, "routing-decisions.jsonl"),
     selfupdate: join(dir, "selfupdate.json"),
+    doctorSnapshot: join(dir, "doctor-snapshot.json"),
   }
 }
 

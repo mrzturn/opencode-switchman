@@ -5,6 +5,7 @@
 import { readCopilotGithubToken, markCopilotGatewayExhausted } from "./quota"
 import { loadManifest, loadMatrix, paths, writeJsonAtomic, withPathLock, PROBE_TTL } from "./state"
 import { classifyFailure } from "./failclass"
+import { poolForProviderId } from "./provider-config"
 import type { Matrix } from "./types"
 
 const PROBE_TIMEOUT_MS = 45_000
@@ -59,14 +60,14 @@ function buildRequest(
     if (hasEffort) body.reasoning_effort = effort
     return { url: `${base}/chat/completions`, headers: copilotHeaders(ghToken), body }
   }
-  if (provider.startsWith("zhipuai") || provider.startsWith("glm") || provider.startsWith("zai")) {
+  if (poolForProviderId(provider) === "glm") {
     if (!eps.glmKey) return null
     const base = eps.glmBaseURL ?? "https://open.bigmodel.cn/api/coding/paas/v4"
     const body: Record<string, unknown> = { model: modelId, max_tokens: 8, messages: [{ role: "user", content: "回复：OK" }] }
     if (hasEffort) body.reasoning_effort = effort
     return { url: `${base}/chat/completions`, headers: { "Content-Type": "application/json", Authorization: `Bearer ${eps.glmKey}` }, body }
   }
-  if (provider === "deepseek") {
+  if (poolForProviderId(provider) === "deepseek") {
     if (!eps.dsKey) return null
     const base = eps.deepseekBaseURL ?? "https://api.deepseek.com"
     const body: Record<string, unknown> = { model: modelId, max_tokens: 8, messages: [{ role: "user", content: "回复：OK" }] }

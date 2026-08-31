@@ -22,6 +22,8 @@ export interface BannerInput {
   advice?: string | null
   update?: string | null
   dsLowWarnCny?: number
+  providerPolicy?: Partial<Record<"glm" | "copilot" | "deepseek", { observe: boolean; routing: boolean }>>
+  doctorSummary?: string | null
   /** [2026-08-29]-[动态矩阵：[限制] 行追加 模式/watch/configStatus、restartRequired、models.dev 降级标注；缺省=legacy 原样] */
   matrixInfo?: { mode: string; configStatus: string; watch: boolean; restartRequired?: string[]; degradedModels?: number; retiredModels?: number } | null
 }
@@ -113,17 +115,23 @@ function levelLine(input: BannerInput): string {
   if (cp) segs.push(cp)
   const ds = dsBrief(input.quota.deepseek ?? null, input.dsLowWarnCny)
   if (ds) segs.push(ds)
-  if (input.quota.glm === null && input.quota.copilot === null) segs.push("配额未知(查询关闭或不可用)")
+  for (const pool of ["glm", "copilot", "deepseek"] as const) {
+    const policy = input.providerPolicy?.[pool]
+    if (policy?.observe === false) segs.push(`${pool === "glm" ? "GLM" : pool === "copilot" ? "Copilot" : "DeepSeek"} 查询关闭`)
+    else if (policy && !policy.routing) segs.push(`${pool === "glm" ? "GLM" : pool === "copilot" ? "Copilot" : "DeepSeek"} 仅观察`)
+  }
+  if (input.quota.glm === null && input.quota.copilot === null && !input.providerPolicy) segs.push("配额未知(查询关闭或不可用)")
   segs.push(`${input.billing.glmLabel} · ${input.billing.dsLabel}`)
   if (input.advice) segs.push(`建议: ${input.advice}`)
   return `[水位] ${segs.join(" | ")}`
 }
 
-function limitLine(down: Set<string> | string[], unknownCount?: number, matrixInfo?: BannerInput["matrixInfo"]): string {
+function limitLine(down: Set<string> | string[], unknownCount?: number, matrixInfo?: BannerInput["matrixInfo"], doctorSummary?: string | null): string {
   const arr = Array.isArray(down) ? down : [...down]
   const names = arr.map((n) => (n.includes("-mx-") ? shortName(n) : n)).sort()
   const downTxt = names.length === 0 ? "无" : `${names.join("、")}（不可派发，deny 会附改派）`
-  let line = `[限制] down: ${downTxt} | reviewer 须异族（producer family ≠ 壳 family，ROUTE_META 校验） | DeepSeek 仅链尾兜底`
+  // [2026-08-31]-[去厂商化：删「DeepSeek 仅链尾兜底」池名商务语义——api/未知组由计费系数沉底]
+  let line = `[限制] down: ${downTxt} | reviewer 须异族（producer family ≠ 壳 family，ROUTE_META 校验） | api 计费与未知模型按系数沉底（billing=subscription 显式配置优先）`
   if (unknownCount && unknownCount > 0) line += ` | ${unknownCount} 个组合状态未知（不拦截）`
   if (matrixInfo) {
     line += ` | 矩阵: ${matrixInfo.mode}${matrixInfo.watch ? "·watch" : ""}/${matrixInfo.configStatus}`
@@ -137,6 +145,7 @@ function limitLine(down: Set<string> | string[], unknownCount?: number, matrixIn
       line += `、${matrixInfo.retiredModels} 模型已下线`
     }
   }
+  if (doctorSummary) line += ` | ${doctorSummary}`
   return line
 }
 
@@ -145,7 +154,7 @@ export function buildBanner(input: BannerInput): string[] {
   const lines = [
     routeLine(input.lanes),
     levelLine(input),
-    limitLine(input.down, input.states ? countUnknown(input) : undefined, input.matrixInfo ?? undefined),
+    limitLine(input.down, input.states ? countUnknown(input) : undefined, input.matrixInfo ?? undefined, input.doctorSummary),
   ]
   if (input.update) lines.push(`[更新] ${input.update}`)
   return lines

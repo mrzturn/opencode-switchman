@@ -230,6 +230,16 @@ export function loadBundledCapability(): CapabilityIndex | null {
   return bundledCache
 }
 
+/** 指定能力索引的纯匹配，生成期可复用随包快照而不读取运行期状态。 */
+export function baseScoreFromCapabilityIndex(modelId: string, idx: CapabilityIndex | null): DynamicBaseResult | null {
+  if (!idx) return null
+  const norm = normalizeModelKey(modelId)
+  const hit = norm ? apiMatch(idx, norm) : null
+  if (!hit) return null
+  const tier = tierOfScore(hit.entry.score, idx.thresholds)
+  return { score: TIER_SCORE[tier], tier, source: idx.bundled ? "bundled" : "api", version: idx.version, matchedAs: hit.matchedAs }
+}
+
 // ---- 拉取层（AA → OR 链式回退；失败沿用 last-good；全链 fail-open 不抛出）----
 
 async function fetchJson(
@@ -369,18 +379,8 @@ function apiMatch(idx: CapabilityIndex, normKey: string): { entry: CapabilityEnt
  */
 export function baseScoreDynamic(modelId: string): DynamicBaseResult {
   const idx = loadCapability() ?? loadBundledCapability()
-  if (idx) {
-    const norm = normalizeModelKey(modelId)
-    const hit = norm ? apiMatch(idx, norm) : null
-    if (hit) {
-      const tier = tierOfScore(hit.entry.score, idx.thresholds)
-      return {
-        score: TIER_SCORE[tier], tier,
-        source: idx.bundled ? "bundled" : "api",
-        version: idx.version, matchedAs: hit.matchedAs,
-      }
-    }
-  }
+  const fromIndex = baseScoreFromCapabilityIndex(modelId, idx)
+  if (fromIndex) return fromIndex
   const fb = baseScore(modelId)
   return { ...fb, version: null }
 }

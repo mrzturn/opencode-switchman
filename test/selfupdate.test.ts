@@ -75,6 +75,11 @@ describe("一键升级命令资产", () => {
     expect(existsSync(join(base, "command", "switchman-ignore.md"))).toBe(true)
     expect(existsSync(join(base, "command", "switchman-update.md"))).toBe(false)
   })
+  test("doctor 命令默认使用插件模块目录而非用户项目 cwd", () => {
+    const base = mkdtempSync(join(tmpdir(), "sw-doctor-path-"))
+    ensureUpdateCommands("prod", base)
+    expect(readFileSync(join(base, "command", "switchman-doctor.md"), "utf8")).not.toContain(`${process.cwd()}/dist/switchman-doctor.js`)
+  })
   test("upgradeCommandMd：local 模式文案不含一键升级入口", () => {
     expect(bannerTextOf({ checked_at: "", mode: "local", current: "0.0.1", latest: "", outdated: true })).not.toContain("/switchman-update")
     expect(bannerTextOf({ checked_at: "", mode: "prod", current: "0.0.1", latest: "9.9.9", outdated: true })).toContain("/switchman-update")

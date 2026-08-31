@@ -21,7 +21,7 @@ const W = {}
 function scoreInput(over: Partial<ScoreInput> = {}): ScoreInput {
   return {
     modelId: "glm-5.3", effort: "high", lane: "main", pool: "glm",
-    matrixStatus: "ok", latencyMs: 100, glmPeak: false, immediate: false, water: W,
+    matrixStatus: "ok", latencyMs: 100, peakActive: false, immediate: false, water: W,
     ...over,
   }
 }
@@ -261,7 +261,7 @@ describe("评分链接入", () => {
     expect(sb.baseSource).toBe("bundled")
     expect(sb.baseVersion).toBe(b.version)
     expect(String(sb.baseVersion)).toMatch(/^bundled-/)
-    expect(sb.total).toBeCloseTo(sb.base * sb.effortFit * sb.health * sb.water * sb.costBias * sb.peak)
+    expect(sb.total).toBeCloseTo(sb.base * sb.effortFit * sb.health * sb.water * sb.costBias * sb.peak * sb.billingBoost * sb.unknownPenalty)
   })
   test("决策日志：baseSource=api 且版本可追溯", async () => {
     rmSync(paths().capability, { force: true })
@@ -270,7 +270,7 @@ describe("评分链接入", () => {
     const rec: DecisionRecord = {
       at: new Date().toISOString(),
       lane: "main",
-      candidates: [{ name: "glm-mx-53-high", base: b.base, baseSource: b.baseSource, baseVersion: b.baseVersion, effortFit: b.effortFit, health: b.health, water: b.water, costBias: b.costBias, peak: b.peak, total: b.total, tier: b.tier }],
+      candidates: [{ name: "glm-mx-53-high", base: b.base, baseSource: b.baseSource, baseVersion: b.baseVersion, effortFit: b.effortFit, health: b.health, water: b.water, costBias: b.costBias, peak: b.peak, billingBoost: b.billingBoost, unknownPenalty: b.unknownPenalty, total: b.total, tier: b.tier }],
     }
     await logDecision([rec])
     const line = JSON.parse(readFileSync(paths().decisions, "utf8").split("\n")[0]!)

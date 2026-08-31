@@ -15,18 +15,21 @@ import {
 } from "./state"
 import { checkShell, noteUnknownAgent, shellLikeName, denyUninjected } from "./gates"
 import {
-  computeLane, billingWindow, poolStates, routingAdvice,
+  computeLane, billingWindow, billingWindowForConfig, poolStates, routingAdvice,
   glmExhausted, copilotExhausted, deepseekExhausted, firstCandidate,
 } from "./lane"
-import { logDecision } from "./scoring"
+import { logDecision, BILLING_API_BOOST } from "./scoring"
 import type { WaterFactor, DecisionRecord } from "./scoring"
 import { quotaView, readAuthStore, markCopilotGatewayExhausted } from "./quota"
 import { costOf, refreshCosts, costsStale } from "./cost"
-import { refreshCapability, capabilityStale } from "./capability"
+import { baseScoreDynamic, refreshCapability, capabilityStale } from "./capability"
 import { refreshMatrixIfStale, refreshActiveMatrixIfStale, probeKeys } from "./probe"
 import { injectShells, injectShellDefs } from "./shells"
 import { buildBanner } from "./banner"
 import { refreshSelfUpdate, updateBannerText, ensureUpdateCommands, detectLoadMode } from "./selfupdate"
+import { billingOfProvider, loadUserConfig, routingPeakActive, routePolicy } from "./config"
+import { poolForProviderId } from "./provider-config"
+import { runDoctor } from "./doctor"
 import {
   recordFailure, cleanRoutingExpired, markRealFailure, realFailedComboKeys,
   REAL_FAIL_TTL_MS, RATE_LIMIT_TTL_MS, noteModelNotFound, retiredModelKeys, filterRetiredShells,
@@ -97,7 +100,35 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 interface Credentials { glmKey?: string; dsKey?: string; copilotToken?: string; glmBaseURL?: string; deepseekBaseURL?: string }
 
 export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
-  const options = normalizeOptions(rawOptions)
+  const raw = rawOptions ?? {}
+  const options = normalizeOptions(raw)
+  // 老 options 只在显式存在时覆盖新文件 observe，避免默认值反向覆盖用户配置。
+  const rawQuota = (raw as any).quota
+  const legacyObserve: Partial<Record<Pool, boolean>> = {}
+  for (const pool of ["glm", "copilot", "deepseek"] as Pool[]) {
+    if (rawQuota?.[pool] && Object.prototype.hasOwnProperty.call(rawQuota[pool], "enabled")) legacyObserve[pool] = Boolean(rawQuota[pool].enabled)
+  }
+  let userConfig = loadUserConfig()
+  let policy = routePolicy(userConfig.config, legacyObserve)
+  // [2026-08-31]-[去厂商化：billing/peak 系数解析器——只读用户 jsonc（任意 provider 键），
+  //  subscription 显式声明才享 1.0，其余 api 0.85；闭包读最新 userConfig（config 钩子重载后生效）
+  const billingBoostOf = (provider: string): number =>
+    billingOfProvider(userConfig.config, provider) === "subscription" ? 1.0 : BILLING_API_BOOST
+  // [2026-08-31]-[终审P1-2：唯一 peak 解析器——显式旧 billingWindow 覆盖期内对 glm/deepseek 池生效
+  //  （老 options 兼容保留一代），否则走 jsonc 路由口径（enabled 门控）；闭包读最新 policy/userConfig]
+  const legacyBillingWindow = Object.prototype.hasOwnProperty.call(raw, "billingWindow") ? options.billingWindow : undefined
+  const peakOfProvider = (provider: string): boolean => {
+    if (legacyBillingWindow) {
+      const w = billingWindow(new Date(), legacyBillingWindow)
+      const pool = poolForProviderId(provider)
+      if (pool === "glm") return w.glmPeak && policy.glm.routing
+      if (pool === "deepseek") return w.dsPeak && policy.deepseek.routing
+      return false
+    }
+    return routingPeakActive(new Date(), userConfig.config, provider)
+  }
+  const unknownOfModel = (modelId: string): boolean => baseScoreDynamic(modelId).source === "global"
+  let doctorSummary: string | null = null
   const creds: Credentials = { copilotToken: undefined }
   let initTried = false
   const denySkip = new Set<string>() // 自身 deny 的 callID：记账时排除
@@ -137,11 +168,11 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       for (const [pid, p] of Object.entries<any>(cfg.provider ?? {})) {
         const apiKey = p?.options?.apiKey
         const baseURL = p?.options?.baseURL
-        if (options.providers!.glm!.includes(pid)) {
+        if (poolForProviderId(pid) === "glm") {
           creds.glmKey = creds.glmKey ?? (typeof apiKey === "string" ? apiKey : undefined)
           creds.glmBaseURL = typeof baseURL === "string" ? baseURL : creds.glmBaseURL
         }
-        if (options.providers!.deepseek!.includes(pid)) {
+        if (poolForProviderId(pid) === "deepseek") {
           creds.dsKey = creds.dsKey ?? (typeof apiKey === "string" ? apiKey : undefined)
           creds.deepseekBaseURL = typeof baseURL === "string" ? baseURL : creds.deepseekBaseURL
         }
@@ -212,10 +243,10 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       if (capabilityStale() && options.capability!.enabled) refreshCapability(options.capability!).catch(() => {})
       if (dynamic && manager) refreshActiveMatrixIfStale(probeEndpoints(), manager.activeMatrixKeys()).catch(() => {})
       else refreshMatrixIfStale(probeEndpoints()).catch(() => {})
-      quotaView(creds as any, { enabled: {
-        glm: options.quota!.glm!.enabled!,
-        deepseek: options.quota!.deepseek!.enabled!,
-        copilot: options.quota!.copilot!.enabled!,
+      quotaView(creds as any, { observe: {
+        glm: policy.glm.observe,
+        deepseek: policy.deepseek.observe,
+        copilot: policy.copilot.observe,
       } })
       // [2026-08-28]-[探针/配额/成本只在启动跑一次，启动竞态（如核心晚回写 token）或高峰限流后永不自愈]-
       // [10min 周期刷新：矩阵 TTL 内自动跳过，配额/成本由各自 TTL 兜底；timer unref 不阻进程退出]
@@ -227,10 +258,10 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           } else {
             refreshMatrixIfStale(probeEndpoints()).catch(() => {})
           }
-          quotaView(creds as any, { enabled: {
-            glm: options.quota!.glm!.enabled!,
-            deepseek: options.quota!.deepseek!.enabled!,
-            copilot: options.quota!.copilot!.enabled!,
+          quotaView(creds as any, { observe: {
+            glm: policy.glm.observe,
+            deepseek: policy.deepseek.observe,
+            copilot: policy.copilot.observe,
           } })
           if (costsStale() && options.cost!.enabled) refreshCosts().catch(() => {})
           // [2026-08-31]-[动态能力分级：10min 周期同频检查，capabilityStale/TTL 24h 门控实际拉取]
@@ -252,15 +283,15 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
 
   function quotaExhaustedFlags(): Partial<Record<Pool, boolean>> {
     try {
-      const qv = quotaView(creds as any, { enabled: {
-        glm: options.quota!.glm!.enabled!,
-        deepseek: options.quota!.deepseek!.enabled!,
-        copilot: options.quota!.copilot!.enabled!,
+      const qv = quotaView(creds as any, { observe: {
+        glm: policy.glm.observe,
+        deepseek: policy.deepseek.observe,
+        copilot: policy.copilot.observe,
       } })
       return {
-        glm: glmExhausted(qv.glm, options.quota!.glm!.fiveHourReservePct)[0],
-        copilot: copilotExhausted(qv.copilot)[0],
-        deepseek: deepseekExhausted(qv.deepseek)[0],
+        glm: policy.glm.routing && glmExhausted(qv.glm, options.quota!.glm!.fiveHourReservePct)[0],
+        copilot: policy.copilot.routing && copilotExhausted(qv.copilot)[0],
+        deepseek: policy.deepseek.routing && deepseekExhausted(qv.deepseek)[0],
       }
     } catch {
       return {}
@@ -289,25 +320,27 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     return null
   }
 
-  /** 六档 base 链：用户 lanes 选项优先；动态=lane-policy（内置偏好序∩激活壳+补齐）；legacy=静态 lanes */
+  /** 六档 base 链：用户 lanes 选项优先；动态对激活壳全集运行算法；legacy 使用生成期同源链。 */
   function baseChainFor(lane: Lane): string[] {
     const custom = (options.lanes as any)?.[lane]
     if (Array.isArray(custom) && custom.length > 0) return custom
     if (!dynamic || !manager) return laneShells(loadContext(options, creds as any), lane)
     const m = loadManifest()
-    const attrs = new Map<string, { effort: string; capability: string; vision: boolean; pool: string }>()
+    const attrs = new Map<string, { effort: string; capability: string; vision: boolean; pool: string; provider: string; modelId: string; cost: number | null }>()
     // [2026-08-29]-[失败分类：dynamic 先滤已退休模型壳，避免连续 404 的模型仍进改派候选]
     for (const s of filterRetiredShells((dynamicManifest() ?? m).shells)) {
-      attrs.set(s.name, { effort: s.effort, capability: s.capability, vision: s.vision, pool: String(s.pool) })
+      attrs.set(s.name, { effort: s.effort, capability: s.capability, vision: s.vision, pool: String(s.pool), provider: s.provider, modelId: s.modelId, cost: costOf(s.modelId) })
     }
     return laneBaseChain(lane, {
       builtin: (m.lanes as any)[lane] ?? [],
       activeShells: new Set(manager.snapshot().activeShells),
-      shells: attrs,
+      shells: attrs, capabilityOf: (modelId) => baseScoreDynamic(modelId),
+      // [2026-08-31]-[去厂商化：链生成乘 billingBoost×unknownPenalty（用户配置/能力分级驱动）]
+      billingBoostOf, unknownOf: unknownOfModel,
     })
   }
 
-  function waterFactorOf(peak: ReturnType<typeof billingWindow>, qv: ReturnType<typeof quotaView>): WaterFactor {
+  function waterFactorOf(qv: ReturnType<typeof quotaView>): WaterFactor {
     const g = qv.glm
     const c = qv.copilot
     let copilotResetDays: number | null = null
@@ -324,7 +357,6 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       glmWeeklyPct: typeof g?.weekly?.used_pct === "number" ? g.weekly.used_pct : null,
       copilotRemainingPct: typeof c?.premium?.percent_remaining === "number" ? c.premium.percent_remaining : null,
       copilotResetDays,
-      dsIdle: !peak.dsPeak,
     }
   }
 
@@ -335,23 +367,24 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       const quotaEx = quotaExhaustedFlags()
       const costs = options.cost!.enabled ? costOf : null
       const lanes: Record<string, LaneResult> = {}
-      const peak = billingWindow(new Date(), options.billingWindow)
-      const qv = quotaView(creds as any, { enabled: {
-        glm: options.quota!.glm!.enabled!,
-        deepseek: options.quota!.deepseek!.enabled!,
-        copilot: options.quota!.copilot!.enabled!,
+        const peak = billingWindowForConfig(new Date(), userConfig.config, Object.prototype.hasOwnProperty.call(raw, "billingWindow") ? options.billingWindow : undefined)
+       const qv = quotaView(creds as any, { observe: {
+         glm: policy.glm.observe,
+         deepseek: policy.deepseek.observe,
+         copilot: policy.copilot.observe,
       } })
-      // [2026-08-29]-[评分引擎：配额视图归一化水位因子（water 系数）；DS 空闲时段 costBias 惩罚减轻 0.85]
-      const water = waterFactorOf(peak, qv)
-      const states = poolStates(qv, peak)
-      for (const lane of LANE_ORDER) {
-        try {
-          lanes[lane] = computeLane(lane, baseChainFor(lane), {
-            registry, matrix: ctx.matrix?.combos ?? null, routing: routingWithRealFailures(ctx.routing),
-            quotaExhausted: quotaEx, states, glmPeak: peak.glmPeak, costs, water,
-          })
-        } catch { /* 单档失败不影响其余档 */ }
-      }
+      // [2026-08-29]-[评分引擎：配额视图归一化水位因子（water 系数）]
+       const water = { ...waterFactorOf(qv), routing: Object.fromEntries(Object.entries(policy).map(([k, v]) => [k, v.routing])) as Partial<Record<Pool, boolean>> }
+       const states = poolStates(qv, peak, policy)
+       for (const lane of LANE_ORDER) {
+         try {
+           lanes[lane] = computeLane(lane, baseChainFor(lane), {
+             registry, matrix: ctx.matrix?.combos ?? null, routing: routingWithRealFailures(ctx.routing),
+              quotaExhausted: quotaEx, routePolicy: policy, states, glmPeak: peak.glmPeak, costs, water,
+              billingBoostOf, peakOf: peakOfProvider,
+           })
+         } catch { /* 单档失败不影响其余档 */ }
+       }
       const down = new Set(Object.keys(routingWithRealFailures(ctx.routing).down_agents))
       // [2026-08-29]-[动态矩阵：[路由] 只显示激活候选；[限制] 追加 模式/watch/configStatus/restartRequired/降级标注]
       const matrixInfo = dynamic && manager ? {
@@ -367,7 +400,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         quota: { glm: null as any, copilot: null as any },
         states,
         billing: peak,
-        advice: routingAdvice(states),
+         advice: routingAdvice(states, policy),
+         providerPolicy: policy as any,
+         doctorSummary,
         matrixInfo,
         update: updateBannerText(),
       })
@@ -378,7 +413,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         quota: { glm: qv.glm, copilot: qv.copilot, deepseek: qv.deepseek },
         states,
         billing: peak,
-        advice: routingAdvice(states),
+         advice: routingAdvice(states, policy),
+         providerPolicy: policy as any,
+         doctorSummary,
         dsLowWarnCny: options.quota!.deepseek!.lowBalanceWarnCny,
         matrixInfo,
         update: updateBannerText(),
@@ -410,8 +447,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     return out
   }
 
-  /** deny 附言：首候选（全组闸后链首 auto_ok 壳） */
-  function firstCandidateHint(agent: string, ctx: ReturnType<typeof loadContext>): string | null {
+  /** deny 附言：首候选（过全组闸后的链首壳）；[2026-08-31]-[终审P1-3：与横幅同源——接受 gateExtras 补足运行期输入] */
+  function firstCandidateHint(agent: string, ctx: ReturnType<typeof loadContext>, extras?: { water?: WaterFactor; glmPeak?: boolean; states?: Record<string, unknown> }): string | null {
     try {
       const lanes = dynamicLaneMap(ctx)
       const lane = (Object.keys(lanes) as Lane[]).find((l) => lanes[l]?.includes(agent)) ?? "main"
@@ -420,6 +457,12 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         matrix: ctx.matrix?.combos ?? null,
         routing: routingWithRealFailures(ctx.routing),
         quotaExhausted: quotaExhaustedFlags(),
+        billingBoostOf,
+        peakOf: peakOfProvider,
+        costs: options.cost!.enabled ? costOf : undefined,
+        water: extras?.water,
+        glmPeak: extras?.glmPeak,
+        states: extras?.states as any,
       } as any, agent)
       return cand ? `请改派 ${cand}` : "降级链已尽：向用户声明原因并给 2 个可选项"
     } catch {
@@ -430,6 +473,15 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   return {
     config: async (cfg: Record<string, any>) => {
       try {
+        // [2026-08-31]-[配置钩子首步装载用户水位配置；路由快照本启动内一致]-[fail-open]
+        userConfig = loadUserConfig()
+        policy = routePolicy(userConfig.config, legacyObserve)
+        const doctor = runDoctor({ configPath: userConfig.path, diagnostics: userConfig.diagnostics, env: process.env, legacy: { quotaEnabled: legacyObserve, billingWindow: Object.prototype.hasOwnProperty.call(raw, "billingWindow") } })
+        const errors = doctor.diagnostics.filter((d) => d.level === "error").length
+        const warns = doctor.diagnostics.filter((d) => d.level === "warn").length
+        doctorSummary = errors || warns ? `doctor: ${errors} error / ${warns} warn` : null
+        if (doctorSummary) console.error(`[opencode-switchman] 自检发现 ${errors} error / ${warns} warn；运行 /switchman-doctor 查看`)
+        try { writeJsonAtomic(paths().doctorSnapshot, { at: new Date().toISOString(), diagnostics: doctor.diagnostics.map((d) => ({ code: d.code, level: d.level, path: d.path })) }) } catch { /* fail-open */ }
         collectCreds(cfg)
         creds.copilotToken = creds.copilotToken ?? readAuthStore().githubToken
         // [2026-08-29]-[一键升级命令资产：prod 注册 /switchman-update，local 删除残留——legacy/动态两路都生效]-
@@ -561,9 +613,25 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             restartRequired: manager?.snapshot().restartRequired ?? [],
           }
           : null
+        // [2026-08-31]-[终审P1-3：deny 附言候选与横幅同源——补 water/glmPeak/states 运行期输入
+        //  （quotaView 为缓存读，与 quotaExhaustedFlags 同 TTL，不新增网络成本）]
+        let gateExtras: { water?: WaterFactor; glmPeak?: boolean; states?: Record<string, unknown> } = {}
+        try {
+          const peak = billingWindowForConfig(new Date(), userConfig.config, legacyBillingWindow)
+          const qv = quotaView(creds as any, { observe: {
+            glm: policy.glm.observe,
+            deepseek: policy.deepseek.observe,
+            copilot: policy.copilot.observe,
+          } })
+          gateExtras = {
+            water: { ...waterFactorOf(qv), routing: Object.fromEntries(Object.entries(policy).map(([k, v]) => [k, v.routing])) as Partial<Record<Pool, boolean>> },
+            glmPeak: peak.glmPeak,
+            states: poolStates(qv, peak, policy),
+          }
+        } catch { /* fail-open：hint 候选缺 water/states 仍可工作 */ }
         if (!shell) {
           if (dynamic && shellLikeName(agent)) {
-            const hint = firstCandidateHint(agent, ctx)
+            const hint = firstCandidateHint(agent, ctx, gateExtras)
             throw new Error(denyUninjected(agent, activationGate?.restartRequired ?? [], hint))
           }
           console.error(noteUnknownAgent(agent))
@@ -574,12 +642,19 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           matrix: ctx.matrix?.combos ?? null,
           // [2026-08-29]-[功能1 仅动态矩阵：legacy 静态路径逐字节不变（tester 回归发现漏_gate）]-
           routing: dynamic ? routingWithRealFailures(ctx.routing) : ctx.routing,
-          quotaExhausted: quotaExhaustedFlags(),
+           quotaExhausted: quotaExhaustedFlags(),
+           routePolicy: policy,
           costs: options.cost!.enabled ? costOf : undefined,
           lanes: dynamicLaneMap(ctx),
           activation: activationGate,
           realFailedCombos: dynamic ? realFailedComboKeys() : undefined,
           retiredModels: dynamic ? new Set(retiredModelKeys()) : undefined,
+          // [2026-08-31]-[去厂商化：deny 附言候选与横幅排序同源]
+          billingBoostOf,
+          peakOf: peakOfProvider,
+          water: gateExtras.water,
+          glmPeak: gateExtras.glmPeak,
+          states: gateExtras.states as any,
         })
         if (r.note) console.error(r.note)
         if (r.deny) {

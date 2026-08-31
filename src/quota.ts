@@ -210,7 +210,9 @@ export function refreshQuota(pool: "glm" | "copilot" | "deepseek", creds: { glmK
 }
 
 export interface QuotaFlags {
-  enabled: { glm: boolean; deepseek: boolean; copilot: boolean }
+  /** observe=false 才关闭查询和横幅；routing=false 仍持续观察。 */
+  observe?: { glm: boolean; deepseek: boolean; copilot: boolean }
+  enabled?: { glm: boolean; deepseek: boolean; copilot: boolean }
 }
 
 export interface QuotaView {
@@ -225,16 +227,17 @@ export function quotaView(
   flags: QuotaFlags,
 ): QuotaView {
   const pools: Array<"glm" | "copilot" | "deepseek"> = ["glm", "copilot", "deepseek"]
+  const observe = flags.observe ?? flags.enabled!
   for (const pool of pools) {
-    if (flags.enabled[pool] === false) continue
+    if (observe[pool] === false) continue
     if (readQuotaCache(pool) === null) {
       refreshQuota(pool, creds).catch(() => {})
     }
   }
   return {
-    glm: flags.enabled.glm === false ? null : readQuotaCache<GlmQuota>("glm", true),
-    copilot: flags.enabled.copilot === false ? null : readQuotaCache<CopilotQuota>("copilot", true),
-    deepseek: flags.enabled.deepseek === false ? null : readQuotaCache<DeepseekQuota>("deepseek", true),
+    glm: observe.glm === false ? null : readQuotaCache<GlmQuota>("glm", true),
+    copilot: observe.copilot === false ? null : readQuotaCache<CopilotQuota>("copilot", true),
+    deepseek: observe.deepseek === false ? null : readQuotaCache<DeepseekQuota>("deepseek", true),
   }
 }
 

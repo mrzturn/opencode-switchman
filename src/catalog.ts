@@ -7,6 +7,7 @@ import { join } from "node:path"
 import { paths, readJson, writeJsonAtomic } from "./state"
 import manifestDefault from "./shells.json"
 import type { ShellManifestEntry } from "./types"
+import { poolForProviderId } from "./provider-config"
 
 export type Effort = string
 export interface EffortInfo { efforts: string[]; toggle: boolean; vision: boolean }
@@ -53,9 +54,8 @@ export function familyOf(modelId: string): string {
   return m ? m[1] : modelId.split(/[^a-zA-Z]/)[0] || "unknown"
 }
 export function poolOf(provider: string): string {
-  if (provider === "github-copilot") return "copilot"
-  if (provider.startsWith("zhipuai") || provider.startsWith("glm") || provider.startsWith("zai")) return "glm"
-  if (provider === "deepseek") return "deepseek"
+  const pool = poolForProviderId(provider)
+  if (pool) return pool
   return "zen"
 }
 const EFFORT_ORDER = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]

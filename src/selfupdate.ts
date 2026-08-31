@@ -5,6 +5,7 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { homedir } from "node:os"
 import { paths, readJson, withPathLock, writeJsonAtomic } from "./state"
+import { resolveOpencodeConfigDir } from "./config"
 import { PLUGIN_VERSION } from "./version"
 
 export type LoadMode = "local" | "prod"
@@ -28,10 +29,10 @@ function moduleDir(): string {
   const url = typeof meta.url === "string" ? meta.url : ""
   if (url.startsWith("file://")) {
     try {
-      return fileURLToPath(url)
+      return dirname(fileURLToPath(url))
     } catch { /* fallthrough */ }
   }
-  return decodeURIComponent(url).replace(/^file:\/\//, "")
+  return dirname(decodeURIComponent(url).replace(/^file:\/\//, ""))
 }
 
 export function modeOfDistPath(dir: string): LoadMode {
@@ -173,7 +174,13 @@ export function ignoreCommandMd(): string {
 
 /** [2026-08-29]-[prod 注册「立即升级+本次忽略」两命令；local 只注册「本次忽略」并删除升级命令]-
  *  [fail-open] */
-export function ensureUpdateCommands(mode: LoadMode, baseDir = join(homedir(), ".config", "opencode")): void {
+export function doctorCommandMd(cliPath: string): string {
+  // JSON quoting yields a shell-safe single argument even when the installation path has spaces.
+  const quoted = JSON.stringify(cliPath)
+  return ["---", "description: 检查 opencode-switchman 用户配置与本地状态", "---", "", `!\`node ${quoted}\``, "", "请完整转述报告；退出码 0=无 error，1=有 warn，2=有 error，非零也必须转述。", ""].join("\n")
+}
+
+export function ensureUpdateCommands(mode: LoadMode, baseDir = resolveOpencodeConfigDir(), cliPath?: string): void {
   try {
     const cmdDir = join(baseDir, "command")
     const write = (name: string, md: string): void => {
@@ -187,6 +194,7 @@ export function ensureUpdateCommands(mode: LoadMode, baseDir = join(homedir(), "
       write("switchman-ignore.md", ignoreCommandMd())
       rmSync(join(cmdDir, "switchman-update.md"), { force: true })
     }
+    write("switchman-doctor.md", doctorCommandMd(cliPath ?? join(moduleDir(), "switchman-doctor.js")))
   } catch (exc) {
     console.error(`[opencode-switchman] 升级命令资产 fail-open: ${exc}`)
   }

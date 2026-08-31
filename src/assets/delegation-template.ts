@@ -2,7 +2,7 @@
 export const DELEGATION_TEMPLATE = `# DELEGATION_V1 委派 prompt 模板
 
 > 主模型向空壳（\`*-mx-*\`）委派任务时的固定顺序模板。
-> 固定段在前、可变段在后——DeepSeek 等按量壳吃前缀缓存，模板头部逐字节稳定可省 1/30 输入费。
+> 固定段在前、可变段在后——api 计费壳（按量）吃前缀缓存，模板头部逐字节稳定可省 1/30 输入费。
 > opencode-switchman 插件在 task 派发前置拦截：壳名派发缺 META 或格式坏将被 deny（task 工具报错）并附本样例。
 
 ## 模板正文（复制即用）
@@ -48,7 +48,7 @@ ROUTE_META {{META_JSON}}
 | \`producer_family\` | glm / claude / gemini / gpt / grok / deepseek | 产出方（producer）的真实模型 family；主模型委派时填**自己当前的 family**（如 glm）。copilot 是池不是族——registry 无 family=gcp/copilot 的壳，填池名会使异族复审闸失效，与 main 同判非法 META deny。review 链先删同族壳 |
 | \`capability\` | ro / rw | 任务写需求；\`rw\` 任务派到 ro 壳被 deny。【必填】 |
 | \`modality\` | text / image | \`image\` 任务派到非视觉壳被 deny |
-| \`source\` | auto / user | \`auto\` 误选 DeepSeek 被deny 并附套餐首候选；\`user\`=用户点名放行。【必填】 |
+| \`source\` | auto / user | \`auto\`=编排器按横幅链自动选壳（api 计费模型按系数沉底，不 deny）；\`user\`=用户点名。【必填】 |
 
 > 字段值必须命中上表合法值（插件按 \`META_LEGAL\` 硬校验）；\`role/capability/source\` 为必填安全字段，缺失或值非法整条 META 判坏 → deny 并附样例与合法值。
 
@@ -79,7 +79,7 @@ ROUTE_META {"lane":"main","role":"programmer","producer_family":"glm","capabilit
 
 1. 顺序不可变：通用守则 → 角色 contract → ROUTE_META → 任务块 → 输出格式；可变内容（目标/事实/路径）一律后置。
 2. \`{{OUTPUT_FORMAT}}\` 按角色给一行式要求（如「结论/变更文件清单/验证结果/遗留问题」四段）。
-3. 用户点名某壳时 \`source\` 必须写 \`user\`，否则 auto 规则会把 DeepSeek 壳 deny。
+3. 用户点名某壳时 \`source\` 必须写 \`user\`；\`auto\` 只用于按横幅链自动选壳（编排零厂商硬编码：api 计费/未知组模型由系数沉底，不再 deny）。
 4. 委派前对照系统提示横幅的 [路由] 行选壳；deny 报错里附的首候选就是当前最优落点，直接改派，不要重试被拒壳。
 5. \`producer_family\` 填你（producer）自己的真实 family；不确定时宁可省略该字段（可选字段）也不要填 main。
 `

@@ -41,8 +41,17 @@ export function checkShell(
     return {
       registry: snap.registry,
       matrix: snap.matrix,
-      routing: snap.routing,
-      quotaExhausted: snap.quotaExhausted,
+        routing: snap.routing,
+        quotaExhausted: snap.quotaExhausted,
+        routePolicy: snap.routePolicy,
+      // [2026-08-31]-[去厂商化：deny 附言候选排序与横幅同源（billing/peak 系数）]
+      billingBoostOf: snap.billingBoostOf,
+      peakOf: snap.peakOf,
+      // [2026-08-31]-[终审P1-3：deny 附言候选补足 water/costs/glmPeak/states 运行期输入]
+      costs: snap.costs,
+      water: snap.water,
+      glmPeak: snap.glmPeak,
+      states: snap.states,
       ...metaKw,
       _lane: laneOverride,
     }
@@ -124,7 +133,7 @@ export function checkShell(
 
   // 闸5 池耗尽（只认调用必失败；unknown/高水位不拦）
   const pool = shell.pool
-  if (snap.quotaExhausted?.[pool]) {
+  if (snap.quotaExhausted?.[pool] && snap.routePolicy?.[pool]?.routing !== false) {
     const why = pool === "glm"
       ? "GLM 套餐已用尽"
       : pool === "copilot" ? "Copilot 积分已耗尽" : "DeepSeek 余额已耗尽"
@@ -146,7 +155,6 @@ export function checkShell(
       note: null,
     }
   }
-  const source = meta!.source
   const role = meta!.role
 
   // 闸7 语义校验
@@ -162,25 +170,8 @@ export function checkShell(
   if ((meta!.modality === "image" || meta!.modality === "vision") && !shell.vision) {
     return { deny: `${agent} 非视觉壳，不能承接 modality=${meta!.modality} 任务${hint("vision")}`, note: null }
   }
-  if (source === "auto" && String(shell.pool) === "deepseek") {
-    const planCand = firstCandidate(
-      lane as import("./types").Lane, base,
-      {
-        registry: snap.registry, matrix: snap.matrix, routing: snap.routing,
-        quotaExhausted: snap.quotaExhausted,
-        producerFamily: meta!.producer_family ?? null,
-        modality: meta!.modality ?? null,
-        capability: meta!.capability ?? null,
-      } as any,
-      agent,
-    )
-    if (planCand) {
-      return {
-        deny: `${agent} 是 DeepSeek 按量壳（source=auto 时仅链尾兜底：双套餐硬不可用/用户点名/deadline 授权），套餐首候选 ${planCand}`,
-        note: null,
-      }
-    }
-  }
+  // [2026-08-31]-[去厂商化：删 source=auto 误选按量池的硬 deny——api 计费由 billingBoost 乘积系数
+  //  软排序兜底（同 tier 排订阅之后），deny 只保留 META 格式与 review 异族/ro/vision 结构门]
   return { deny: null, note: null }
 }
 

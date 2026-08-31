@@ -8,8 +8,13 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { buildShells, fetchModelsDevIndex } from "../src/catalog"
+import { buildShells, bundledModelIndex, fetchModelsDevIndex } from "../src/catalog"
 import type { EffortInfo } from "../src/catalog"
+import { baseScoreFromCapabilityIndex, loadBundledCapability } from "../src/capability"
+import { baseScore, UNKNOWN_PENALTY } from "../src/model-ranks"
+import { BILLING_API_BOOST } from "../src/scoring"
+import { defaultBillingOf } from "../src/provider-config"
+import { computeLaneChain } from "../src/lane-policy"
 
 type Effort = string
 
@@ -121,17 +126,6 @@ function resolveGithubToken(): string | undefined {
   return undefined
 }
 
-// ---- 3) 六档链＝矩阵上的静态偏好序（引用壳名必须在可见矩阵内）----
-const lanes: Record<string, string[]> = {
-  economy: ["copilot-mx-luna-low", "glm-mx-53f-low", "ds-mx-v4fv-off"],
-  mechanical: ["glm-mx-53f-high", "copilot-mx-terra-medium", "ds-mx-v4fv-off"],
-  main: ["glm-mx-53-high", "copilot-mx-terra-high", "ds-mx-v4p-high"],
-  hard: ["copilot-mx-sol-xhigh", "glm-mx-53-max", "ds-mx-v4p-max"],
-  vision: ["glm-mx-53f-high", "copilot-mx-terra-high", "ds-mx-v4fv-high"],
-  review: ["copilot-mx-claude5-high", "copilot-mx-terra-max"],
-}
-const REVIEW_RO = new Set(["copilot-mx-claude5-high", "copilot-mx-terra-max", "copilot-mx-opus5-high", "copilot-mx-fable5-high"])
-
 async function main() {
   const enabled = await enabledVisibleModels()
   const [devIndex, cpCatalog] = await Promise.all([
@@ -142,15 +136,26 @@ async function main() {
     copilotCatalog().catch(() => ({}) as Record<string, EffortInfo>),
   ])
   // models.dev 优先，Copilot 目录补缺（与原 devIndex[full] ?? cpCatalog[full] 同义）
-  const metaIndex: Record<string, EffortInfo> = { ...cpCatalog, ...devIndex }
-  const shells = buildShells(enabled, metaIndex, { roSet: REVIEW_RO })
+  const metaIndex: Record<string, EffortInfo> = { ...bundledModelIndex(), ...cpCatalog, ...devIndex }
+  const shells = buildShells(enabled, metaIndex, { roAliases: true })
+  const bundled = loadBundledCapability()
+  // [2026-08-31]-[终审P0-1：capabilityOf 返回 {score,tier}，链生成 tier 分组主键与运行期 rankCandidates 同源]
+  const capabilityOf = (modelId: string) => baseScoreFromCapabilityIndex(modelId, bundled) ?? baseScore(modelId)
+  // [2026-08-31]-[去厂商化：链生成乘 billingBoost×unknownPenalty——生成期无用户 jsonc，
+  //  billing 取内置出厂缺省（subscription/api），unknown 由能力分级回退链推导（global=未知组）；
+  //  运行期 laneBaseChain 用同一算法换成用户配置解析，语义同源]
+  const knownOf = (modelId: string) =>
+    (baseScoreFromCapabilityIndex(modelId, bundled)?.source ?? baseScore(modelId).source) !== "global"
+  const billingBoostOf = (provider: string) => defaultBillingOf(provider) === "subscription" ? 1.0 : BILLING_API_BOOST
+  const resolvers = { billingBoostOf, unknownOf: (modelId: string) => !knownOf(modelId) }
+  const lanes = Object.fromEntries(["economy", "mechanical", "main", "hard", "vision", "review"].map((lane) => [lane, computeLaneChain(shells, capabilityOf, lane as any, resolvers)])) as Record<string, string[]>
   const seen = new Set(shells.map((s) => s.name))
 
   const missing = Object.values(lanes).flat().filter((n) => !seen.has(n))
   if (missing.length > 0) throw new Error(`六档链引用的壳不在可见矩阵中（启用面/档位漂移？）：${missing.join(", ")}`)
 
   const doc = {
-    _note: "opencode-switchman 全量矩阵：权威启用面（模型管理打开的模型，scripts/visible-models.txt）× 全部声明思考档位（models.dev reasoning_options，toggle→off）。scripts/gen-shells.ts 生成，勿手改；模型开关变化后同步 pin 文件并重跑 bun run gen:shells。六档链 lanes＝矩阵上的静态偏好序。",
+    _note: `opencode-switchman 全量矩阵：权威启用面（模型管理打开的模型，scripts/visible-models.txt）× 全部声明思考档位（models.dev reasoning_options，toggle→off）。scripts/gen-shells.ts 生成，勿手改；模型开关变化后同步 pin 文件并重跑 bun run gen:shells。六档链由能力分×档位亲和×结构门×计费系数计算（api 计费 ${BILLING_API_BOOST}、未知组 ${UNKNOWN_PENALTY} 按系数沉底，无厂商预留席位）。`,
     generated_at: new Date().toISOString(),
     counts: { shells: shells.length, visible_models: enabled.length },
     shells,

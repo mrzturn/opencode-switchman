@@ -408,8 +408,8 @@ describe("闸1 三层语义（未注入/同名冲突/未激活）", () => {
     vision: laneBaseChain("vision", { builtin: [], activeShells: new Set(SUP.map((d) => d.name)), shells: attrMap(SUP) }),
     review: laneBaseChain("review", { builtin: [], activeShells: new Set(SUP.map((d) => d.name)), shells: attrMap(SUP) }),
   }
-  function attrMap(defs: ShellDefinition[]): Map<string, { effort: string; capability: string; vision: boolean; pool: string }> {
-    return new Map(defs.map((d) => [d.name, { effort: d.effort, capability: d.capability, vision: d.vision, pool: d.pool }]))
+  function attrMap(defs: ShellDefinition[]): Map<string, { effort: string; capability: string; vision: boolean; pool: string; modelId: string }> {
+    return new Map(defs.map((d) => [d.name, { effort: d.effort, capability: d.capability, vision: d.vision, pool: d.pool, modelId: d.modelId }]))
   }
   function snapOf(over: Partial<GateSnapshot> = {}): GateSnapshot & { lanes: Record<string, string[]> } {
     return {
@@ -444,7 +444,8 @@ describe("闸1 三层语义（未注入/同名冲突/未激活）", () => {
     const r = checkShell("copilot-mx-terra-high", shell, metaOf("main"), s1)
     expect(r.deny).toContain("未激活")
     expect(r.deny).toContain("模型管理")
-    expect(r.deny).toContain("请改派 glm-mx-53-high")
+    // [2026-08-31]-[去厂商化：DS 恒尾删除后 tier 分组主导——S 档 api 壳（ds-v4p）排 A 档订阅壳（glm-53）前]
+    expect(r.deny).toContain("请改派 ds-mx-v4p-high")
     // 激活壳放行
     expect(checkShell("glm-mx-53-high", s1.registry!["glm-mx-53-high"]!, metaOf("main"), s1).deny).toBeNull()
   })
@@ -466,7 +467,7 @@ describe("lane 补齐策略", () => {
     // 仅 glm-5.3-flash（视觉模型）在会话中激活
     const defs = buildShells(["glm/glm-5.3-flash"], META as any, { roAliases: true })
     const active = new Set(defs.map((d) => d.name))
-    const attrs = new Map(defs.map((d) => [d.name, { effort: d.effort, capability: d.capability, vision: d.vision, pool: d.pool }]))
+    const attrs = new Map(defs.map((d) => [d.name, { effort: d.effort, capability: d.capability, vision: d.vision, pool: d.pool, modelId: d.modelId }]))
     for (const lane of ["economy", "mechanical", "main", "hard", "vision", "review"] as const) {
       const chain = laneBaseChain(lane, { builtin: ["copilot-mx-terra-high"], activeShells: active, shells: attrs })
       expect(chain.length).toBeGreaterThan(0)

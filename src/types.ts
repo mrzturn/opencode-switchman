@@ -1,9 +1,12 @@
-// opencode-switchman 类型与契约（六档壳矩阵编排；池 = copilot / glm / deepseek）
+// opencode-switchman 类型与契约（六档壳矩阵编排）
+// [2026-08-31]-[去厂商化：Pool 降级为「配额抓取基础设施」概念（有抓器的 provider 才有水位数据），
+//  禁止参与排序/门控/链生成；编排规则只消费 billing/unknown 等配置驱动系数]
 import type { ScoreBreakdown } from "./scoring"
 
 export type Lane = "economy" | "mechanical" | "main" | "hard" | "vision" | "review"
 export const LANE_ORDER: Lane[] = ["economy", "mechanical", "main", "hard", "vision", "review"]
 
+/** 配额基础设施池（仅配额抓取/水位展示用；编排规则零厂商硬编码） */
 export type Pool = "copilot" | "glm" | "deepseek"
 export const POOLS: Pool[] = ["copilot", "glm", "deepseek"]
 
@@ -188,6 +191,7 @@ export interface BillingWindowConfig {
   dsPeakRanges?: Array<[number, number]>
 }
 export interface BillingWindow { glmPeak: boolean; dsPeak: boolean; glmLabel: string; dsLabel: string }
+export type RoutePolicy = Record<Pool, { observe: boolean; routing: boolean }>
 
 // 六档选链结果
 export interface ChainCandidate {
@@ -198,14 +202,13 @@ export interface ChainCandidate {
   capability: Capability | null
   vision: boolean | null
   latency_ms: number | null
-  auto_ok?: boolean
   /** [2026-08-29]-[评分引擎：组内乘积分明细（normal 档；immediate/评分失败回退时为 undefined），供决策日志追溯] */
   score?: ScoreBreakdown
 }
 export interface DroppedCandidate { shell: string; reason: string }
 export interface LaneResult {
   lane: Lane
-  status: string // ok | exhausted | deepseek-only | ok* | deepseek-only*
+  status: string // ok | exhausted | ok*（* = registry/矩阵缺失 fail-open 降级标记）
   chain: ChainCandidate[]
   dropped: DroppedCandidate[]
 }
@@ -216,12 +219,20 @@ export interface GateSnapshot {
   matrix: Record<string, MatrixEntry> | null
   routing: Routing | null
   quotaExhausted: Partial<Record<Pool, boolean>>
+  routePolicy?: RoutePolicy
   costs?: (modelId: string) => number | null
   activation?: ActivationGateInfo | null
   /** 探针 ok 但实际委派失败的进程内短期隔离组合。 */
   realFailedCombos?: ReadonlySet<string>
   /** [2026-08-29]-[失败分类：连续 404 已退休模型集（provider/modelId），闸前 deny；仅动态矩阵注入] */
   retiredModels?: ReadonlySet<string>
+  /** [2026-08-31]-[去厂商化：deny 附言候选排序与横幅同源（用户 jsonc billing/peak 解析）] */
+  billingBoostOf?: (provider: string) => number
+  peakOf?: (provider: string) => boolean
+  /** [2026-08-31]-[终审P1-3：deny 附言候选与横幅排序同源的运行期输入（water/costs/glmPeak/states）] */
+  water?: import("./scoring").WaterFactor
+  glmPeak?: boolean | null
+  states?: Record<string, { state?: PoolStateKind } & Record<string, unknown>> | null
 }
 
 // 插件 options（["opencode-switchman", {...}] 元组形式）

@@ -29,7 +29,7 @@ export const AGENTS_MD = `# 全局规程（主调度员守则；opencode-switchm
 | vision | observer 看图（image） |
 | review | reviewer/planner 审案、专家席 |
 
-**③ 选型规则**：系统提示横幅候选链优先（＝插件按矩阵/水位/熔断/成本实时算出的最优，照链首派发）；套餐池优先、deepseek 仅链尾兜底（常设授权；认知降级须声明「已降级」）；水位只影响排序（周额度用满不浪费），硬拦＝额度确定耗尽或 GLM 5 小时窗达预留水位（默认 90%，可配置，插件自动改派）；GLM 高峰机械/高频任务换 copilot 同档，immediate 只按延迟排序不避峰不看成本；deepseek 兜底的大批量非紧急排空闲窗；复审＝review 链先删与产出者同 family 壳，同族只算自审；同档全不可用＝铁律 6 终端失败协议，禁静默降质。**deny 的 task 工具报错里附的首候选就是当前最优落点，直接改派，不要重试被拒壳。**点名模型时 source=user。
+**③ 选型规则**：系统提示横幅候选链优先（＝插件按矩阵/水位/熔断/成本实时算出的最优，照链首派发）；编排规则零厂商硬编码——计费优先级只由用户 jsonc 显式 billing 声明驱动（subscription=1.0 / api=0.85，api 与未知组模型按系数在同能力档内沉底，不再有链尾预留席位或池名 deny）；水位只影响排序（周额度用满不浪费），硬拦＝额度确定耗尽或 GLM 5 小时窗达预留水位（默认 90%，可配置，插件自动改派）；任意 provider 高峰配置生效（同档 ×0.93 让位）；immediate 只按延迟排序不避峰不看成本；复审＝review 链先删与产出者同 family 壳，同族只算自审；同档全不可用＝铁律 6 终端失败协议，禁静默降质。**deny 的 task 工具报错里附的首候选就是当前最优落点，直接改派，不要重试被拒壳。**点名模型时 source=user。
 
 **④ 委派格式**：DELEGATION_V1 顺序＝守则→角色 contract→ROUTE_META→任务块→输出格式（可变后置吃前缀缓存）；模板与 14 角色 contract 表见 \`~/.config/opencode/opencode-switchman/delegation-template.md\`。壳名委派必带 ROUTE_META（role/capability/source 必填；producer_family＝自己真实模型族，copilot/glm 是池不是族、与 main 同禁），缺/坏被插件 deny 附样例：
 \`ROUTE_META {"lane":"main","role":"programmer","producer_family":"glm","capability":"rw","modality":"text","source":"auto"}\`
@@ -50,6 +50,7 @@ export const AGENTS_MD = `# 全局规程（主调度员守则；opencode-switchm
 ## 四、上下文水位（单口径：本会话累计读入 token）
 - 软水位 ≈60k：新的读取/扫描默认委派 scouter/observer/data-analyst，大输出命令过滤或委派。
 - 硬水位 ≈80k：停止新委派与新读取，只收在途任务的有界摘要，随后收尾交付或拆新会话。
+- 【强制·不可违背】强制压缩水位 ≈100k：必须立即执行会话上下文压缩（摘要归档/拆新会话/丢弃非关键历史），压缩前显式声明保留边界，压缩后核验关键事实不丢失；未完成压缩前禁止新增委派与大段读取。
 
 ## 五、大动作必报与专家团
 - 【强制·不可违背】每次大动作（自读 >3 文件或单文件 >1000 行、自改 >100 行或跨文件、预计大段输出的命令、任何委派）动手前，必须用一句话显式声明执行方式与原因：\`【调度】自做：<一句原因>\` 或 \`【调度】委派 <壳名>：<一句原因>\`；未声明禁止动手。

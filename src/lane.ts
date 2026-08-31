@@ -1,6 +1,8 @@
-// 六档选链计算器（过滤 → 换序 → auto_ok 门控 → 降级标记；
-// [2026-08-29]-[v2.0 评分引擎：排序=ds 链尾→tier 分组（base 压倒软系数）→乘积分→costOf 升序→入参序；
+// 六档选链计算器（过滤 → 换序 → 降级标记；
+// [2026-08-29]-[v2.0 评分引擎：排序=tier 分组（base 压倒软系数）→乘积分→costOf 升序→入参序；
 // immediate 档按探针延迟]）
+// [2026-08-31]-[去厂商化：删 auto_ok/DS 恒尾门控——api 计费与未知组由 billingBoost×unknownPenalty
+//  乘积系数自然沉底；billingBoostOf/peakOf 由调用方从用户 jsonc 解析注入]
 // 本模块纯函数零 IO：registry/matrix/routing/quota/states 全部由调用方装配。
 import type {
   ChainCandidate, CopilotQuota, DroppedCandidate, GlmQuota, Lane, LaneResult,
@@ -8,6 +10,8 @@ import type {
 } from "./types"
 import { rankCandidates } from "./scoring"
 import type { WaterFactor } from "./scoring"
+import { evaluatePeakSchedules } from "./config"
+import { defaultProviderConfig } from "./provider-config"
 
 // ---- 计费窗口（可配置）----
 export interface BillingWindowCfg {
@@ -23,12 +27,23 @@ export function billingWindow(now = new Date(), cfg: BillingWindowCfg = {}): {
   const [gs, ge] = cfg.glmPeakHours ?? [14, 18]
   const glmPeak = workday && h >= gs && h < ge
   const dsPeak = workday && (cfg.dsPeakRanges ?? [[9, 12], [14, 18]]).some(([s, e]) => h >= s && h < e)
+  // [2026-08-31]-[去厂商化：标签只陈述高峰窗口事实，不含倍率/折扣等商务语义（计费优先级由 billing 配置驱动）]
   return {
     glmPeak,
     dsPeak,
-    glmLabel: glmPeak ? "GLM高峰(5.3×3/Flash×1.2)" : "GLM平峰",
-    dsLabel: dsPeak ? "DS高峰全价" : "DS空闲5折",
+    glmLabel: glmPeak ? "GLM高峰" : "GLM平峰",
+    dsLabel: dsPeak ? "DS高峰" : "DS平峰",
   }
+}
+
+/** 新用户配置的高峰计算；保留 billingWindow 作为旧 options 兼容包装。 */
+export function billingWindowForConfig(now: Date, config: import("./config").UserConfig, legacy?: BillingWindowCfg): {
+  glmPeak: boolean; dsPeak: boolean; glmLabel: string; dsLabel: string
+} {
+  const legacyWindow = legacy && billingWindow(now, legacy)
+  const glmPeak = legacyWindow?.glmPeak ?? evaluatePeakSchedules(now, config, "glm")
+  const dsPeak = legacyWindow?.dsPeak ?? evaluatePeakSchedules(now, config, "deepseek")
+  return { glmPeak, dsPeak, glmLabel: glmPeak ? "GLM高峰" : "GLM平峰", dsLabel: dsPeak ? "DS高峰" : "DS平峰" }
 }
 
 // ---- 池耗尽判定（只认调用必失败）----
@@ -104,13 +119,13 @@ function daysUntil(dateStr: unknown, now = new Date()): number | null {
 export function poolStates(quota: {
   glm?: GlmQuota | null
   copilot?: CopilotQuota | null
-}, peak?: { glmPeak: boolean }): Record<string, { state: PoolStateKind } & Record<string, unknown>> {
+}, peak?: { glmPeak: boolean }, policy?: import("./types").RoutePolicy): Record<string, { state: PoolStateKind } & Record<string, unknown>> {
   const out: Record<string, { state: PoolStateKind } & Record<string, unknown>> = {}
   const g = quota.glm
   if (g && g.status === "ok") {
     const p5 = g.five_hour?.used_pct ?? null
     const pw = g.weekly?.used_pct ?? null
-    const threshold = peak?.glmPeak ? 70 : 80
+    const threshold = policy?.glm?.routing === false ? 80 : (peak?.glmPeak ? 70 : 80)
     let state: PoolStateKind
     if ((typeof p5 === "number" && p5 >= threshold) || (typeof pw === "number" && pw >= threshold)) {
       state = "strained"
@@ -159,71 +174,50 @@ export function poolStates(quota: {
 }
 
 // ---- 分层选池建议（一行，只列与默认路由的偏离项）----
-export function routingAdvice(states: Record<string, { state?: PoolStateKind } & Record<string, unknown>>): string | null {
+export function routingAdvice(states: Record<string, { state?: PoolStateKind } & Record<string, unknown>>, policy?: import("./types").RoutePolicy): string | null {
+  if (policy && !policy.glm.routing && !policy.copilot.routing && !policy.deepseek.routing) return null
   const gs = states.glm?.state
   const cs = states.copilot?.state
   if (gs === undefined && cs === undefined) return null
   const copilotOk = cs === "surplus" || cs === "healthy" || cs === undefined
   const glmOk = gs === "surplus" || gs === "healthy" || gs === undefined
   const tips: string[] = []
-  if (cs === "surplus") {
+  if (cs === "surplus" && policy?.copilot?.routing !== false) {
     const w = states.copilot?.waste_est
     const wtxt = typeof w === "number" && w > 0
       ? `（约${w >= 10000 ? `${(w / 10000).toFixed(1)}万` : w}积分将作废）`
       : ""
-    tips.push(`Copilot月积分富余${wtxt}→攻坚copilot-sol无需节省、主力认知(programmer/uiux/data-analyst)优先copilot同档`)
+    // [2026-08-31]-[去厂商化：建议文案去除模型名与商务规则，只保留数据驱动的 provider 级指引]
+    tips.push(`Copilot月积分富余${wtxt}→攻坚任务无需节省、主力认知(programmer/uiux/data-analyst)优先copilot同档`)
   }
-  if (cs === "strained" && glmOk) {
+  if (cs === "strained" && glmOk && policy?.copilot?.routing !== false) {
     tips.push("Copilot月积分吃紧→攻坚(planner/reviewer)与辅助(scouter/clerk)改glm、积分留给关键主力")
   }
-  if (gs === "surplus") {
+  if (gs === "surplus" && policy?.glm?.routing !== false) {
     const hl = states.glm?.weekly_hours_left
     const htxt = typeof hl === "number" ? `（${Math.round(hl)}小时后刷新）` : ""
-    tips.push(`GLM周额度临期富余${htxt}→放心加量、辅助(scouter/clerk)可改glm-53f`)
+    tips.push(`GLM周额度临期富余${htxt}→放心加量、辅助(scouter/clerk)可改glm低档`)
   }
-  if (gs === "strained" && copilotOk) {
+  if (gs === "strained" && copilotOk && policy?.glm?.routing !== false) {
     tips.push("GLM水位吃紧→主力认知优先copilot、机械(tester/ops)优先copilot、大批量非紧急任务延后避峰")
-  } else if (gs === "strained") {
-    tips.push("双池吃紧→机械任务可切deepseek兜底(空闲窗5折)、认知任务择优套餐池、非紧急延后")
+  } else if (gs === "strained" && policy?.deepseek?.routing !== false) {
+    // [2026-08-31]-[去厂商化：api 计费兜底由 billing 配置驱动，不再点名厂商]
+    tips.push("双池吃紧→机械任务可切按量计费 provider（billing=api）空闲窗兜底、认知任务择优订阅池、非紧急延后")
   }
   if (tips.length === 0) return null
   return tips.join("；")
 }
 
 // ---- 池水位分（GLM 高峰为 copilot 提前的独立条件）----
-function poolScore(pool: string, states: Record<string, { state?: PoolStateKind }> | null | undefined, glmPeak: boolean): number {
-  const st = states?.[pool]?.state
-  if (pool === "copilot") {
-    if (st === "surplus" || glmPeak) return 1
-    return st === "strained" ? -1 : 0
-  }
-  if (pool === "glm") {
-    return st === "surplus" ? 1 : st === "strained" ? -1 : 0
-  }
-  return 0
-}
+// [2026-08-31]-[终审P0-2：poolScore 属旧 v1.1 池偏好排序残留，随 legacySort 中性化一并删除]
 
 // [2026-08-29]-[评分引擎 fail-open 回退：v1.1 规则式排序原样保留，评分异常时兜底不劣化]
+// [2026-08-31]-[终审P0-2：回退路径零厂商规则——normal 保持基础链入参序（computeLaneChain 已含
+//  能力/亲和/billing/unknown 系数），immediate 仅按探针延迟；不再按池名偏好重排]
 function legacySort(chain: ChainCandidate[], p: ComputeLaneParams, glmPeak: boolean, immediate: boolean): void {
-  const costOf = p.costs
-  const registry = p.registry
-  const dsLast = (c: ChainCandidate) => (c.pool === "deepseek" ? 1 : 0)
-  if (immediate) {
-    chain.sort((a, b) =>
-      dsLast(a) - dsLast(b) ||
-      (a.latency_ms ?? Number.POSITIVE_INFINITY) - (b.latency_ms ?? Number.POSITIVE_INFINITY))
-  } else {
-    const score = (c: ChainCandidate) => poolScore(String(c.pool), p.states, glmPeak)
-    const cost = (c: ChainCandidate): number => {
-      const modelId = registry?.[c.shell]?.modelId
-      const v = modelId && costOf ? costOf(modelId) : null
-      return typeof v === "number" && Number.isFinite(v) ? v : Number.POSITIVE_INFINITY
-    }
-    chain.sort((a, b) =>
-      dsLast(a) - dsLast(b) ||
-      score(b) - score(a) ||
-      cost(a) - cost(b))
-  }
+  if (!immediate) return
+  chain.sort((a, b) =>
+    (a.latency_ms ?? Number.POSITIVE_INFINITY) - (b.latency_ms ?? Number.POSITIVE_INFINITY))
 }
 
 export interface ComputeLaneParams {
@@ -231,6 +225,7 @@ export interface ComputeLaneParams {
   matrix: Record<string, import("./types").MatrixEntry> | null
   routing: import("./types").Routing | null
   quotaExhausted?: Partial<Record<Pool, boolean>>
+  routePolicy?: import("./types").RoutePolicy
   states?: Record<string, { state?: PoolStateKind }> | null
   glmPeak?: boolean | null
   costs?: ((modelId: string) => number | null) | null
@@ -243,6 +238,10 @@ export interface ComputeLaneParams {
   water?: WaterFactor
   retiredModels?: ReadonlySet<string>
   realFailedCombos?: ReadonlySet<string>
+  /** [2026-08-31]-[去厂商化：provider→订阅计费系数（subscription=1.0/api=0.85；用户 jsonc 解析）] */
+  billingBoostOf?: (provider: string) => number
+  /** [2026-08-31]-[去厂商化：provider→计费高峰活跃（任意 provider 的 peak 配置求值）] */
+  peakOf?: (provider: string) => boolean
 }
 
 /** agentDown 引用（避免循环依赖放此处实现：纯读传入 routing） */
@@ -290,7 +289,7 @@ export function computeLane(lane: Lane, base: string[], p: ComputeLaneParams): L
       else if (lane === "review" && p.producerFamily && shell.family === String(p.producerFamily).toLowerCase()) reason = "hetero-family"
       else if ((p.modality === "image" || p.modality === "vision") && !shell.vision) reason = "modality"
       else if (p.capability === "rw" && shell.capability === "ro") reason = "capability"
-      else if (exhausted[shell.pool as Pool]) reason = "pool-exhausted"
+      else if (exhausted[shell.pool as Pool] && p.routePolicy?.[shell.pool as Pool]?.routing !== false) reason = "pool-exhausted"
     }
     if (reason) {
       dropped.push({ shell: name, reason })
@@ -307,7 +306,7 @@ export function computeLane(lane: Lane, base: string[], p: ComputeLaneParams): L
     })
   }
 
-  const glmPeak = p.glmPeak ?? false
+  const glmPeak = p.routePolicy?.glm?.routing === false ? false : (p.glmPeak ?? false)
   const immediate = p.urgency === "immediate"
   // [2026-08-29]-[评分引擎：内部排序改调 rankCandidates（硬门已在循环完成，此处只排序）；
   //  registry/矩阵缺失或评分异常一律 fail-open 回退规则式排序，绝不阻塞委派主流程]
@@ -337,12 +336,15 @@ export function computeLane(lane: Lane, base: string[], p: ComputeLaneParams): L
       routing,
       registry,
       quotaExhausted: exhausted,
+      routePolicy: p.routePolicy,
       retiredModels: p.retiredModels,
       realFailedCombos: p.realFailedCombos,
       producerFamily: p.producerFamily,
       modality: p.modality,
       capability: p.capability,
       costs: p.costs,
+      billingBoostOf: p.billingBoostOf,
+      peakOf: p.peakOf,
     })
     const order = new Map(ranked.map((r, i) => [r.key, i]))
     chain.sort((a, b) => (order.get(a.shell) ?? Number.POSITIVE_INFINITY) - (order.get(b.shell) ?? Number.POSITIVE_INFINITY))
@@ -355,13 +357,10 @@ export function computeLane(lane: Lane, base: string[], p: ComputeLaneParams): L
     legacySort(chain, p, glmPeak, immediate)
   }
 
-  const planAlive = chain.filter((c) => c.pool !== "deepseek")
-  for (const c of chain) {
-    c.auto_ok = !(p.source === "auto" && c.pool === "deepseek" && planAlive.length > 0)
-  }
+  // [2026-08-31]-[去厂商化：删 auto_ok/DS-only 门控——source=auto 的 api 计费模型不再被硬拦，
+  //  由 billingBoost 系数软排序兜底；status 只区分 ok/exhausted（+ fail-open * 标记）
   let status: string
   if (chain.length === 0) status = "exhausted"
-  else if (planAlive.length === 0) status = "deepseek-only"
   else status = "ok"
   if (!regOk || mcombos === null || mcombos === undefined) {
     status = status === "exhausted" ? status : `${status}*`
@@ -376,7 +375,7 @@ export function laneOfShell(shellName: string, lanes: Record<string, string[]>):
   return null
 }
 
-/** deny 附言首候选：过全组闸后的链首 auto_ok 壳（跳过 exclude） */
+/** deny 附言首候选：过全组闸后的链首壳（跳过 exclude）；[2026-08-31]-[auto_ok 门控已随池名规则废除] */
 export function firstCandidate(
   lane: Lane, base: string[], p: ComputeLaneParams, exclude?: string,
 ): string | null {
@@ -388,7 +387,6 @@ export function firstCandidate(
   }
   for (const c of r.chain) {
     if (exclude && c.shell === exclude) continue
-    if (c.auto_ok === false) continue
     return c.shell
   }
   return null

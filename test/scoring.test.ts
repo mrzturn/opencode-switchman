@@ -16,7 +16,7 @@ writeFileSync(
 )
 
 import { baseScore, GLOBAL_MEDIAN_SCORE } from "../src/model-ranks"
-import { scoreShell, rankCandidates, logDecision } from "../src/scoring"
+import { scoreShell, rankCandidates, logDecision, BILLING_API_BOOST } from "../src/scoring"
 import type { ScoreInput, WaterFactor, Rankable, RankContext, DecisionRecord } from "../src/scoring"
 import { classifyProbeStatus } from "../src/probe"
 import { classifyFailure } from "../src/failclass"
@@ -50,7 +50,7 @@ function ctx(over: Partial<RankContext> = {}): RankContext {
 function scoreInput(over: Partial<ScoreInput> = {}): ScoreInput {
   return {
     modelId: "glm-5.3", effort: "high", lane: "main", pool: "glm",
-    matrixStatus: "ok", latencyMs: 100, glmPeak: false, immediate: false, water: W,
+    matrixStatus: "ok", latencyMs: 100, peakActive: false, immediate: false, water: W,
     ...over,
   }
 }
@@ -91,12 +91,14 @@ describe("scoreShell", () => {
   test("strained 健康系数 0.6（其余系数不变）", () => {
     const b = scoreShell(scoreInput({ matrixStatus: "strained" }))
     expect(b.health).toBe(0.6)
-    expect(b.total).toBeCloseTo(0.85 * 1.0 * 0.6 * 1.0 * 1.0 * 1.0)
+    expect(b.total).toBeCloseTo(0.85 * 1.0 * 0.6 * 1.0 * 1.0 * 1.0 * 1.0 * 1.0)
     expect(scoreShell(scoreInput()).health).toBe(1.0)
   })
-  test("peak 仅 glm 池生效（copilot 不受影响）", () => {
-    expect(scoreShell(scoreInput({ glmPeak: true, pool: "glm" })).peak).toBeCloseTo(0.93)
-    expect(scoreShell(scoreInput({ glmPeak: true, pool: "copilot" })).peak).toBe(1.0)
+  test("peakActive 泛化：任意 provider 计费高峰 0.93（不再限 glm 池）", () => {
+    expect(scoreShell(scoreInput({ peakActive: true, pool: "glm" })).peak).toBeCloseTo(0.93)
+    expect(scoreShell(scoreInput({ peakActive: true, pool: "copilot" })).peak).toBeCloseTo(0.93)
+    expect(scoreShell(scoreInput({ peakActive: true, pool: "my-gateway" })).peak).toBeCloseTo(0.93)
+    expect(scoreShell(scoreInput({ peakActive: false })).peak).toBe(1.0)
   })
   test("water：GLM 高水位线性降、Copilot 临期烧积分提升", () => {
     expect(scoreShell(scoreInput({ water: { glmFiveHourPct: 90 } })).water).toBeCloseTo(0.6)
@@ -113,10 +115,16 @@ describe("scoreShell", () => {
     }))
     expect(tight.water).toBeLessThan(1.0)
   })
-  test("costBias：订阅池 1.0 / 按量池 0.7 / DS 空闲惩罚减轻 0.85", () => {
-    expect(scoreShell(scoreInput({ pool: "glm" })).costBias).toBe(1.0)
-    expect(scoreShell(scoreInput({ pool: "deepseek" })).costBias).toBe(0.7)
-    expect(scoreShell(scoreInput({ pool: "deepseek", water: { dsIdle: true } })).costBias).toBe(0.85)
+  test("billingBoost：subscription=1.0 / api=0.85 / costBias 恒 1.0（池名规则已废除）", () => {
+    expect(scoreShell(scoreInput({ pool: "glm", billingBoost: 1.0 })).billingBoost).toBe(1.0)
+    expect(scoreShell(scoreInput({ pool: "deepseek", billingBoost: BILLING_API_BOOST })).billingBoost).toBe(0.85)
+    expect(scoreShell(scoreInput({ pool: "deepseek", billingBoost: BILLING_API_BOOST })).costBias).toBe(1.0)
+    expect(scoreShell(scoreInput({ pool: "copilot" })).costBias).toBe(1.0)
+  })
+  test("unknownPenalty：global 兜底模型 0.75、已知（exact/family）模型 1.0", () => {
+    expect(scoreShell(scoreInput({ modelId: "mimo-v2.5-free" })).unknownPenalty).toBe(0.75)
+    expect(scoreShell(scoreInput({ modelId: "glm-5.3" })).unknownPenalty).toBe(1.0)
+    expect(scoreShell(scoreInput({ modelId: "glm-5.4" })).unknownPenalty).toBe(1.0) // family 近似归类=已知
   })
 })
 
@@ -166,17 +174,34 @@ describe("rankCandidates", () => {
     expect(r.ranked.map((s) => s.key)).toEqual(["strained"])
     expect(r.breakdowns.get("strained")!.health).toBe(0.6)
   })
-  test("端到端小样本：DS 恒链尾，非 DS 按 tier 序", () => {
+  test("端到端小样本：同 tier 订阅前 api 后（billing 系数沉底，非池名硬门）", () => {
     const shells = [
       rankable({ key: "ds-s", modelId: "deepseek-v4-pro", pool: "deepseek", family: "deepseek", latencyMs: 5 }),
       rankable({ key: "glm-a", modelId: "glm-5.3", latencyMs: 50 }),
       rankable({ key: "cp-s", modelId: "gpt-5.6", pool: "copilot", family: "gpt", latencyMs: 80 }),
     ]
-    const r = rankCandidates(shells, ctx())
-    expect(r.ranked.map((s) => s.key)).toEqual(["cp-s", "glm-a", "ds-s"])
+    const registry = {
+      "ds-s": shellReg({ name: "ds-s", pool: "deepseek", provider: "deepseek-api", modelId: "deepseek-v4-pro", family: "deepseek" }),
+      "glm-a": shellReg({ name: "glm-a", provider: "zhipuai-coding-plan" }),
+      "cp-s": shellReg({ name: "cp-s", pool: "copilot", provider: "github-copilot", modelId: "gpt-5.6", family: "gpt" }),
+    }
+    const r = rankCandidates(shells, ctx({ registry, billingBoostOf: (provider) => provider === "deepseek-api" ? BILLING_API_BOOST : 1.0 }))
+    // tier 分组优先：S 组内 api 计费（0.85）排订阅（1.0）之后，但仍先于 A 组——系数沉底而非池名硬门
+    expect(r.ranked.map((s) => s.key)).toEqual(["cp-s", "ds-s", "glm-a"])
     expect(r.breakdowns.get("cp-s")!.tier).toBe("S")
     expect(r.breakdowns.get("glm-a")!.tier).toBe("A")
     expect(r.breakdowns.get("ds-s")!.tier).toBe("S")
+    expect(r.breakdowns.get("ds-s")!.billingBoost).toBe(0.85)
+  })
+  test("未知组排序：同 tier 已知模型排未知模型之后（unknownPenalty 沉底）", () => {
+    const shells = [
+      rankable({ key: "unknown-b", modelId: "totally-new-model", pool: "zen", family: "totally" }),
+      rankable({ key: "known-b", modelId: "glm-5.3-flash", latencyMs: 50 }),
+    ]
+    const r = rankCandidates(shells, ctx())
+    expect(r.ranked.map((s) => s.key)).toEqual(["known-b", "unknown-b"])
+    expect(r.breakdowns.get("unknown-b")!.unknownPenalty).toBe(0.75)
+    expect(r.breakdowns.get("unknown-b")!.total).toBeLessThan(r.breakdowns.get("known-b")!.total)
   })
 })
 
@@ -191,7 +216,7 @@ describe("决策日志 logDecision", () => {
       lane: "main",
       candidates: [{
         name, base: 1.0, baseSource: "exact", effortFit: 1.0, health: 1.0, water: 1.0,
-        costBias: 1.0, peak: 1.0, total: 1.0, tier: "S",
+        costBias: 1.0, peak: 1.0, billingBoost: 1.0, unknownPenalty: 1.0, total: 1.0, tier: "S",
       }],
     })
     for (let i = 0; i < 205; i++) await logDecision([rec(`s${i}`)])

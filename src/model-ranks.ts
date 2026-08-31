@@ -3,6 +3,9 @@
 // 匹配顺序：精确键 → 最长前缀 → family 中位数 → 全局 0.7；返回 source 供决策日志追溯。
 export type Tier = "S" | "A" | "B" | "C"
 
+/** tier 分组序（排序主键；跨模块共用：scoring 与 lane-policy） */
+export const TIER_RANK: Record<Tier, number> = { S: 0, A: 1, B: 2, C: 3 }
+
 export const TIER_SCORE: Record<Tier, number> = {
   S: 1.0,
   A: 0.85,
@@ -51,6 +54,10 @@ export const MODEL_TIERS: Record<string, Tier> = {
 
 /** 全局中位数（family 未知时的兜底分） */
 export const GLOBAL_MEDIAN_SCORE = 0.7
+
+/** [2026-08-31]-[去厂商化：未知组惩罚——精确/前缀/family 近似归类全链未命中（global 兜底）的模型系数，
+ *  使其同 tier 排已知模型之后、链内只作尾部填充（lane-policy 与 scoring 共用，放此处避免环依赖）] */
+export const UNKNOWN_PENALTY = 0.75
 
 // ---- family 判定（与 catalog.familyOf 同源；provider→family 映射隐含于 modelId 前缀：
 //  zhipuai/glm 系→glm- 前缀、deepseek 系→deepseek- 前缀、github-copilot 按 modelId 自身前缀）----

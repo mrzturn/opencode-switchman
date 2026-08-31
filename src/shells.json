@@ -1,8 +1,8 @@
 {
-  "_note": "opencode-switchman 全量矩阵：权威启用面（模型管理打开的模型，scripts/visible-models.txt）× 全部声明思考档位（models.dev reasoning_options，toggle→off）。scripts/gen-shells.ts 生成，勿手改；模型开关变化后同步 pin 文件并重跑 bun run gen:shells。六档链 lanes＝矩阵上的静态偏好序。",
-  "generated_at": "2026-08-29T15:47:19.220Z",
+  "_note": "opencode-switchman 全量矩阵：权威启用面（模型管理打开的模型，scripts/visible-models.txt）× 全部声明思考档位（models.dev reasoning_options，toggle→off）。scripts/gen-shells.ts 生成，勿手改；模型开关变化后同步 pin 文件并重跑 bun run gen:shells。六档链由能力分×档位亲和×结构门×计费系数计算（api 计费 0.85、未知组 0.75 按系数沉底，无厂商预留席位）。",
+  "generated_at": "2026-08-31T09:33:33.343Z",
   "counts": {
-    "shells": 52,
+    "shells": 104,
     "visible_models": 13
   },
   "shells": [
@@ -18,6 +18,17 @@
       "matrixKey": "github-copilot|claude-haiku-4.5|off"
     },
     {
+      "name": "copilot-mx-haiku45-off-ro",
+      "provider": "github-copilot",
+      "modelId": "claude-haiku-4.5",
+      "pool": "copilot",
+      "family": "claude",
+      "effort": "off",
+      "capability": "ro",
+      "vision": true,
+      "matrixKey": "github-copilot|claude-haiku-4.5|off"
+    },
+    {
       "name": "copilot-mx-opus5-low",
       "provider": "github-copilot",
       "modelId": "claude-opus-5",
@@ -25,6 +36,17 @@
       "family": "claude",
       "effort": "low",
       "capability": "rw",
+      "vision": true,
+      "matrixKey": "github-copilot|claude-opus-5|low"
+    },
+    {
+      "name": "copilot-mx-opus5-low-ro",
+      "provider": "github-copilot",
+      "modelId": "claude-opus-5",
+      "pool": "copilot",
+      "family": "claude",
+      "effort": "low",
+      "capability": "ro",
       "vision": true,
       "matrixKey": "github-copilot|claude-opus-5|low"
     },
@@ -40,7 +62,29 @@
       "matrixKey": "github-copilot|claude-opus-5|medium"
     },
     {
+      "name": "copilot-mx-opus5-medium-ro",
+      "provider": "github-copilot",
+      "modelId": "claude-opus-5",
+      "pool": "copilot",
+      "family": "claude",
+      "effort": "medium",
+      "capability": "ro",
+      "vision": true,
+      "matrixKey": "github-copilot|claude-opus-5|medium"
+    },
+    {
       "name": "copilot-mx-opus5-high",
+      "provider": "github-copilot",
+      "modelId": "claude-opus-5",
+      "pool": "copilot",
+      "family": "claude",
+      "effort": "high",
+      "capability": "rw",
+      "vision": true,
+      "matrixKey": "github-copilot|claude-opus-5|high"
+    },
+    {
+      "name": "copilot-mx-opus5-high-ro",
       "provider": "github-copilot",
       "modelId": "claude-opus-5",
       "pool": "copilot",
@@ -62,6 +106,17 @@
       "matrixKey": "github-copilot|claude-opus-5|xhigh"
     },
     {
+      "name": "copilot-mx-opus5-xhigh-ro",
+      "provider": "github-copilot",
+      "modelId": "claude-opus-5",
+      "pool": "copilot",
+      "family": "claude",
+      "effort": "xhigh",
+      "capability": "ro",
+      "vision": true,
+      "matrixKey": "github-copilot|claude-opus-5|xhigh"
+    },
+    {
       "name": "copilot-mx-opus5-max",
       "provider": "github-copilot",
       "modelId": "claude-opus-5",
@@ -69,6 +124,17 @@
       "family": "claude",
       "effort": "max",
       "capability": "rw",
+      "vision": true,
+      "matrixKey": "github-copilot|claude-opus-5|max"
+    },
+    {
+      "name": "copilot-mx-opus5-max-ro",
+      "provider": "github-copilot",
+      "modelId": "claude-opus-5",
+      "pool": "copilot",
+      "family": "claude",
+      "effort": "max",
+      "capability": "ro",
       "vision": true,
       "matrixKey": "github-copilot|claude-opus-5|max"
     },
@@ -84,6 +150,17 @@
       "matrixKey": "github-copilot|claude-sonnet-5|low"
     },
     {
+      "name": "copilot-mx-claude5-low-ro",
+      "provider": "github-copilot",
+      "modelId": "claude-sonnet-5",
+      "pool": "copilot",
+      "family": "claude",
+      "effort": "low",
+      "capability": "ro",
+      "vision": true,
+      "matrixKey": "github-copilot|claude-sonnet-5|low"
+    },
+    {
       "name": "copilot-mx-claude5-medium",
       "provider": "github-copilot",
       "modelId": "claude-sonnet-5",
@@ -95,7 +172,29 @@
       "matrixKey": "github-copilot|claude-sonnet-5|medium"
     },
     {
+      "name": "copilot-mx-claude5-medium-ro",
+      "provider": "github-copilot",
+      "modelId": "claude-sonnet-5",
+      "pool": "copilot",
+      "family": "claude",
+      "effort": "medium",
+      "capability": "ro",
+      "vision": true,
+      "matrixKey": "github-copilot|claude-sonnet-5|medium"
+    },
+    {
       "name": "copilot-mx-claude5-high",
+      "provider": "github-copilot",
+      "modelId": "claude-sonnet-5",
+      "pool": "copilot",
+      "family": "claude",
+      "effort": "high",
+      "capability": "rw",
+      "vision": true,
+      "matrixKey": "github-copilot|claude-sonnet-5|high"
+    },
+    {
+      "name": "copilot-mx-claude5-high-ro",
       "provider": "github-copilot",
       "modelId": "claude-sonnet-5",
       "pool": "copilot",
@@ -117,6 +216,17 @@
       "matrixKey": "github-copilot|claude-sonnet-5|xhigh"
     },
     {
+      "name": "copilot-mx-claude5-xhigh-ro",
+      "provider": "github-copilot",
+      "modelId": "claude-sonnet-5",
+      "pool": "copilot",
+      "family": "claude",
+      "effort": "xhigh",
+      "capability": "ro",
+      "vision": true,
+      "matrixKey": "github-copilot|claude-sonnet-5|xhigh"
+    },
+    {
       "name": "copilot-mx-claude5-max",
       "provider": "github-copilot",
       "modelId": "claude-sonnet-5",
@@ -124,6 +234,17 @@
       "family": "claude",
       "effort": "max",
       "capability": "rw",
+      "vision": true,
+      "matrixKey": "github-copilot|claude-sonnet-5|max"
+    },
+    {
+      "name": "copilot-mx-claude5-max-ro",
+      "provider": "github-copilot",
+      "modelId": "claude-sonnet-5",
+      "pool": "copilot",
+      "family": "claude",
+      "effort": "max",
+      "capability": "ro",
       "vision": true,
       "matrixKey": "github-copilot|claude-sonnet-5|max"
     },
@@ -139,6 +260,17 @@
       "matrixKey": "github-copilot|gemini-3.1-pro-preview|low"
     },
     {
+      "name": "copilot-mx-gem31pro-low-ro",
+      "provider": "github-copilot",
+      "modelId": "gemini-3.1-pro-preview",
+      "pool": "copilot",
+      "family": "gemini",
+      "effort": "low",
+      "capability": "ro",
+      "vision": true,
+      "matrixKey": "github-copilot|gemini-3.1-pro-preview|low"
+    },
+    {
       "name": "copilot-mx-gem31pro-medium",
       "provider": "github-copilot",
       "modelId": "gemini-3.1-pro-preview",
@@ -146,6 +278,17 @@
       "family": "gemini",
       "effort": "medium",
       "capability": "rw",
+      "vision": true,
+      "matrixKey": "github-copilot|gemini-3.1-pro-preview|medium"
+    },
+    {
+      "name": "copilot-mx-gem31pro-medium-ro",
+      "provider": "github-copilot",
+      "modelId": "gemini-3.1-pro-preview",
+      "pool": "copilot",
+      "family": "gemini",
+      "effort": "medium",
+      "capability": "ro",
       "vision": true,
       "matrixKey": "github-copilot|gemini-3.1-pro-preview|medium"
     },
@@ -161,6 +304,17 @@
       "matrixKey": "github-copilot|gemini-3.1-pro-preview|high"
     },
     {
+      "name": "copilot-mx-gem31pro-high-ro",
+      "provider": "github-copilot",
+      "modelId": "gemini-3.1-pro-preview",
+      "pool": "copilot",
+      "family": "gemini",
+      "effort": "high",
+      "capability": "ro",
+      "vision": true,
+      "matrixKey": "github-copilot|gemini-3.1-pro-preview|high"
+    },
+    {
       "name": "copilot-mx-gem37f-low",
       "provider": "github-copilot",
       "modelId": "gemini-3.7-flash",
@@ -168,6 +322,17 @@
       "family": "gemini",
       "effort": "low",
       "capability": "rw",
+      "vision": true,
+      "matrixKey": "github-copilot|gemini-3.7-flash|low"
+    },
+    {
+      "name": "copilot-mx-gem37f-low-ro",
+      "provider": "github-copilot",
+      "modelId": "gemini-3.7-flash",
+      "pool": "copilot",
+      "family": "gemini",
+      "effort": "low",
+      "capability": "ro",
       "vision": true,
       "matrixKey": "github-copilot|gemini-3.7-flash|low"
     },
@@ -183,6 +348,17 @@
       "matrixKey": "github-copilot|gemini-3.7-flash|medium"
     },
     {
+      "name": "copilot-mx-gem37f-medium-ro",
+      "provider": "github-copilot",
+      "modelId": "gemini-3.7-flash",
+      "pool": "copilot",
+      "family": "gemini",
+      "effort": "medium",
+      "capability": "ro",
+      "vision": true,
+      "matrixKey": "github-copilot|gemini-3.7-flash|medium"
+    },
+    {
       "name": "copilot-mx-gem37f-high",
       "provider": "github-copilot",
       "modelId": "gemini-3.7-flash",
@@ -190,6 +366,17 @@
       "family": "gemini",
       "effort": "high",
       "capability": "rw",
+      "vision": true,
+      "matrixKey": "github-copilot|gemini-3.7-flash|high"
+    },
+    {
+      "name": "copilot-mx-gem37f-high-ro",
+      "provider": "github-copilot",
+      "modelId": "gemini-3.7-flash",
+      "pool": "copilot",
+      "family": "gemini",
+      "effort": "high",
+      "capability": "ro",
       "vision": true,
       "matrixKey": "github-copilot|gemini-3.7-flash|high"
     },
@@ -205,6 +392,17 @@
       "matrixKey": "github-copilot|gpt-5.6-luna|off"
     },
     {
+      "name": "copilot-mx-luna-off-ro",
+      "provider": "github-copilot",
+      "modelId": "gpt-5.6-luna",
+      "pool": "copilot",
+      "family": "gpt",
+      "effort": "off",
+      "capability": "ro",
+      "vision": true,
+      "matrixKey": "github-copilot|gpt-5.6-luna|off"
+    },
+    {
       "name": "copilot-mx-luna-low",
       "provider": "github-copilot",
       "modelId": "gpt-5.6-luna",
@@ -212,6 +410,17 @@
       "family": "gpt",
       "effort": "low",
       "capability": "rw",
+      "vision": true,
+      "matrixKey": "github-copilot|gpt-5.6-luna|low"
+    },
+    {
+      "name": "copilot-mx-luna-low-ro",
+      "provider": "github-copilot",
+      "modelId": "gpt-5.6-luna",
+      "pool": "copilot",
+      "family": "gpt",
+      "effort": "low",
+      "capability": "ro",
       "vision": true,
       "matrixKey": "github-copilot|gpt-5.6-luna|low"
     },
@@ -227,6 +436,17 @@
       "matrixKey": "github-copilot|gpt-5.6-luna|medium"
     },
     {
+      "name": "copilot-mx-luna-medium-ro",
+      "provider": "github-copilot",
+      "modelId": "gpt-5.6-luna",
+      "pool": "copilot",
+      "family": "gpt",
+      "effort": "medium",
+      "capability": "ro",
+      "vision": true,
+      "matrixKey": "github-copilot|gpt-5.6-luna|medium"
+    },
+    {
       "name": "copilot-mx-luna-high",
       "provider": "github-copilot",
       "modelId": "gpt-5.6-luna",
@@ -234,6 +454,17 @@
       "family": "gpt",
       "effort": "high",
       "capability": "rw",
+      "vision": true,
+      "matrixKey": "github-copilot|gpt-5.6-luna|high"
+    },
+    {
+      "name": "copilot-mx-luna-high-ro",
+      "provider": "github-copilot",
+      "modelId": "gpt-5.6-luna",
+      "pool": "copilot",
+      "family": "gpt",
+      "effort": "high",
+      "capability": "ro",
       "vision": true,
       "matrixKey": "github-copilot|gpt-5.6-luna|high"
     },
@@ -249,6 +480,17 @@
       "matrixKey": "github-copilot|gpt-5.6-luna|xhigh"
     },
     {
+      "name": "copilot-mx-luna-xhigh-ro",
+      "provider": "github-copilot",
+      "modelId": "gpt-5.6-luna",
+      "pool": "copilot",
+      "family": "gpt",
+      "effort": "xhigh",
+      "capability": "ro",
+      "vision": true,
+      "matrixKey": "github-copilot|gpt-5.6-luna|xhigh"
+    },
+    {
       "name": "copilot-mx-luna-max",
       "provider": "github-copilot",
       "modelId": "gpt-5.6-luna",
@@ -256,6 +498,17 @@
       "family": "gpt",
       "effort": "max",
       "capability": "rw",
+      "vision": true,
+      "matrixKey": "github-copilot|gpt-5.6-luna|max"
+    },
+    {
+      "name": "copilot-mx-luna-max-ro",
+      "provider": "github-copilot",
+      "modelId": "gpt-5.6-luna",
+      "pool": "copilot",
+      "family": "gpt",
+      "effort": "max",
+      "capability": "ro",
       "vision": true,
       "matrixKey": "github-copilot|gpt-5.6-luna|max"
     },
@@ -271,6 +524,17 @@
       "matrixKey": "github-copilot|gpt-5.6-sol|off"
     },
     {
+      "name": "copilot-mx-sol-off-ro",
+      "provider": "github-copilot",
+      "modelId": "gpt-5.6-sol",
+      "pool": "copilot",
+      "family": "gpt",
+      "effort": "off",
+      "capability": "ro",
+      "vision": true,
+      "matrixKey": "github-copilot|gpt-5.6-sol|off"
+    },
+    {
       "name": "copilot-mx-sol-low",
       "provider": "github-copilot",
       "modelId": "gpt-5.6-sol",
@@ -278,6 +542,17 @@
       "family": "gpt",
       "effort": "low",
       "capability": "rw",
+      "vision": true,
+      "matrixKey": "github-copilot|gpt-5.6-sol|low"
+    },
+    {
+      "name": "copilot-mx-sol-low-ro",
+      "provider": "github-copilot",
+      "modelId": "gpt-5.6-sol",
+      "pool": "copilot",
+      "family": "gpt",
+      "effort": "low",
+      "capability": "ro",
       "vision": true,
       "matrixKey": "github-copilot|gpt-5.6-sol|low"
     },
@@ -293,6 +568,17 @@
       "matrixKey": "github-copilot|gpt-5.6-sol|medium"
     },
     {
+      "name": "copilot-mx-sol-medium-ro",
+      "provider": "github-copilot",
+      "modelId": "gpt-5.6-sol",
+      "pool": "copilot",
+      "family": "gpt",
+      "effort": "medium",
+      "capability": "ro",
+      "vision": true,
+      "matrixKey": "github-copilot|gpt-5.6-sol|medium"
+    },
+    {
       "name": "copilot-mx-sol-high",
       "provider": "github-copilot",
       "modelId": "gpt-5.6-sol",
@@ -300,6 +586,17 @@
       "family": "gpt",
       "effort": "high",
       "capability": "rw",
+      "vision": true,
+      "matrixKey": "github-copilot|gpt-5.6-sol|high"
+    },
+    {
+      "name": "copilot-mx-sol-high-ro",
+      "provider": "github-copilot",
+      "modelId": "gpt-5.6-sol",
+      "pool": "copilot",
+      "family": "gpt",
+      "effort": "high",
+      "capability": "ro",
       "vision": true,
       "matrixKey": "github-copilot|gpt-5.6-sol|high"
     },
@@ -315,6 +612,17 @@
       "matrixKey": "github-copilot|gpt-5.6-sol|xhigh"
     },
     {
+      "name": "copilot-mx-sol-xhigh-ro",
+      "provider": "github-copilot",
+      "modelId": "gpt-5.6-sol",
+      "pool": "copilot",
+      "family": "gpt",
+      "effort": "xhigh",
+      "capability": "ro",
+      "vision": true,
+      "matrixKey": "github-copilot|gpt-5.6-sol|xhigh"
+    },
+    {
       "name": "copilot-mx-sol-max",
       "provider": "github-copilot",
       "modelId": "gpt-5.6-sol",
@@ -322,6 +630,17 @@
       "family": "gpt",
       "effort": "max",
       "capability": "rw",
+      "vision": true,
+      "matrixKey": "github-copilot|gpt-5.6-sol|max"
+    },
+    {
+      "name": "copilot-mx-sol-max-ro",
+      "provider": "github-copilot",
+      "modelId": "gpt-5.6-sol",
+      "pool": "copilot",
+      "family": "gpt",
+      "effort": "max",
+      "capability": "ro",
       "vision": true,
       "matrixKey": "github-copilot|gpt-5.6-sol|max"
     },
@@ -337,6 +656,17 @@
       "matrixKey": "github-copilot|gpt-5.6-terra|off"
     },
     {
+      "name": "copilot-mx-terra-off-ro",
+      "provider": "github-copilot",
+      "modelId": "gpt-5.6-terra",
+      "pool": "copilot",
+      "family": "gpt",
+      "effort": "off",
+      "capability": "ro",
+      "vision": true,
+      "matrixKey": "github-copilot|gpt-5.6-terra|off"
+    },
+    {
       "name": "copilot-mx-terra-low",
       "provider": "github-copilot",
       "modelId": "gpt-5.6-terra",
@@ -344,6 +674,17 @@
       "family": "gpt",
       "effort": "low",
       "capability": "rw",
+      "vision": true,
+      "matrixKey": "github-copilot|gpt-5.6-terra|low"
+    },
+    {
+      "name": "copilot-mx-terra-low-ro",
+      "provider": "github-copilot",
+      "modelId": "gpt-5.6-terra",
+      "pool": "copilot",
+      "family": "gpt",
+      "effort": "low",
+      "capability": "ro",
       "vision": true,
       "matrixKey": "github-copilot|gpt-5.6-terra|low"
     },
@@ -359,6 +700,17 @@
       "matrixKey": "github-copilot|gpt-5.6-terra|medium"
     },
     {
+      "name": "copilot-mx-terra-medium-ro",
+      "provider": "github-copilot",
+      "modelId": "gpt-5.6-terra",
+      "pool": "copilot",
+      "family": "gpt",
+      "effort": "medium",
+      "capability": "ro",
+      "vision": true,
+      "matrixKey": "github-copilot|gpt-5.6-terra|medium"
+    },
+    {
       "name": "copilot-mx-terra-high",
       "provider": "github-copilot",
       "modelId": "gpt-5.6-terra",
@@ -366,6 +718,17 @@
       "family": "gpt",
       "effort": "high",
       "capability": "rw",
+      "vision": true,
+      "matrixKey": "github-copilot|gpt-5.6-terra|high"
+    },
+    {
+      "name": "copilot-mx-terra-high-ro",
+      "provider": "github-copilot",
+      "modelId": "gpt-5.6-terra",
+      "pool": "copilot",
+      "family": "gpt",
+      "effort": "high",
+      "capability": "ro",
       "vision": true,
       "matrixKey": "github-copilot|gpt-5.6-terra|high"
     },
@@ -381,7 +744,29 @@
       "matrixKey": "github-copilot|gpt-5.6-terra|xhigh"
     },
     {
+      "name": "copilot-mx-terra-xhigh-ro",
+      "provider": "github-copilot",
+      "modelId": "gpt-5.6-terra",
+      "pool": "copilot",
+      "family": "gpt",
+      "effort": "xhigh",
+      "capability": "ro",
+      "vision": true,
+      "matrixKey": "github-copilot|gpt-5.6-terra|xhigh"
+    },
+    {
       "name": "copilot-mx-terra-max",
+      "provider": "github-copilot",
+      "modelId": "gpt-5.6-terra",
+      "pool": "copilot",
+      "family": "gpt",
+      "effort": "max",
+      "capability": "rw",
+      "vision": true,
+      "matrixKey": "github-copilot|gpt-5.6-terra|max"
+    },
+    {
+      "name": "copilot-mx-terra-max-ro",
       "provider": "github-copilot",
       "modelId": "gpt-5.6-terra",
       "pool": "copilot",
@@ -403,6 +788,17 @@
       "matrixKey": "github-copilot|grok-4.6|low"
     },
     {
+      "name": "copilot-mx-grok46-low-ro",
+      "provider": "github-copilot",
+      "modelId": "grok-4.6",
+      "pool": "copilot",
+      "family": "grok",
+      "effort": "low",
+      "capability": "ro",
+      "vision": true,
+      "matrixKey": "github-copilot|grok-4.6|low"
+    },
+    {
       "name": "copilot-mx-grok46-medium",
       "provider": "github-copilot",
       "modelId": "grok-4.6",
@@ -410,6 +806,17 @@
       "family": "grok",
       "effort": "medium",
       "capability": "rw",
+      "vision": true,
+      "matrixKey": "github-copilot|grok-4.6|medium"
+    },
+    {
+      "name": "copilot-mx-grok46-medium-ro",
+      "provider": "github-copilot",
+      "modelId": "grok-4.6",
+      "pool": "copilot",
+      "family": "grok",
+      "effort": "medium",
+      "capability": "ro",
       "vision": true,
       "matrixKey": "github-copilot|grok-4.6|medium"
     },
@@ -425,6 +832,17 @@
       "matrixKey": "github-copilot|grok-4.6|high"
     },
     {
+      "name": "copilot-mx-grok46-high-ro",
+      "provider": "github-copilot",
+      "modelId": "grok-4.6",
+      "pool": "copilot",
+      "family": "grok",
+      "effort": "high",
+      "capability": "ro",
+      "vision": true,
+      "matrixKey": "github-copilot|grok-4.6|high"
+    },
+    {
       "name": "copilot-mx-grok46-xhigh",
       "provider": "github-copilot",
       "modelId": "grok-4.6",
@@ -432,6 +850,17 @@
       "family": "grok",
       "effort": "xhigh",
       "capability": "rw",
+      "vision": true,
+      "matrixKey": "github-copilot|grok-4.6|xhigh"
+    },
+    {
+      "name": "copilot-mx-grok46-xhigh-ro",
+      "provider": "github-copilot",
+      "modelId": "grok-4.6",
+      "pool": "copilot",
+      "family": "grok",
+      "effort": "xhigh",
+      "capability": "ro",
       "vision": true,
       "matrixKey": "github-copilot|grok-4.6|xhigh"
     },
@@ -447,6 +876,17 @@
       "matrixKey": "deepseek|deepseek-v4-flash-vision-exp|off"
     },
     {
+      "name": "ds-mx-v4fv-off-ro",
+      "provider": "deepseek",
+      "modelId": "deepseek-v4-flash-vision-exp",
+      "pool": "deepseek",
+      "family": "deepseek",
+      "effort": "off",
+      "capability": "ro",
+      "vision": true,
+      "matrixKey": "deepseek|deepseek-v4-flash-vision-exp|off"
+    },
+    {
       "name": "ds-mx-v4fv-low",
       "provider": "deepseek",
       "modelId": "deepseek-v4-flash-vision-exp",
@@ -454,6 +894,17 @@
       "family": "deepseek",
       "effort": "low",
       "capability": "rw",
+      "vision": true,
+      "matrixKey": "deepseek|deepseek-v4-flash-vision-exp|low"
+    },
+    {
+      "name": "ds-mx-v4fv-low-ro",
+      "provider": "deepseek",
+      "modelId": "deepseek-v4-flash-vision-exp",
+      "pool": "deepseek",
+      "family": "deepseek",
+      "effort": "low",
+      "capability": "ro",
       "vision": true,
       "matrixKey": "deepseek|deepseek-v4-flash-vision-exp|low"
     },
@@ -469,6 +920,17 @@
       "matrixKey": "deepseek|deepseek-v4-flash-vision-exp|high"
     },
     {
+      "name": "ds-mx-v4fv-high-ro",
+      "provider": "deepseek",
+      "modelId": "deepseek-v4-flash-vision-exp",
+      "pool": "deepseek",
+      "family": "deepseek",
+      "effort": "high",
+      "capability": "ro",
+      "vision": true,
+      "matrixKey": "deepseek|deepseek-v4-flash-vision-exp|high"
+    },
+    {
       "name": "ds-mx-v4fv-max",
       "provider": "deepseek",
       "modelId": "deepseek-v4-flash-vision-exp",
@@ -476,6 +938,17 @@
       "family": "deepseek",
       "effort": "max",
       "capability": "rw",
+      "vision": true,
+      "matrixKey": "deepseek|deepseek-v4-flash-vision-exp|max"
+    },
+    {
+      "name": "ds-mx-v4fv-max-ro",
+      "provider": "deepseek",
+      "modelId": "deepseek-v4-flash-vision-exp",
+      "pool": "deepseek",
+      "family": "deepseek",
+      "effort": "max",
+      "capability": "ro",
       "vision": true,
       "matrixKey": "deepseek|deepseek-v4-flash-vision-exp|max"
     },
@@ -491,6 +964,17 @@
       "matrixKey": "deepseek|deepseek-v4-pro|off"
     },
     {
+      "name": "ds-mx-v4p-off-ro",
+      "provider": "deepseek",
+      "modelId": "deepseek-v4-pro",
+      "pool": "deepseek",
+      "family": "deepseek",
+      "effort": "off",
+      "capability": "ro",
+      "vision": false,
+      "matrixKey": "deepseek|deepseek-v4-pro|off"
+    },
+    {
       "name": "ds-mx-v4p-high",
       "provider": "deepseek",
       "modelId": "deepseek-v4-pro",
@@ -498,6 +982,17 @@
       "family": "deepseek",
       "effort": "high",
       "capability": "rw",
+      "vision": false,
+      "matrixKey": "deepseek|deepseek-v4-pro|high"
+    },
+    {
+      "name": "ds-mx-v4p-high-ro",
+      "provider": "deepseek",
+      "modelId": "deepseek-v4-pro",
+      "pool": "deepseek",
+      "family": "deepseek",
+      "effort": "high",
+      "capability": "ro",
       "vision": false,
       "matrixKey": "deepseek|deepseek-v4-pro|high"
     },
@@ -513,6 +1008,17 @@
       "matrixKey": "deepseek|deepseek-v4-pro|max"
     },
     {
+      "name": "ds-mx-v4p-max-ro",
+      "provider": "deepseek",
+      "modelId": "deepseek-v4-pro",
+      "pool": "deepseek",
+      "family": "deepseek",
+      "effort": "max",
+      "capability": "ro",
+      "vision": false,
+      "matrixKey": "deepseek|deepseek-v4-pro|max"
+    },
+    {
       "name": "glm-mx-53-low",
       "provider": "zhipuai-coding-plan",
       "modelId": "glm-5.3",
@@ -520,6 +1026,17 @@
       "family": "glm",
       "effort": "low",
       "capability": "rw",
+      "vision": false,
+      "matrixKey": "zhipuai-coding-plan|glm-5.3|low"
+    },
+    {
+      "name": "glm-mx-53-low-ro",
+      "provider": "zhipuai-coding-plan",
+      "modelId": "glm-5.3",
+      "pool": "glm",
+      "family": "glm",
+      "effort": "low",
+      "capability": "ro",
       "vision": false,
       "matrixKey": "zhipuai-coding-plan|glm-5.3|low"
     },
@@ -535,6 +1052,17 @@
       "matrixKey": "zhipuai-coding-plan|glm-5.3|high"
     },
     {
+      "name": "glm-mx-53-high-ro",
+      "provider": "zhipuai-coding-plan",
+      "modelId": "glm-5.3",
+      "pool": "glm",
+      "family": "glm",
+      "effort": "high",
+      "capability": "ro",
+      "vision": false,
+      "matrixKey": "zhipuai-coding-plan|glm-5.3|high"
+    },
+    {
       "name": "glm-mx-53-max",
       "provider": "zhipuai-coding-plan",
       "modelId": "glm-5.3",
@@ -542,6 +1070,17 @@
       "family": "glm",
       "effort": "max",
       "capability": "rw",
+      "vision": false,
+      "matrixKey": "zhipuai-coding-plan|glm-5.3|max"
+    },
+    {
+      "name": "glm-mx-53-max-ro",
+      "provider": "zhipuai-coding-plan",
+      "modelId": "glm-5.3",
+      "pool": "glm",
+      "family": "glm",
+      "effort": "max",
+      "capability": "ro",
       "vision": false,
       "matrixKey": "zhipuai-coding-plan|glm-5.3|max"
     },
@@ -557,6 +1096,17 @@
       "matrixKey": "zhipuai-coding-plan|glm-5.3-flash|low"
     },
     {
+      "name": "glm-mx-53f-low-ro",
+      "provider": "zhipuai-coding-plan",
+      "modelId": "glm-5.3-flash",
+      "pool": "glm",
+      "family": "glm",
+      "effort": "low",
+      "capability": "ro",
+      "vision": true,
+      "matrixKey": "zhipuai-coding-plan|glm-5.3-flash|low"
+    },
+    {
       "name": "glm-mx-53f-high",
       "provider": "zhipuai-coding-plan",
       "modelId": "glm-5.3-flash",
@@ -564,6 +1114,17 @@
       "family": "glm",
       "effort": "high",
       "capability": "rw",
+      "vision": true,
+      "matrixKey": "zhipuai-coding-plan|glm-5.3-flash|high"
+    },
+    {
+      "name": "glm-mx-53f-high-ro",
+      "provider": "zhipuai-coding-plan",
+      "modelId": "glm-5.3-flash",
+      "pool": "glm",
+      "family": "glm",
+      "effort": "high",
+      "capability": "ro",
       "vision": true,
       "matrixKey": "zhipuai-coding-plan|glm-5.3-flash|high"
     },
@@ -577,37 +1138,55 @@
       "capability": "rw",
       "vision": true,
       "matrixKey": "zhipuai-coding-plan|glm-5.3-flash|max"
+    },
+    {
+      "name": "glm-mx-53f-max-ro",
+      "provider": "zhipuai-coding-plan",
+      "modelId": "glm-5.3-flash",
+      "pool": "glm",
+      "family": "glm",
+      "effort": "max",
+      "capability": "ro",
+      "vision": true,
+      "matrixKey": "zhipuai-coding-plan|glm-5.3-flash|max"
     }
   ],
   "lanes": {
     "economy": [
-      "copilot-mx-luna-low",
-      "glm-mx-53f-low",
-      "ds-mx-v4fv-off"
+      "glm-mx-53-low",
+      "copilot-mx-claude5-low",
+      "copilot-mx-gem31pro-low",
+      "copilot-mx-gem37f-low"
     ],
     "mechanical": [
-      "glm-mx-53f-high",
-      "copilot-mx-terra-medium",
-      "ds-mx-v4fv-off"
+      "copilot-mx-claude5-medium",
+      "copilot-mx-gem31pro-medium",
+      "copilot-mx-gem37f-medium",
+      "copilot-mx-grok46-medium"
     ],
     "main": [
       "glm-mx-53-high",
-      "copilot-mx-terra-high",
-      "ds-mx-v4p-high"
+      "ds-mx-v4p-high",
+      "copilot-mx-claude5-high",
+      "copilot-mx-gem31pro-high"
     ],
     "hard": [
-      "copilot-mx-sol-xhigh",
-      "glm-mx-53-max",
-      "ds-mx-v4p-max"
+      "copilot-mx-claude5-xhigh",
+      "copilot-mx-grok46-xhigh",
+      "copilot-mx-luna-xhigh",
+      "copilot-mx-opus5-xhigh"
     ],
     "vision": [
-      "glm-mx-53f-high",
-      "copilot-mx-terra-high",
-      "ds-mx-v4fv-high"
+      "copilot-mx-claude5-high",
+      "copilot-mx-gem31pro-high",
+      "copilot-mx-gem37f-high",
+      "copilot-mx-grok46-high"
     ],
     "review": [
-      "copilot-mx-claude5-high",
-      "copilot-mx-terra-max"
+      "glm-mx-53-high-ro",
+      "ds-mx-v4p-high-ro",
+      "copilot-mx-claude5-high-ro",
+      "copilot-mx-gem31pro-high-ro"
     ]
   }
 }
