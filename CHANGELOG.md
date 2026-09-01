@@ -4,6 +4,16 @@
 
 This project follows [Semantic Versioning](https://semver.org/). Release notes describe user-visible behavior; implementation details remain in the technical specification and commit history.
 
+## [Unreleased]
+
+### Added
+
+- One-line install/update: `curl -fsSL https://raw.githubusercontent.com/mrzturn/opencode-switchman/main/scripts/setup.sh | bash` (or `npx -y opencode-switchman@latest update` once 0.2.1 ships). The updater rewrites the `plugin` entry to the exact latest version and prunes stale OpenCode plugin-cache directories — OpenCode ≤1.18.x pins bare plugin specs to whatever was installed first, so bare names and `@latest` never upgrade.
+
+### Changed
+
+- `/switchman-update` now runs the bundled updater; the previous `npm install opencode-switchman@latest` approach wrote to a directory OpenCode does not load plugins from.
+
 ## [0.2.0] - 2026-09-01
 
 ### Highlights
@@ -40,6 +50,16 @@ The release documentation uses these repository assets:
 [English](#changelog)
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。此处记录面向使用者的行为变化；实现细节见技术方案与提交历史。
+
+## [Unreleased]
+
+### Added
+
+- 一键安装/更新：`curl -fsSL https://raw.githubusercontent.com/mrzturn/opencode-switchman/main/scripts/setup.sh | bash`（0.2.1 发布后也可 `npx -y opencode-switchman@latest update`）。更新器把 `plugin` 条目改写为最新精确版本并清理 opencode 插件缓存旧目录——opencode ≤1.18.x 会把裸包名 spec 钉死在首次安装的版本，裸名与 `@latest` 永不升级。
+
+### Changed
+
+- `/switchman-update` 改为调用随包更新器；旧的 `npm install opencode-switchman@latest` 方式写入的目录 opencode 实际并不加载。
 
 ## [0.2.0] - 2026-09-01
 

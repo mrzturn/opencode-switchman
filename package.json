@@ -22,6 +22,9 @@
   ],
   "type": "module",
   "main": "./dist/opencode-switchman.js",
+  "bin": {
+    "opencode-switchman": "./dist/update-cli.js"
+  },
   "exports": {
     ".": "./dist/opencode-switchman.js",
     "./server": "./dist/opencode-switchman.js",
@@ -35,7 +38,7 @@
     "typecheck": "tsc --noEmit",
     "gen:shells": "bun scripts/gen-shells.ts",
     "gen:capability": "bun scripts/gen-capability-default.ts",
-    "build": "bun run gen:shells && bun scripts/gen-version.ts && bun build src/index.ts --target=node --format=esm --outfile=dist/opencode-switchman.js && bun build src/doctor-cli.ts --target=node --format=esm --outfile=dist/switchman-doctor.js && bun build src/tui.tsx --target=node --format=esm --external solid-js --external @opentui/solid --external @opentui/core --outfile=dist/opencode-switchman-tui.js",
+    "build": "bun run gen:shells && bun scripts/gen-version.ts && bun build src/index.ts --target=node --format=esm --outfile=dist/opencode-switchman.js && bun build src/doctor-cli.ts --target=node --format=esm --outfile=dist/switchman-doctor.js && bun build src/tui.tsx --target=node --format=esm --external solid-js --external @opentui/solid --external @opentui/core --outfile=dist/opencode-switchman-tui.js && cp scripts/update-cli.mjs dist/update-cli.js",
     "prepublishOnly": "bun install --frozen-lockfile && bun run build && bun test",
     "pack": "bun run build && npm pack",
     "mode:local": "bun run build && bun scripts/plugin-mode.ts local",

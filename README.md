@@ -23,7 +23,29 @@ If you hold multiple model subscriptions (GitHub Copilot premium credits, Zhipu 
   - **DeepSeek**: custom provider (`deepseek` + apiKey)
 - Zero-config credentials: the plugin reads them **read-only** from opencode's auth layer (auth.json / provider options / env vars) — it never stores secrets or refreshes tokens itself
 
-### Option 1: npm (recommended)
+### One-line install / update (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mrzturn/opencode-switchman/main/scripts/setup.sh | bash
+```
+
+The same command covers both first install and later updates (idempotent):
+
+- Rewrites the `plugin` entry in your opencode config and `tui.jsonc` to the exact latest version `opencode-switchman@x.y.z` (JSONC comments preserved)
+- Prunes stale plugin-cache directories (`~/.cache/opencode/packages/opencode-switchman*`)
+- On upgrade, flags the "upgraded, restart required" banner; **restart opencode to take effect**
+
+> **Why the entry is an exact version instead of a bare name / `@latest`**: OpenCode ≤1.18.x pins its plugin cache to a per-spec directory (e.g. `~/.cache/opencode/packages/opencode-switchman`) and never re-queries npm after the first install — bare names and `@latest` keep reusing the stale cache (observed pinned at 0.0.1). Exact versions get their own cache directory, so the updater rewrites the version instead.
+
+Once ≥0.2.1 is published, you can also run the same updater via npm/bun:
+
+```bash
+npx -y opencode-switchman@latest update    # or bunx opencode-switchman@latest update
+```
+
+The in-plugin `/switchman-update` command now invokes the same updater (the old `npm install` approach never affected the path OpenCode actually loads).
+
+### Option 1: npm (manual)
 
 Add to your opencode config (`~/.config/opencode/opencode.json` or project `opencode.json`):
 
@@ -33,7 +55,7 @@ Add to your opencode config (`~/.config/opencode/opencode.json` or project `open
 }
 ```
 
-opencode installs and loads the npm package automatically via Bun at startup, no other steps needed.
+opencode installs and loads the npm package automatically via Bun at startup, no other steps needed. For later updates use the one-liner above or `/switchman-update` inside opencode.
 
 > **Nothing else goes into your opencode config**: all plugin configuration (water levels, billing, peaks, thresholds, banner, matrix, custom lanes, etc.) lives in the standalone `opencode-switchman.jsonc` file (see below) — auto-generated on first start with inline comments. The legacy tuple-options form (`["opencode-switchman", {...}]`) is deprecated and kept compatible for one release (explicit values still win; `/switchman-doctor` flags them as SWM044 and suggests migrating).
 

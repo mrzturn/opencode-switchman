@@ -144,15 +144,24 @@ export function flagSemantics(baseDir = join(homedir(), ".config", "opencode", "
   return { upgraded: active("upgraded.flag"), ignored: active("update-ignore.flag") }
 }
 
-export function upgradeCommandMd(): string {
+/** 随包更新器路径（与主产物同目录；build 时由 scripts/update-cli.mjs 复制为 dist/update-cli.js） */
+export function updateCliPath(): string {
+  return join(moduleDir(), "update-cli.js")
+}
+
+// [2026-09-01]-[opencode 1.18.x 插件缓存按 spec 目录钉死，npm install 到 ~/.config/opencode 对实际加载
+//  路径无效——/switchman-update 改为调用随包更新器：改写 plugin 条目为最新精确版本＋清理旧缓存]-
+export function upgradeCommandMd(cliPath: string = updateCliPath()): string {
+  // JSON quoting yields a shell-safe single argument even when the installation path has spaces.
+  const quoted = JSON.stringify(cliPath)
   return [
     "---",
-    "description: 立即升级 opencode-switchman（npm 正式版，静默安装）",
+    "description: 立即升级 opencode-switchman（改写 plugin 为最新精确版本并清理旧缓存）",
     "---",
     "",
-    "!`cd ~/.config/opencode && npm install opencode-switchman@latest 2>&1 | tail -8 && touch \"$HOME/.config/opencode/opencode-switchman/upgraded.flag\"`",
+    `!\`node ${quoted} 2>/dev/null || bun ${quoted}\``,
     "",
-    "以上是 opencode-switchman 插件自动升级的输出。请：",
+    "以上是 opencode-switchman 更新器的输出（自动改写 opencode.jsonc/tui.jsonc 的 plugin 条目为精确版本、清理 opencode 插件缓存）。请：",
     "1. 用一句话报告升级结果（成功/已是最新/失败原因）",
     "2. 提醒用户重启 opencode（app 退出重开 / tui 重进）后新版本才生效",
     "",

@@ -31,12 +31,14 @@ describe("插件自更新纯函数", () => {
 })
 
 describe("一键升级命令资产", () => {
-  test("prod 写入 /switchman-update（npm 静默安装模板），local 删除残留", () => {
+  test("prod 写入 /switchman-update（随包更新器模板），local 删除残留", () => {
     const base = mkdtempSync(join(tmpdir(), "sw-cmd-"))
     ensureUpdateCommands("prod", base)
     const file = join(base, "command", "switchman-update.md")
     const md = readFileSync(file, "utf8")
-    expect(md).toContain("npm install opencode-switchman@latest")
+    // [2026-09-01]-[opencode 插件缓存钉死裸 spec，npm install 方式无效——模板改为调用随包更新器]-
+    expect(md).toContain("update-cli.js")
+    expect(md).toContain("node ")
     expect(md).toContain("description:")
     ensureUpdateCommands("local", base)
     expect(existsSync(file)).toBe(false)
