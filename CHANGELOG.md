@@ -4,11 +4,15 @@
 
 This project follows [Semantic Versioning](https://semver.org/). Release notes describe user-visible behavior; implementation details remain in the technical specification and commit history.
 
-## [Unreleased]
+## [0.2.1] - 2026-09-01
 
 ### Added
 
-- One-line install/update: `curl -fsSL https://raw.githubusercontent.com/mrzturn/opencode-switchman/main/scripts/setup.sh | bash` (or `npx -y opencode-switchman@latest update` once 0.2.1 ships). The updater rewrites the `plugin` entry to the exact latest version and prunes stale OpenCode plugin-cache directories — OpenCode ≤1.18.x pins bare plugin specs to whatever was installed first, so bare names and `@latest` never upgrade.
+- npm bin entry: the package now ships an updater CLI — `npx -y opencode-switchman@latest` (or `bunx opencode-switchman@latest`) covers first install and upgrades, the same idempotent path as the one-line script. The updater rewrites the `plugin` entry to the exact latest version and prunes stale OpenCode plugin-cache directories — OpenCode ≤1.18.x pins bare plugin specs to whatever was installed first, so bare names and `@latest` never upgrade.
+
+### Fixed
+
+- The updater now creates `tui.jsonc` whenever it is missing (create-if-missing) instead of only on fresh installs — upgrades on machines that had an opencode config but no tui config previously skipped the TUI sidebar registration silently.
 
 ### Changed
 
@@ -51,13 +55,17 @@ The release documentation uses these repository assets:
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。此处记录面向使用者的行为变化；实现细节见技术方案与提交历史。
 
-## [Unreleased]
+## [0.2.1] - 2026-09-01
 
-### Added
+### 新增
 
-- 一键安装/更新：`curl -fsSL https://raw.githubusercontent.com/mrzturn/opencode-switchman/main/scripts/setup.sh | bash`（0.2.1 发布后也可 `npx -y opencode-switchman@latest update`）。更新器把 `plugin` 条目改写为最新精确版本并清理 opencode 插件缓存旧目录——opencode ≤1.18.x 会把裸包名 spec 钉死在首次安装的版本，裸名与 `@latest` 永不升级。
+- 新增 npm bin 入口：包内自带更新器 CLI——`npx -y opencode-switchman@latest`（或 `bunx opencode-switchman@latest`）首装、升级通吃，与一键脚本同一条幂等路径。更新器把 `plugin` 条目改写为最新精确版本并清理 opencode 插件缓存旧目录——opencode ≤1.18.x 会把裸包名 spec 钉死在首次安装的版本，裸名与 `@latest` 永不升级。
 
-### Changed
+### 修复
+
+- 更新器对缺失的 `tui.jsonc` 一律补建（create-if-missing），不再只在全新安装时创建——此前已有 opencode 配置但缺 tui 配置的机器升级时会被静默跳过，侧边栏不注册。
+
+### 变更
 
 - `/switchman-update` 改为调用随包更新器；旧的 `npm install opencode-switchman@latest` 方式写入的目录 opencode 实际并不加载。
 
