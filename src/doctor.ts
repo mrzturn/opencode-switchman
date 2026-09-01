@@ -9,7 +9,7 @@ import type { ConfigDiagnostic } from "./config"
 export interface DoctorInput {
   configPath: string; configText?: string; diagnostics?: ConfigDiagnostic[]; commandPath?: string; cliPath?: string
   env?: Record<string, string | undefined>; home?: string
-  legacy?: { quotaEnabled?: Partial<Record<"glm" | "copilot" | "deepseek", boolean>>; billingWindow?: boolean }
+  legacy?: { quotaEnabled?: Partial<Record<"glm" | "copilot" | "deepseek", boolean>>; billingWindow?: boolean; sections?: string[] }
 }
 export interface DoctorResult { diagnostics: ConfigDiagnostic[] }
 function suggestion(actual: string, expected: readonly string[]): string | undefined {
@@ -67,6 +67,8 @@ export function runDoctor(input: DoctorInput): DoctorResult {
   }
   if (input.legacy?.quotaEnabled && Object.keys(input.legacy.quotaEnabled).length) out.push({ code: "SWM042", level: "warn", path: "legacy.quota" })
   if (input.legacy?.billingWindow) out.push({ code: "SWM043", level: "warn", path: "legacy.billingWindow" })
+  // [2026-09-01]-[配置面统一：元组显式行为段提示迁移到 opencode-switchman.jsonc（兼容一代，显式值仍优先）]
+  for (const section of input.legacy?.sections ?? []) out.push({ code: "SWM044", level: "warn", path: `legacy.${section}`, hint: "opencode-switchman.jsonc" })
   if (value !== null) {
     const providers = (value as any)?.providers
     if (providers && typeof providers === "object" && PROVIDER_KEYS.some((key) => (providers as any)[key]?.enabled === true && (providers as any)[key]?.observe === false)) out.push({ code: "SWM040", level: "warn", path: "providers" })

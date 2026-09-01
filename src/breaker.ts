@@ -13,11 +13,45 @@ const NOT_FOUND_HINTS = ["not found", "not_found", "未找到", "无法找到"]
 export const REAL_FAIL_TTL_MS = 1_800_000
 // [2026-08-29]-[失败分类：瞬时 429 用短 TTL，区别于真失败长 TTL——避免限流误伤 30 分钟]
 export const RATE_LIMIT_TTL_MS = 600_000
+// [2026-09-01]-[endpoint 类配置层永久错误：30 分钟重试无意义，用 6h 长 TTL 隔离]
+export const ENDPOINT_TTL_MS = 21_600_000
 const realFailedCombos = new Map<string, number>()
 
 /** 探针成功而实调失败的短期内存隔离；重启自然清空。ttlMs 可选（限流用短 TTL）。 */
 export function markRealFailure(comboKey: string, now = Date.now(), ttlMs = REAL_FAIL_TTL_MS): void {
   if (comboKey) realFailedCombos.set(comboKey, now + ttlMs)
+}
+
+// [2026-09-01]-[可观测性：隔离事件此前纯内存零落盘——横幅报 down 却无审计痕迹；
+//  failures.log 追加 kind 标记条目（isolated/injection 不进熔断窗口计数）]
+export function recordIsolation(agent: string, comboKey: string, category: string, ttlMs: number, reasonRaw: string): void {
+  try {
+    const now = Date.now() / 1000
+    const mins = Math.round(ttlMs / 60_000)
+    const reason = `实调隔离(${mins}m·${category}): ${reasonRaw.split(/\s+/).join(" ")}`.slice(0, 200)
+    ensureStateDir()
+    appendFileSync(paths().failures, `${JSON.stringify({ agent, key: comboKey, shell: agent, combo: comboKey, reason, ts: now, kind: "isolated" })}\n`)
+    appendStatusLog(`${agent} 实调隔离 ${mins}m（${category}）：${reasonRaw.slice(0, 60)}`)
+  } catch { /* fail-open */ }
+}
+
+/** 壳未注册类（调度层失败）仅审计：写 log 供追溯，不隔离不熔断。 */
+export function recordInjection(agent: string, reasonRaw: string): void {
+  try {
+    const now = Date.now() / 1000
+    const reason = `壳未注入opencode（不隔离）: ${reasonRaw.split(/\s+/).join(" ")}`.slice(0, 200)
+    ensureStateDir()
+    appendFileSync(paths().failures, `${JSON.stringify({ agent, key: agent, shell: null, combo: null, reason, ts: now, kind: "injection" })}\n`)
+    appendStatusLog(`壳未注入opencode（不隔离）: ${agent} ${reasonRaw.slice(0, 60)}`)
+  } catch { /* fail-open */ }
+}
+
+/** 隔离剩余毫秒（横幅 TTL 展示用）；未隔离返回 null。 */
+export function realFailedRemainingMs(comboKey: string | undefined, now = Date.now()): number | null {
+  if (!comboKey) return null
+  realFailedComboKeys(now) // 惰性清过期
+  const exp = realFailedCombos.get(comboKey)
+  return exp !== undefined && exp > now ? exp - now : null
 }
 
 // ---- 模型退休（厂商无关：连续 404 类失败 → 永久移出候选，重启清空）----
@@ -104,6 +138,8 @@ function recentFailureCount(key: string, now: number): number {
       if (!line.trim()) continue
       try {
         const rec = JSON.parse(line)
+        // [2026-09-01]-[kind 条目（isolated/injection）仅审计，不进熔断窗口计数]
+        if (rec.kind) continue
         if ((rec.key === key || rec.agent === key) && now - Number(rec.ts ?? 0) <= FAIL_WINDOW) count++
       } catch { continue }
     }

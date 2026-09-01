@@ -1,6 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "properties": {"version":{"type":"integer"},"providers":{"type":"object","additionalProperties":{"$ref":"#/$defs/provider"},"properties":{"deepseek":{"$ref":"#/$defs/provider"},"zhipuai-coding-plan":{"$ref":"#/$defs/provider"},"github-copilot":{"$ref":"#/$defs/provider"}}},"extensions":{"type":"object"}},
-  "$defs":{"provider":{"type":"object","properties":{"enabled":{"type":"boolean"},"observe":{"type":"boolean"},"billing":{"type":"string","enum":["subscription","api"]},"peak":{"type":"object","properties":{"timezone":{"type":"string"},"ranges":{"type":"array","items":{"type":"object","properties":{"days":{"type":"array","items":{"type":"integer","minimum":1,"maximum":7}},"start":{"type":"string","pattern":"^([01]\\d|2[0-3]):[0-5]\\d$"},"end":{"type":"string","pattern":"^([01]\\d|2[0-3]):[0-5]\\d$"}}}}}}}}}
+  "properties": {"version":{"type":"integer"},"providers":{"type":"object","additionalProperties":{"$ref":"#/$defs/provider"},"properties":{"deepseek":{"$ref":"#/$defs/provider"},"zhipuai-coding-plan":{"$ref":"#/$defs/provider"},"github-copilot":{"$ref":"#/$defs/provider"}}},"quota":{"$ref":"#/$defs/quota"},"cost":{"$ref":"#/$defs/cost"},"capability":{"$ref":"#/$defs/capability"},"matrix":{"$ref":"#/$defs/matrix"},"banner":{"$ref":"#/$defs/banner"},"rules":{"$ref":"#/$defs/rules"},"lanes":{"$ref":"#/$defs/lanes"},"extensions":{"type":"object"}},
+  "$defs":{
+    "provider":{"type":"object","properties":{"enabled":{"type":"boolean"},"observe":{"type":"boolean"},"billing":{"type":"string","enum":["subscription","api"]},"peak":{"type":"object","properties":{"timezone":{"type":"string"},"ranges":{"type":"array","items":{"type":"object","properties":{"days":{"type":"array","items":{"type":"integer","minimum":1,"maximum":7}},"start":{"type":"string","pattern":"^([01]\\d|2[0-3]):[0-5]\\d$"},"end":{"type":"string","pattern":"^([01]\\d|2[0-3]):[0-5]\\d$"}}}}}}}},
+    "quota":{"type":"object","properties":{"glmFiveHourReservePct":{"type":"number","exclusiveMinimum":0,"maximum":100},"deepseekLowBalanceWarnCny":{"type":"number","minimum":0}}},
+    "cost":{"type":"object","properties":{"enabled":{"type":"boolean"}}},
+    "capability":{"type":"object","properties":{"enabled":{"type":"boolean"},"source":{"type":"string","enum":["auto","artificial-analysis","openrouter"]},"apiKey":{"type":"string"},"tierThresholds":{"oneOf":[{"type":"string","enum":["quantile"]},{"type":"object","properties":{"S":{"type":"number"},"A":{"type":"number"},"B":{"type":"number"}}}]},"lmarenaCheck":{"type":"boolean"}}},
+    "matrix":{"type":"object","properties":{"mode":{"type":"string","enum":["auto","app","tui","legacy"]},"watch":{"type":"boolean"}}},
+    "banner":{"type":"object","properties":{"enabled":{"type":"boolean"}}},
+    "rules":{"type":"object","properties":{"enabled":{"type":"boolean"}}},
+    "lanes":{"type":"object","additionalProperties":{"type":"array","items":{"type":"string"}}}
+  }
 }

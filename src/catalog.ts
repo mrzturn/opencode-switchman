@@ -10,7 +10,7 @@ import type { ShellManifestEntry } from "./types"
 import { poolForProviderId } from "./provider-config"
 
 export type Effort = string
-export interface EffortInfo { efforts: string[]; toggle: boolean; vision: boolean }
+export interface EffortInfo { efforts: string[]; toggle: boolean; vision: boolean; /** [2026-09-01]-[models.dev status=deprecated：已轮换下架（免费模型日更，旧 -free 会被标记弃用）] */ deprecated?: boolean }
 export interface ShellDefinition {
   name: string
   provider: string
@@ -98,6 +98,7 @@ export function parseModelsDevApi(data: Record<string, any>): Record<string, Eff
         efforts,
         toggle,
         vision: (m as any)?.attachment === true || modalIn.includes("image"),
+        ...( (m as any)?.status === "deprecated" ? { deprecated: true } : {} ),
       }
     }
   }
@@ -157,6 +158,28 @@ export function bundledModelIndex(): Record<string, EffortInfo> {
     out[key] = info
   }
   return out
+}
+
+// [2026-09-01]-[超集保底改源：opencode 自带免费模型（OpenCode Zen＝models.dev opencode provider）
+//  替代静态清单——免费模型随官方目录日更轮换，写死清单必然过期；免费判定＝id -free 后缀
+//  ∪ 特例集（big-pickle 等官方自研免费模型无后缀），且 status≠deprecated（已轮换下架的旧
+//  免费模型会标 deprecated，今日可用集通常只剩个位数）。走 loadCatalog 缓存（24h TTL＋stale 回退）。
+//  仅影响壳存在性保底，可派发性仍由激活面（配置面∪会话）与凭证门控决定]
+export const FLOOR_PROVIDER = "opencode" // OpenCode Zen
+/** 无 -free 后缀但免费的官方模型（随目录核对的特例集） */
+export const FLOOR_FREE_EXTRA = new Set(["big-pickle"])
+
+/** 从 models.dev 目录索引提取免费保底模型全键（provider/modelId） */
+export function freeFloorModels(index: Record<string, EffortInfo>): string[] {
+  const prefix = `${FLOOR_PROVIDER}/`
+  return Object.keys(index)
+    .filter((k) => k.startsWith(prefix))
+    .filter((k) => !index[k]?.deprecated)
+    .map((k) => k.slice(prefix.length))
+    .filter((mid) => mid.endsWith("-free") || FLOOR_FREE_EXTRA.has(mid))
+    .filter((mid) => isConversational(mid))
+    .map((mid) => `${FLOOR_PROVIDER}/${mid}`)
+    .sort()
 }
 
 // ---- 超集展开（模型 × 档位 → 壳定义）----

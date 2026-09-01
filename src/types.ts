@@ -268,11 +268,12 @@ export interface MatrixOptions {
       /** 监听 opencode state 目录变更重算（默认 true；激活变化对派发闸「下一请求生效」，非实时改写已发请求） */
   watch?: boolean
 }
+// [2026-09-01]-[配置面统一收敛到 opencode-switchman.jsonc：元组 options 降级为兼容 shim
+//  （显式配置优先一代并报 SWM044）；死字段 providers.*（凭证收集实际走 poolForProviderId）移除]
 export interface SwitchmanOptions {
   quota?: { glm?: GlmQuotaOptions; deepseek?: DeepseekQuotaOptions; copilot?: CopilotQuotaOptions }
   cost?: { enabled?: boolean }
   billingWindow?: BillingWindowConfig
-  providers?: { glm?: string[]; deepseek?: string[] }
   banner?: { enabled?: boolean }
   /** 调度员规程系统提示注入（随包内置；关闭后依赖用户自行安装 AGENTS.md） */
   rules?: { enabled?: boolean }

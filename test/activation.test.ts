@@ -10,7 +10,7 @@ process.env.SWITCHMAN_STATE = mkdtempSync(join(tmpdir(), "switchman-act-"))
 
 import { detectMode, parseDesktopModels, parseTuiFavorites, readConfigured, computeActivation, sameActivation, desktopDatPath, tuiModelPath, normalizeProviderListResponse } from "../src/activation"
 import type { ModelKey } from "../src/types"
-import { buildShells, stableHash, bundledModelIndex } from "../src/catalog"
+import { buildShells, stableHash, bundledModelIndex, freeFloorModels } from "../src/catalog"
 import type { ShellDefinition } from "../src/catalog"
 import { MatrixManager } from "../src/matrix-manager"
 import { INTERNAL_AGENTS } from "../src/matrix-manager"
@@ -395,6 +395,50 @@ describe("models.dev 缺元数据降级", () => {
     const key = Object.keys(idx)[0]!
     expect(idx[key].efforts.length).toBeGreaterThan(0)
     expect(idx[key].toggle).toBe(true) // 内置链含 off 档→可关思考
+  })
+  // [2026-09-01]-[保底改源：免费判定=OpenCode Zen（models.dev opencode provider）-free 后缀
+  //  ∪ big-pickle 特例（官方自研免费模型无后缀）；付费/他池/非对话排除]
+  test("freeFloorModels：opencode provider 下 -free 后缀＋big-pickle 特例", () => {
+    const idx: Record<string, { efforts: string[]; toggle: boolean; vision: boolean }> = {
+      "opencode/ling-3.0-flash-fin-free": { efforts: ["high"], toggle: false, vision: false },
+      "opencode/nemotron-3-ultra-free": { efforts: ["high"], toggle: false, vision: false },
+      "opencode/mimo-v2.5-free": { efforts: ["high"], toggle: false, vision: false },
+      "opencode/big-pickle": { efforts: ["high"], toggle: false, vision: false }, // 特例：无后缀但免费
+      "opencode/gpt-5.6-luna": { efforts: ["high"], toggle: false, vision: false }, // 同池付费
+      "opencode/muse-spark-1.2": { efforts: ["high"], toggle: false, vision: false }, // 同池付费（非 contributor-free）
+      "opencode/x-embedding-free": { efforts: [], toggle: false, vision: false }, // 不可对话
+      "zhipuai-coding-plan/glm-5.3": { efforts: ["high"], toggle: false, vision: false }, // 他池
+      "zenmux/z-ai/glm-4.7-flash-free": { efforts: ["high"], toggle: false, vision: false }, // 他服务
+    }
+    expect(freeFloorModels(idx)).toEqual([
+      "opencode/big-pickle",
+      "opencode/ling-3.0-flash-fin-free",
+      "opencode/mimo-v2.5-free",
+      "opencode/nemotron-3-ultra-free",
+    ])
+  })
+  test("freeFloorModels：空目录返回空数组（fail-open 回退静态清单路径）", () => {
+    expect(freeFloorModels({})).toEqual([])
+  })
+  // [2026-09-01]-[status=deprecated：已轮换下架的旧免费模型剔除——「今日可用」判定字段]
+  test("freeFloorModels：deprecated 旧免费模型剔除（今日可用集）", () => {
+    const idx: Record<string, { efforts: string[]; toggle: boolean; vision: boolean; deprecated?: boolean }> = {
+      "opencode/mimo-v2.5-free": { efforts: ["high"], toggle: false, vision: false }, // 今日可用
+      "opencode/big-pickle": { efforts: ["high"], toggle: false, vision: false }, // 今日可用（特例）
+      "opencode/deepseek-v4-flash-free": { efforts: ["high"], toggle: false, vision: false, deprecated: true }, // 已轮换
+      "opencode/ling-3.0-flash-free": { efforts: ["high"], toggle: false, vision: false, deprecated: true }, // 已轮换
+    }
+    expect(freeFloorModels(idx)).toEqual(["opencode/big-pickle", "opencode/mimo-v2.5-free"])
+  })
+  // [2026-09-01]-[保底主路径：OpenCode Zen 模型 id 无斜杠（mimo-v2.5-free 等）——首斜杠切 provider/modelId]
+  test("buildShells：免费保底模型展开正确", () => {
+    const defs = buildShells(["opencode/mimo-v2.5-free"], {
+      "opencode/mimo-v2.5-free": { efforts: ["high"], toggle: false, vision: false },
+    }, { roAliases: true, degradedFamilyByProvider: true, markDegraded: true })
+    expect(defs.length).toBe(2) // rw + -ro 别名
+    expect(defs[0]).toMatchObject({ provider: "opencode", modelId: "mimo-v2.5-free", effort: "high" })
+    expect(defs[0].name).toBe("zen-mx-mimo-high")
+    expect(defs[1].name).toBe("zen-mx-mimo-high-ro")
   })
 })
 

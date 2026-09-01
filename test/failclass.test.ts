@@ -1,6 +1,6 @@
 // 厂商无关失败分类层 + 模型退休 fixture（bun test）
 import { describe, test, expect, beforeAll } from "bun:test"
-import { mkdtempSync } from "node:fs"
+import { mkdtempSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -8,7 +8,8 @@ process.env.SWITCHMAN_STATE = mkdtempSync(join(tmpdir(), "switchman-fc-"))
 
 import { classifyFailure } from "../src/failclass"
 import {
-  REAL_FAIL_TTL_MS, RATE_LIMIT_TTL_MS, markRealFailure, isRealFailedCombo,
+  REAL_FAIL_TTL_MS, RATE_LIMIT_TTL_MS, ENDPOINT_TTL_MS, markRealFailure, isRealFailedCombo,
+  recordIsolation, recordInjection, recordFailure, realFailedRemainingMs,
   noteModelNotFound, isModelRetired, retiredModelKeys, filterRetiredShells,
 } from "../src/breaker"
 import { checkShell } from "../src/gates"
@@ -60,6 +61,16 @@ describe("失败分类 classifyFailure", () => {
   test("兜底 unknown", () => {
     expect(classifyFailure("some random gibberish")).toBe("unknown")
   })
+  // [2026-09-01]-[配置层失败分离：调度层（壳未注册）不毒化探针 ok 的模型；端点不兼容＝永久配置错误]
+  test("shell_injection：未注册壳名（调度层失败）", () => {
+    expect(classifyFailure("Unknown agent type: copilot-mx-x-high is not a valid agent type")).toBe("shell_injection")
+    expect(classifyFailure("Error: no such agent: foo")).toBe("shell_injection")
+  })
+  test("endpoint：端点/形态不兼容（永久配置错误）", () => {
+    expect(classifyFailure('model "m" is not accessible via the /chat/completions endpoint')).toBe("endpoint")
+    expect(classifyFailure("responses API does not support this model")).toBe("endpoint")
+    expect(classifyFailure("unsupported endpoint")).toBe("endpoint")
+  })
 })
 
 // ================= 2. rate_limit 短 TTL vs 默认长 TTL =================
@@ -75,6 +86,35 @@ describe("实调失败 TTL 分离", () => {
     expect(isRealFailedCombo("lf|combo", now + RATE_LIMIT_TTL_MS + 1)).toBe(true)
     // 过了长 TTL：两者都过期
     expect(isRealFailedCombo("lf|combo", now + REAL_FAIL_TTL_MS + 1)).toBe(false)
+  })
+  // [2026-09-01]-[endpoint 6h 长 TTL；剩余毫秒查询（横幅 TTL 展示）]
+  test("endpoint 长 TTL 与 realFailedRemainingMs", () => {
+    const now = Date.now()
+    markRealFailure("ep|combo", now, ENDPOINT_TTL_MS)
+    expect(isRealFailedCombo("ep|combo", now + REAL_FAIL_TTL_MS + 1)).toBe(true) // 30m 后仍在
+    expect(isRealFailedCombo("ep|combo", now + ENDPOINT_TTL_MS + 1)).toBe(false) // 6h 后过期
+    markRealFailure("rem|combo", now, 60_000)
+    expect(realFailedRemainingMs("rem|combo", now + 20_000)).toBe(40_000)
+    expect(realFailedRemainingMs("rem|combo", now + 61_000)).toBeNull()
+    expect(realFailedRemainingMs("absent", now)).toBeNull()
+  })
+  test("recordIsolation/recordInjection 落盘 kind 条目且不进熔断计数", () => {
+    recordIsolation("iso-agent", "p|iso-model|high", "endpoint", ENDPOINT_TTL_MS, "boom")
+    recordInjection("inj-agent", "Unknown agent type: inj-agent is not a valid agent type")
+    const lines = readFileSync(join(process.env.SWITCHMAN_STATE!, "failures.log"), "utf8").trim().split("\n")
+    const iso = JSON.parse(lines[lines.length - 2])
+    const inj = JSON.parse(lines[lines.length - 1])
+    expect(iso.kind).toBe("isolated")
+    expect(iso.key).toBe("p|iso-model|high")
+    expect(iso.reason).toContain("endpoint")
+    expect(inj.kind).toBe("injection")
+    // kind 条目不计入熔断窗口：同一 key 连续 2 条 isolated 后，1 次真实失败不触发熔断（阈值 2）
+    recordIsolation("cnt-agent", "cnt-key", "server", 600_000, "x")
+    recordIsolation("cnt-agent", "cnt-key", "server", 600_000, "x")
+    const rec = recordFailure("cnt-key", "real failure one", null)
+    expect(rec.tripped).toBe(false)
+    const rec2 = recordFailure("cnt-key", "real failure two", null)
+    expect(rec2.tripped).toBe(true) // 真实失败计 2 次才触发
   })
 })
 
@@ -155,5 +195,29 @@ describe("横幅退休标注", () => {
       matrixInfo: { mode: "desktop", configStatus: "ok", watch: true, retiredModels: 0 },
     })
     expect(lines[2]).not.toContain("已下线")
+  })
+  // [2026-09-01]-[down 来源标注：Map 形态逐名展示来源（熔断/实调隔离·剩余时长），Set/数组形态保持原样]
+  test("down Map 标注来源与剩余时长", () => {
+    const lines = buildBanner({
+      lanes: null,
+      down: new Map<string, string>([
+        ["github-copilot|gpt-5.6-luna|high", "实调隔离·剩12m"],
+        ["other-pool|some-model|low", "熔断"],
+      ]),
+      quota: { glm: null, copilot: null },
+      states: {}, billing: billingWindow(),
+    })
+    expect(lines[2]).toContain("github-copilot|gpt-5.6-luna|high（实调隔离·剩12m）")
+    expect(lines[2]).toContain("other-pool|some-model|low（熔断）")
+    expect(lines[2]).toContain("不可派发")
+  })
+  test("down 数组形态无标注（向后兼容）", () => {
+    const lines = buildBanner({
+      lanes: null, down: ["p|m|high"],
+      quota: { glm: null, copilot: null },
+      states: {}, billing: billingWindow(),
+    })
+    expect(lines[2]).toContain("p|m|high（不可派发")
+    expect(lines[2]).not.toContain("熔断")
   })
 })

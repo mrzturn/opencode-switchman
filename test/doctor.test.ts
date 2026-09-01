@@ -36,8 +36,9 @@ describe("switchman doctor", () => {
   })
   test("旧 options、observe 风险、状态与路径诊断", () => {
     writeFileSync(join(state, "routing.json"), "{bad")
-    const result = runDoctor({ configPath: path, configText: '{"providers":{"deepseek":{"enabled":true,"observe":false}}}', legacy: { quotaEnabled: { glm: true }, billingWindow: true }, env: { OPENCODE_CONFIG_DIR: "relative", XDG_CONFIG_HOME: "/xdg" } })
-    expect(result.diagnostics.map((d) => d.code)).toEqual(expect.arrayContaining(["SWM040", "SWM042", "SWM043", "SWM050", "SWM052"]))
+    const result = runDoctor({ configPath: path, configText: '{"providers":{"deepseek":{"enabled":true,"observe":false}}}', legacy: { quotaEnabled: { glm: true }, billingWindow: true, sections: ["cost", "lanes"] }, env: { OPENCODE_CONFIG_DIR: "relative", XDG_CONFIG_HOME: "/xdg" } })
+    expect(result.diagnostics.map((d) => d.code)).toEqual(expect.arrayContaining(["SWM040", "SWM042", "SWM043", "SWM044", "SWM050", "SWM052"]))
+    expect(result.diagnostics.filter((d) => d.code === "SWM044").map((d) => d.path)).toEqual(["legacy.cost", "legacy.lanes"])
     expect(() => runDoctor({ configPath: path, configText: "{}" })).not.toThrow()
     expect(codes("{}", { env: { OPENCODE_CONFIG_DIR: "relative" } })).toContain("SWM052")
     const dir = mkdtempSync(join(tmpdir(), "switchman-readonly-")); chmodSync(dir, 0o500)

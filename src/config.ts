@@ -3,13 +3,42 @@ import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { canonicalKeyOf, defaultProviderConfig, genericProviderDefaults, PROVIDER_KEYS, renderDefaultConfigJsonc, resolveProviderKey } from "./provider-config"
 import type { PeakRange, ProviderKey, ProviderUserConfig } from "./provider-config"
-import type { Pool, RoutePolicy } from "./types"
+import type { CapabilityTierThresholds, Lane, Pool, RoutePolicy, SwitchmanOptions } from "./types"
 
 export interface ConfigDiagnostic { code: string; level: "error" | "warn" | "info"; path?: string; hint?: string }
 // [2026-08-31]-[去厂商化：providers 开放化——任意 provider 键合法（opencode 官方/自定义），
 //  billing 显式配置驱动订阅系数；内置三键仅作出厂缺省与配额池映射]
-export interface UserConfig { version: number; providers: Record<string, ProviderUserConfig>; extensions: Record<string, unknown> }
+// [2026-09-01]-[配置面统一：行为段（quota 阈值/cost/capability/matrix/banner/rules/lanes）迁入本文件；
+//  plugin 元组同名 options 降级为兼容 shim（显式值优先一代，doctor 报 SWM044）]
+export interface UserQuotaConfig { glmFiveHourReservePct: number; deepseekLowBalanceWarnCny: number }
+export interface UserCapabilityConfig { enabled: boolean; source: "auto" | "artificial-analysis" | "openrouter"; apiKey?: string; tierThresholds?: CapabilityTierThresholds | "quantile"; lmarenaCheck: boolean }
+export interface UserMatrixConfig { mode: "auto" | "app" | "tui" | "legacy"; watch: boolean }
+export interface UserConfig {
+  version: number
+  providers: Record<string, ProviderUserConfig>
+  quota: UserQuotaConfig
+  cost: { enabled: boolean }
+  capability: UserCapabilityConfig
+  matrix: UserMatrixConfig
+  banner: { enabled: boolean }
+  rules: { enabled: boolean }
+  lanes: Partial<Record<Lane, string[]>>
+  extensions: Record<string, unknown>
+}
 export interface LoadedUserConfig { path: string; config: UserConfig; diagnostics: ConfigDiagnostic[]; generated: boolean }
+
+/** 行为段出厂缺省（fillMissing 基线；类型坏值才回退并报 SWM037） */
+export function defaultBehaviorConfig(): Pick<UserConfig, "quota" | "cost" | "capability" | "matrix" | "banner" | "rules" | "lanes"> {
+  return {
+    quota: { glmFiveHourReservePct: 90, deepseekLowBalanceWarnCny: 10 },
+    cost: { enabled: true },
+    capability: { enabled: true, source: "auto", lmarenaCheck: false },
+    matrix: { mode: "auto", watch: true },
+    banner: { enabled: true },
+    rules: { enabled: true },
+    lanes: {},
+  }
+}
 
 export function resolveOpencodeConfigDir(env: Record<string, string | undefined> = process.env, home = homedir()): string {
   if (env.OPENCODE_CONFIG_DIR) return env.OPENCODE_CONFIG_DIR
@@ -81,7 +110,7 @@ function rangeDiagnostic(v: unknown): string | null {
   return null
 }
 export function validateUserConfig(value: unknown): { config: UserConfig; diagnostics: ConfigDiagnostic[] } {
-  const defaults = { version: 1, providers: defaultProviderConfig(), extensions: {} as Record<string, unknown> }
+  const defaults = { version: 1, providers: defaultProviderConfig(), extensions: {} as Record<string, unknown>, ...structuredClone(defaultBehaviorConfig()) }
   const filled = plain(fillMissing(value, defaults)) ? fillMissing(value, defaults) : structuredClone(defaults); const ds: ConfigDiagnostic[] = []
   if (!plain(filled.providers)) filled.providers = structuredClone(defaults.providers)
   // [2026-08-31]-[去厂商化：逐键校验扩展到任意 provider 键；内置键用规格缺省，自定义键用通用缺省（billing 默认 api）。
@@ -105,6 +134,23 @@ export function validateUserConfig(value: unknown): { config: UserConfig; diagno
       const code = rangeDiagnostic(p.peak.ranges)
       if (code) { ds.push({ code, level: "error", path: `providers.${key}.peak.ranges` }); p.peak.ranges = structuredClone(def.peak.ranges) }
     }
+  }
+  // [2026-09-01]-[行为段轻校验：类型坏值→SWM037 回退缺省；fillMissing 已补缺省，此处只兜坏值]
+  const bad = (path: string, fix: () => void) => { ds.push({ code: "SWM037", level: "error", path }); fix() }
+  const q = filled.quota
+  if (typeof q.glmFiveHourReservePct !== "number" || !(q.glmFiveHourReservePct > 0 && q.glmFiveHourReservePct <= 100)) bad("quota.glmFiveHourReservePct", () => { q.glmFiveHourReservePct = defaults.quota.glmFiveHourReservePct })
+  if (typeof q.deepseekLowBalanceWarnCny !== "number" || q.deepseekLowBalanceWarnCny < 0) bad("quota.deepseekLowBalanceWarnCny", () => { q.deepseekLowBalanceWarnCny = defaults.quota.deepseekLowBalanceWarnCny })
+  for (const [section, field] of [["cost", "enabled"], ["banner", "enabled"], ["rules", "enabled"], ["matrix", "watch"], ["capability", "enabled"], ["capability", "lmarenaCheck"]] as const) {
+    if (typeof (filled[section] as any)[field] !== "boolean") bad(`${section}.${field}`, () => { (filled[section] as any)[field] = (defaults[section] as any)[field] })
+  }
+  if (!["auto", "app", "tui", "legacy"].includes(filled.matrix.mode)) bad("matrix.mode", () => { filled.matrix.mode = defaults.matrix.mode })
+  if (!["auto", "artificial-analysis", "openrouter"].includes(filled.capability.source)) bad("capability.source", () => { filled.capability.source = defaults.capability.source })
+  if (filled.capability.apiKey !== undefined && typeof filled.capability.apiKey !== "string") bad("capability.apiKey", () => { filled.capability.apiKey = undefined })
+  // lanes：每条值须为 string[]；单条坏值只回退该 lane（其余保留）
+  if (!plain(filled.lanes)) bad("lanes", () => { filled.lanes = structuredClone(defaults.lanes) })
+  else for (const lane of Object.keys(filled.lanes) as Lane[]) {
+    const v = filled.lanes[lane]
+    if (!Array.isArray(v) || !v.every((x) => typeof x === "string")) bad(`lanes.${lane}`, () => { delete filled.lanes[lane] })
   }
   if (!Number.isInteger(filled.version)) { ds.push({ code: "SWM010", level: "warn", path: "version" }); filled.version = 1 }
   return { config: filled as UserConfig, diagnostics: ds }
@@ -131,6 +177,43 @@ export function loadUserConfig(ctx: { env?: Record<string, string | undefined>; 
   }
   const checked = validateUserConfig(raw); diagnostics.push(...checked.diagnostics)
   return { path, config: checked.config, diagnostics, generated: diagnostics.some((d) => d.code === "SWM002") }
+}
+
+/** [2026-09-01]-[有效 options 合成：jsonc 行为段为基线，plugin 元组显式键覆盖（兼容一代，doctor 报 SWM044）；
+ *  quota.*.enabled / billingWindow 维持既有 SWM042/043 口径，不在此清点 */
+export function resolveEffectiveOptions(raw: unknown, cfg: UserConfig): { options: SwitchmanOptions; legacySections: string[] } {
+  const o = (raw ?? {}) as SwitchmanOptions
+  const has = (obj: unknown, key: string) => plain(obj) && Object.prototype.hasOwnProperty.call(obj, key)
+  const legacySections: string[] = []
+  const num = (v: unknown): number | undefined => typeof v === "number" && Number.isFinite(v) ? v : undefined
+  const glmReserve = num(o.quota?.glm?.fiveHourReservePct)
+  const dsWarn = num(o.quota?.deepseek?.lowBalanceWarnCny)
+  if (glmReserve !== undefined || dsWarn !== undefined) legacySections.push("quota")
+  const options: SwitchmanOptions = {
+    quota: {
+      glm: { enabled: o.quota?.glm?.enabled ?? true, fiveHourReservePct: glmReserve ?? cfg.quota.glmFiveHourReservePct },
+      deepseek: { enabled: o.quota?.deepseek?.enabled ?? true, lowBalanceWarnCny: dsWarn ?? cfg.quota.deepseekLowBalanceWarnCny },
+      copilot: { enabled: o.quota?.copilot?.enabled ?? true },
+    },
+    cost: { enabled: has(o.cost, "enabled") ? o.cost!.enabled! : cfg.cost.enabled },
+    billingWindow: o.billingWindow,
+    banner: { enabled: has(o.banner, "enabled") ? o.banner!.enabled! : cfg.banner.enabled },
+    rules: { enabled: has(o.rules, "enabled") ? o.rules!.enabled! : cfg.rules.enabled },
+    lanes: has(o, "lanes") ? o.lanes : cfg.lanes,
+    matrix: {
+      mode: has(o.matrix, "mode") ? o.matrix!.mode! : cfg.matrix.mode,
+      watch: has(o.matrix, "watch") ? o.matrix!.watch! : cfg.matrix.watch,
+    },
+    capability: {
+      enabled: has(o.capability, "enabled") ? o.capability!.enabled! : cfg.capability.enabled,
+      source: has(o.capability, "source") ? o.capability!.source! : cfg.capability.source,
+      apiKey: has(o.capability, "apiKey") ? o.capability!.apiKey : cfg.capability.apiKey,
+      tierThresholds: has(o.capability, "tierThresholds") ? o.capability!.tierThresholds : cfg.capability.tierThresholds,
+      lmarenaCheck: has(o.capability, "lmarenaCheck") ? o.capability!.lmarenaCheck! : cfg.capability.lmarenaCheck,
+    },
+  }
+  for (const section of ["cost", "banner", "rules", "lanes", "matrix", "capability"] as const) if (has(o, section)) legacySections.push(section)
+  return { options, legacySections }
 }
 export function routePolicy(config: UserConfig, legacy?: Partial<Record<Pool, boolean>>): RoutePolicy {
   const out: RoutePolicy = Object.create(null)

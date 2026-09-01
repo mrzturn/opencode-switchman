@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { evaluatePeakSchedules, loadUserConfig, parseJsonc, resolveOpencodeConfigDir, routePolicy, validateUserConfig, providerEntry, billingOfProvider, providerPeakActive, routingPeakActive } from "../src/config"
+import { evaluatePeakSchedules, loadUserConfig, parseJsonc, resolveOpencodeConfigDir, resolveEffectiveOptions, routePolicy, validateUserConfig, providerEntry, billingOfProvider, providerPeakActive, routingPeakActive } from "../src/config"
 import { defaultProviderConfig, poolForProviderId, providerKeyForPool } from "../src/provider-config"
 import { checkShell } from "../src/gates"
 import { computeLane, routingAdvice } from "../src/lane"
@@ -145,5 +145,58 @@ describe("用户水位配置", () => {
     expect(providerEntry(config, "zhipuai-coding-plan").enabled).toBe(true)
     expect(billingOfProvider(config, "zhipuai-coding-plan")).toBe("api")
     expect(billingOfProvider(config, "glm-coding-plan-cn")).toBe("subscription")
+  })
+})
+
+describe("行为段统一配置面 [2026-09-01]", () => {
+  test("行为段缺省内存补齐（quota/cost/capability/matrix/banner/rules/lanes）", () => {
+    const r = validateUserConfig(configOf())
+    expect(r.config.quota).toEqual({ glmFiveHourReservePct: 90, deepseekLowBalanceWarnCny: 10 })
+    expect(r.config.cost.enabled).toBe(true)
+    expect(r.config.capability).toEqual({ enabled: true, source: "auto", lmarenaCheck: false })
+    expect(r.config.matrix).toEqual({ mode: "auto", watch: true })
+    expect(r.config.banner.enabled).toBe(true); expect(r.config.rules.enabled).toBe(true); expect(r.config.lanes).toEqual({})
+    expect(r.diagnostics.filter((d) => d.code === "SWM037")).toEqual([])
+  })
+  test("行为段显式值保留；类型坏值回退缺省并报 SWM037", () => {
+    const r = validateUserConfig(configOf({
+      quota: { glmFiveHourReservePct: 80, deepseekLowBalanceWarnCny: 5 },
+      matrix: { mode: "legacy" as any, watch: false },
+      banner: { enabled: false },
+      lanes: { main: ["a", "b"], hard: 3 as any },
+      capability: { apiKey: 42 as any },
+    }))
+    expect(r.config.quota.glmFiveHourReservePct).toBe(80); expect(r.config.quota.deepseekLowBalanceWarnCny).toBe(5)
+    expect(r.config.matrix.mode).toBe("legacy"); expect(r.config.matrix.watch).toBe(false)
+    expect(r.config.banner.enabled).toBe(false)
+    expect(r.config.lanes).toEqual({ main: ["a", "b"] }) // 单条坏 lane 只回退该条
+    expect(r.config.capability.apiKey).toBeUndefined()
+    expect(r.diagnostics.filter((d) => d.code === "SWM037").map((d) => d.path)).toEqual(expect.arrayContaining(["lanes.hard", "capability.apiKey"]))
+    const bad = validateUserConfig(configOf({ quota: { glmFiveHourReservePct: 101 }, matrix: { mode: "nope" as any } }))
+    expect(bad.config.quota.glmFiveHourReservePct).toBe(90); expect(bad.config.matrix.mode).toBe("auto")
+    expect(bad.diagnostics.filter((d) => d.code === "SWM037").map((d) => d.path)).toEqual(expect.arrayContaining(["quota.glmFiveHourReservePct", "matrix.mode"]))
+  })
+  test("resolveEffectiveOptions：jsonc 为基线，元组显式键覆盖并清点 legacySections", () => {
+    const cfg = validateUserConfig(configOf({ quota: { glmFiveHourReservePct: 70, deepseekLowBalanceWarnCny: 3 }, lanes: { main: ["jsonc-lane"] }, matrix: { mode: "legacy", watch: false }, banner: { enabled: false } })).config
+    const none = resolveEffectiveOptions(undefined, cfg)
+    expect(none.options.quota!.glm!.fiveHourReservePct).toBe(70)
+    expect(none.options.quota!.deepseek!.lowBalanceWarnCny).toBe(3)
+    expect(none.options.lanes).toEqual({ main: ["jsonc-lane"] })
+    expect(none.options.matrix!.mode).toBe("legacy"); expect(none.options.matrix!.watch).toBe(false)
+    expect(none.options.banner!.enabled).toBe(false)
+    expect(none.legacySections).toEqual([])
+    const legacy = resolveEffectiveOptions({ quota: { glm: { fiveHourReservePct: 50 } }, lanes: { main: ["tuple-lane"] } }, cfg)
+    expect(legacy.options.quota!.glm!.fiveHourReservePct).toBe(50) // 元组显式优先（兼容一代）
+    expect(legacy.options.quota!.deepseek!.lowBalanceWarnCny).toBe(3) // 未显式走 jsonc
+    expect(legacy.options.lanes).toEqual({ main: ["tuple-lane"] })
+    expect(legacy.legacySections).toEqual(expect.arrayContaining(["quota", "lanes"]))
+  })
+  test("生成模板包含行为段中文注释且可直接解析校验", () => {
+    const home = sandbox(); const loaded = load(home)
+    const body = readFileSync(loaded.path, "utf8")
+    for (const key of ['"quota"', '"cost"', '"capability"', '"matrix"', '"banner"', '"rules"', '"lanes"']) expect(body).toContain(key)
+    const parsed = parseJsonc(body)
+    expect("value" in parsed).toBe(true)
+    if ("value" in parsed) { const v = validateUserConfig(parsed.value); expect(v.diagnostics.filter((d) => d.level === "error")).toEqual([]) }
   })
 })

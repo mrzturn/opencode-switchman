@@ -35,15 +35,7 @@ Add to your opencode config (`~/.config/opencode/opencode.json` or project `open
 
 opencode installs and loads the npm package automatically via Bun at startup, no other steps needed.
 
-Use the tuple form to pass options:
-
-```json
-{
-  "plugin": [
-    ["opencode-switchman", { "billingWindow": { "glmPeakHours": [14, 18] } }]
-  ]
-}
-```
+> **Nothing else goes into your opencode config**: all plugin configuration (water levels, billing, peaks, thresholds, banner, matrix, custom lanes, etc.) lives in the standalone `opencode-switchman.jsonc` file (see below) — auto-generated on first start with inline comments. The legacy tuple-options form (`["opencode-switchman", {...}]`) is deprecated and kept compatible for one release (explicit values still win; `/switchman-doctor` flags them as SWM044 and suggests migrating).
 
 ### Option 2: from source
 
@@ -72,9 +64,13 @@ The plugin loads the repo's `dist` bundle directly; after `git pull`, re-run `bu
 
 > **Upgrading from the pre-rename plugin (switchman.js)**: delete the old `~/.config/opencode/plugins/switchman.js` to avoid double injection. The state directory has moved to `~/.config/opencode/opencode-switchman/` (the old one can be removed; all state self-heals).
 
-### Provider water-level configuration
+### Configuration: opencode-switchman.jsonc
 
-On first startup Switchman creates `opencode-switchman.jsonc` in the OpenCode config directory (`OPENCODE_CONFIG_DIR`, then `$XDG_CONFIG_HOME/opencode`, then `~/.config/opencode`). It ships with the stable provider keys `deepseek`, `zhipuai-coding-plan`, and `github-copilot` (matching OpenCode's own official provider IDs), but **any opencode official or custom provider key is legal** — unknown keys are treated as custom providers (routed with generic defaults; near-miss spellings of the built-in keys get a doctor warning). `observe` controls quota lookup/banner display; `enabled` independently opts a provider into routing water-level, peak, and exhaustion rules (both default to `true`/`false` respectively). `billing` declares the cost structure — `subscription` (score boost 1.0) or `api` (0.85, sinks within its capability tier); it is the only source of billing priority (never inferred from models.dev or auth). Peak ranges use ISO weekdays (`1`–`7`) and `[start,end)` `HH:mm` ranges; defaults are GLM weekdays 14:00–18:00 and DeepSeek weekdays 09:00–12:00 plus 14:00–18:00. Run `/switchman-doctor` for a local, credential-free diagnostic report.
+**Apart from the plugin registration itself (the `plugin` array in your opencode config), every plugin setting lives in the standalone `opencode-switchman.jsonc`** — auto-created on first startup in the OpenCode config directory (`OPENCODE_CONFIG_DIR`, then `$XDG_CONFIG_HOME/opencode`, then `~/.config/opencode`) with a `$schema` for editor hints and per-key comments; invalid values fail open to defaults. Edit the file and re-run config (or restart opencode) to apply; `/switchman-doctor` produces a local, credential-free diagnostic report.
+
+**providers — per-provider policy**: it ships with the stable provider keys `deepseek`, `zhipuai-coding-plan`, and `github-copilot` (matching OpenCode's own official provider IDs), but **any opencode official or custom provider key is legal** — unknown keys are treated as custom providers (routed with generic defaults; near-miss spellings of the built-in keys get a doctor warning). `observe` controls quota lookup/banner display; `enabled` independently opts a provider into routing water-level, peak, and exhaustion rules (both default to `true`/`false` respectively). `billing` declares the cost structure — `subscription` (score boost 1.0) or `api` (0.85, sinks within its capability tier); it is the only source of billing priority (never inferred from models.dev or auth). `peak` ranges use ISO weekdays (`1`–`7`) and `[start,end)` `HH:mm` ranges; defaults are GLM weekdays 14:00–18:00 and DeepSeek weekdays 09:00–12:00 plus 14:00–18:00.
+
+**Behavior sections** (`quota` / `cost` / `capability` / `matrix` / `banner` / `rules` / `lanes`): see the Options table below — same file, nowhere else.
 
 ### Verify the installation
 
@@ -101,21 +97,21 @@ Since TUI plugins have no directory auto-discovery, add the same package spec to
 }
 ```
 
-### Options
+### Options (opencode-switchman.jsonc)
 
-| Option | Default | Description |
+| Key | Default | Description |
 |---|---|---|
-| `quota.glm / quota.deepseek / quota.copilot.enabled` | `true` | Deprecated → migrate to `opencode-switchman.jsonc`; explicit use emits SWM042 |
-| `quota.glm.fiveHourReservePct` | `90` | GLM 5-hour window reserve water level (%): hard-block GLM shells once reached (avoid 429); weekly still only blocks at 100% |
-| `quota.deepseek.lowBalanceWarnCny` | `10` | DeepSeek balance warning threshold (CNY): banner [水位] warns below it (warning only, no hard block) |
+| `providers.<id>.enabled / observe / billing / peak` | `false / true / factory / factory` | Provider policy: routing participation, quota observation, cost structure (subscription=1.0 / api=0.85), peak windows (see above) |
+| `quota.glmFiveHourReservePct` | `90` | GLM 5-hour window reserve water level (%): hard-block GLM shells once reached (avoid 429); weekly still only blocks at 100% |
+| `quota.deepseekLowBalanceWarnCny` | `10` | DeepSeek balance warning threshold (CNY): the banner water-level line warns below it (warning only, no hard block, pay-as-you-go) |
 | `cost.enabled` | `true` | models.dev pricing snapshot as one coefficient in weighted model scoring |
-| `billingWindow.glmPeakHours / dsPeakRanges` | GLM weekdays 14–18 | Deprecated → migrate to `opencode-switchman.jsonc`; explicit use emits SWM043 |
-| `providers.glm / providers.deepseek` | `["zhipuai-coding-plan","glm","zai"]` / `["deepseek"]` | Provider-id lists per pool (for credential collection) |
-| `matrix.mode` | `auto` | Dynamic activation mode: `auto` by host (desktop = visible models / CLI/TUI = favorites), `app`/`tui` force a mode, `legacy` restores the static matrix |
-| `matrix.watch` | `true` | Bidirectionally sync desktop visible models and TUI favorites; any surface change recomputes the active matrix and triggers a full probe refresh |
+| `capability.enabled / source / apiKey / tierThresholds / lmarenaCheck` | `true / auto / – / built-in quantile / false` | Dynamic capability tiers: `auto` = Artificial Analysis first when apiKey present, otherwise OpenRouter; key may also come from `ARTIFICIAL_ANALYSIS_API_KEY` env |
+| `matrix.mode / watch` | `auto / true` | Activation matrix: `auto` by host (desktop = visible models / CLI/TUI = favorites), `app`/`tui` force a mode, `legacy` restores the static matrix; `watch` recomputes and fully refreshes probes on surface changes (mode/watch are startup-level; restart to apply) |
 | `banner.enabled` | `true` | Four-line banner injection |
 | `rules.enabled` | `true` | Bundled dispatcher rules (AGENTS.md) injection |
-| `lanes` | built-in chains | Custom per-lane shell chains (override built-in preference order) |
+| `lanes` | built-in chains | Custom per-lane shell chains (override built-in preference order); keys = economy/mechanical/main/hard/vision/review |
+
+> **Migrating legacy tuple options**: `quota.*.enabled` → `providers.<id>.observe` (SWM042), `billingWindow.*` → `providers.<id>.peak` (SWM043), and the remaining behavior sections (`quota` thresholds / `cost` / `capability` / `matrix` / `banner` / `rules` / `lanes`) → same-named jsonc sections (SWM044); `providers.glm/deepseek` (credential-collection lists) never took effect and have been removed. Explicit tuple values stay honored for one compatibility release, then will be dropped.
 
 ## Dynamic Activation Matrix
 
@@ -233,7 +229,9 @@ ROUTE_META {"lane":"main","role":"programmer","producer_family":"glm","capabilit
 
 By default (`matrix.mode=auto`) the matrix is built at runtime: desktop visible models and TUI favorites synchronize automatically, session models fill the gap, and any surface change triggers a full probe recomputation — zero upkeep. Temporary model outages self-heal via probes (10-minute background refresh, automatic degradation/breaking), while repeated 404s retire vanished models until the surface changes again.
 
-The bundled static matrix serves only `legacy` mode and runtime metadata fallback. To customize that legacy surface:
+The superset floor is **opencode's built-in free models** (OpenCode Zen: models under the models.dev `opencode` provider with the `-free` suffix plus the `big-pickle` exception, excluding those marked `status=deprecated` — i.e. the "available today" set), rolling with the catalog every 24h — no manual upkeep. If the catalog is unreachable (offline cold start), it fail-opens back to the bundled static list.
+
+The bundled static matrix serves only `legacy` mode and the offline fallback. To customize that legacy surface:
 
 ```bash
 # 1. Sync the authoritative enabled surface (models visible in opencode model management, one provider/model-id per line)

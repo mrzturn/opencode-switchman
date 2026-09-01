@@ -29,12 +29,13 @@ import { refreshMatrixIfStale, refreshActiveMatrixIfStale, probeKeys } from "./p
 import { injectShells, injectShellDefs } from "./shells"
 import { buildBanner } from "./banner"
 import { refreshSelfUpdate, updateBannerText, ensureUpdateCommands, detectLoadMode } from "./selfupdate"
-import { billingOfProvider, loadUserConfig, routingPeakActive, routePolicy } from "./config"
+import { billingOfProvider, loadUserConfig, resolveEffectiveOptions, routingPeakActive, routePolicy } from "./config"
 import { poolForProviderId } from "./provider-config"
 import { runDoctor } from "./doctor"
 import {
   recordFailure, cleanRoutingExpired, markRealFailure, realFailedComboKeys,
-  REAL_FAIL_TTL_MS, RATE_LIMIT_TTL_MS, noteModelNotFound, retiredModelKeys, filterRetiredShells,
+  RATE_LIMIT_TTL_MS, ENDPOINT_TTL_MS, REAL_FAIL_TTL_MS, recordIsolation, recordInjection, realFailedRemainingMs,
+  noteModelNotFound, retiredModelKeys, filterRetiredShells,
 } from "./breaker"
 import { classifyFailure } from "./failclass"
 import { LANE_ORDER } from "./types"
@@ -48,43 +49,9 @@ import { MatrixManager } from "./matrix-manager"
 import { syncIfDiverged } from "./sync"
 import { laneBaseChain } from "./lane-policy"
 import {
-  buildShells, loadCatalog, bundledModelIndex, isConversational, toManifestEntry,
+  buildShells, loadCatalog, bundledModelIndex, isConversational, toManifestEntry, freeFloorModels,
 } from "./catalog"
 import type { ShellDefinition, EffortInfo } from "./catalog"
-
-function normalizeOptions(raw: unknown): SwitchmanOptions {
-  const o = (raw ?? {}) as SwitchmanOptions
-  return {
-    quota: {
-      glm: {
-        enabled: o.quota?.glm?.enabled ?? true,
-        fiveHourReservePct: o.quota?.glm?.fiveHourReservePct ?? 90,
-      },
-      deepseek: {
-        enabled: o.quota?.deepseek?.enabled ?? true,
-        lowBalanceWarnCny: o.quota?.deepseek?.lowBalanceWarnCny ?? 10,
-      },
-      copilot: { enabled: o.quota?.copilot?.enabled ?? true },
-    },
-    cost: { enabled: o.cost?.enabled ?? true },
-    billingWindow: o.billingWindow,
-    providers: { glm: o.providers?.glm ?? ["zhipuai-coding-plan", "glm", "zai"], deepseek: o.providers?.deepseek ?? ["deepseek"] },
-    banner: { enabled: o.banner?.enabled ?? true },
-    rules: { enabled: o.rules?.enabled ?? true },
-    lanes: o.lanes,
-    // [2026-08-29]-[动态矩阵：mode 默认 auto（OPENCODE_CLIENT 判定）；legacy=静态 shells.json 原路径。
-    // 激活面变化对派发闸「下一请求生效」（watch/切模即时重算，但已发出的请求不受影响）]
-    matrix: { mode: o.matrix?.mode ?? "auto", watch: o.matrix?.watch ?? true },
-    // [2026-08-31]-[动态能力分级默认开启：无 key 走 OpenRouter 公开源；失败 fail-open 回退策展表]
-    capability: {
-      enabled: o.capability?.enabled ?? true,
-      source: o.capability?.source ?? "auto",
-      apiKey: o.capability?.apiKey,
-      tierThresholds: o.capability?.tierThresholds,
-      lmarenaCheck: o.capability?.lmarenaCheck ?? false,
-    },
-  }
-}
 
 /** opencode state 根（desktop 设 XDG_STATE_HOME=userData；CLI=xdg-basedir 默认 ~/.local/state） */
 function resolveOpencodeStateRoot(): string {
@@ -103,7 +70,6 @@ interface Credentials { glmKey?: string; dsKey?: string; copilotToken?: string; 
 
 export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   const raw = rawOptions ?? {}
-  const options = normalizeOptions(raw)
   // 老 options 只在显式存在时覆盖新文件 observe，避免默认值反向覆盖用户配置。
   const rawQuota = (raw as any).quota
   const legacyObserve: Partial<Record<Pool, boolean>> = {}
@@ -111,6 +77,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     if (rawQuota?.[pool] && Object.prototype.hasOwnProperty.call(rawQuota[pool], "enabled")) legacyObserve[pool] = Boolean(rawQuota[pool].enabled)
   }
   let userConfig = loadUserConfig()
+  // [2026-09-01]-[配置面统一：jsonc 行为段为基线合成有效 options（元组显式键兼容一代优先）；
+  //  config 钩子重载 jsonc 后重建，横幅/阈值/lanes 即时生效（mode/watch 为启动级，重启生效）]
+  let { options, legacySections } = resolveEffectiveOptions(raw, userConfig.config)
   let policy = routePolicy(userConfig.config, legacyObserve)
   // [2026-08-31]-[去厂商化：billing/peak 系数解析器——只读用户 jsonc（任意 provider 键），
   //  subscription 显式声明才享 1.0，其余 api 0.85；闭包读最新 userConfig（config 钩子重载后生效）
@@ -203,6 +172,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   async function collectProviderModels(
     input: { client?: { provider?: { list?: () => Promise<unknown> } } },
     cfg: Record<string, any>,
+    attempt = 0,
   ): Promise<{ models: string[]; providers: string[] }> {
     try {
       const resp = await withTimeout(Promise.resolve(input?.client?.provider?.list?.()), 8_000)
@@ -226,6 +196,13 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       if (providers.length === 0 && !Array.isArray(resp)) throw new Error("provider.list 响应形状不可识别")
       return { models, providers: providerIds }
     } catch (exc) {
+      // [2026-09-01]-[P3 启动竞态：provider.list 在 opencode 启动早期未就绪（8s 超时）——延迟 2.5s 重试一次，
+      //  仍败才回退 cfg.provider 键集（restartRequired 基线失真的主因）]
+      if (attempt === 0) {
+        appendStatusLog(`provider.list 未就绪，2.5s 后重试: ${exc}`)
+        await new Promise((r) => setTimeout(r, 2_500))
+        return collectProviderModels(input, cfg, 1)
+      }
       // 回退：cfg.provider 键集（仅 providerID，供 restartRequired 基线；模型面由配置面/内置链兜底）
       const keys = Object.keys(cfg.provider ?? {})
       appendStatusLog(`provider.list 不可用（回退 cfg.provider 键集 ${keys.length} 个）: ${exc}`)
@@ -387,7 +364,13 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
            })
          } catch { /* 单档失败不影响其余档 */ }
        }
-      const down = new Set(Object.keys(routingWithRealFailures(ctx.routing).down_agents))
+       // [2026-09-01]-[down 来源标注：熔断（routing.json 600s）与实调隔离（内存 TTL）分开展示剩余时长]
+       const down = new Map<string, string>()
+       for (const k of Object.keys(routingWithRealFailures(ctx.routing).down_agents)) down.set(k, "熔断")
+       for (const k of realFailedComboKeys()) {
+         const left = realFailedRemainingMs(k)
+         down.set(k, left !== null ? `实调隔离·剩${Math.max(1, Math.round(left / 60_000))}m` : "实调隔离")
+       }
       // [2026-08-29]-[动态矩阵：[路由] 只显示激活候选；[限制] 追加 模式/watch/configStatus/restartRequired/降级标注]
       const matrixInfo = dynamic && manager ? {
         mode: runMode, configStatus: manager.snapshot().configStatus,
@@ -478,9 +461,11 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     config: async (cfg: Record<string, any>) => {
       try {
         // [2026-08-31]-[配置钩子首步装载用户水位配置；路由快照本启动内一致]-[fail-open]
+        // [2026-09-01]-[jsonc 重载即重建有效 options：阈值/lanes/banner/rules 对后续请求生效]
         userConfig = loadUserConfig()
+        ;({ options, legacySections } = resolveEffectiveOptions(raw, userConfig.config))
         policy = routePolicy(userConfig.config, legacyObserve)
-        const doctor = runDoctor({ configPath: userConfig.path, diagnostics: userConfig.diagnostics, env: process.env, legacy: { quotaEnabled: legacyObserve, billingWindow: Object.prototype.hasOwnProperty.call(raw, "billingWindow") } })
+        const doctor = runDoctor({ configPath: userConfig.path, diagnostics: userConfig.diagnostics, env: process.env, legacy: { quotaEnabled: legacyObserve, billingWindow: Object.prototype.hasOwnProperty.call(raw, "billingWindow"), sections: legacySections } })
         const errors = doctor.diagnostics.filter((d) => d.level === "error").length
         const warns = doctor.diagnostics.filter((d) => d.level === "warn").length
         doctorSummary = errors || warns ? `doctor: ${errors} error / ${warns} warn` : null
@@ -502,15 +487,22 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           return
         }
         // [2026-08-29]-[超集注入：config 一次（cfg.agent 运行期不可变）→运行期激活门控]
-        // 超集=配置面 ∪ 有凭证 provider 全部可对话模型 ∪ 内置链引用模型；排除 embedding 类
+        // 超集=配置面 ∪ 有凭证 provider 全部可对话模型 ∪ 保底模型；排除 embedding 类
         const stateRoot = resolveOpencodeStateRoot()
         const configured = readConfiguredSafe(stateRoot, runMode)
         const providerModels = await collectProviderModels(input, cfg)
-        const builtinModels = [...new Set(loadManifest().shells.map((s) => `${s.provider}/${s.modelId}`))]
-        const supersetModels = [...new Set([...configured.models, ...providerModels.models, ...builtinModels])]
+        const catalog = await loadCatalog().catch(() => ({ index: {}, status: "none" as const, etag: null }))
+        // [2026-09-01]-[保底改源：opencode 自带免费模型（OpenCode Zen，models.dev opencode provider
+        //  -free ∪ big-pickle 特例，24h 滚动）优先；目录不可用（无网冷启动）fail-open 回退静态清单]
+        const freeFloor = freeFloorModels(catalog.index)
+        const floorModels = freeFloor.length > 0
+          ? freeFloor
+          : [...new Set(loadManifest().shells.map((s) => `${s.provider}/${s.modelId}`))]
+        if (freeFloor.length > 0) appendStatusLog(`保底=OpenCode Zen 免费模型 ${freeFloor.length} 个（catalog ${catalog.status}）`)
+        else appendStatusLog(`保底回退静态清单（catalog ${catalog.status}，免费模型 0 个）`)
+        const supersetModels = [...new Set([...configured.models, ...providerModels.models, ...floorModels])]
           .filter((full) => isConversational(full.slice(full.indexOf("/") + 1)))
           .sort()
-        const catalog = await loadCatalog().catch(() => ({ index: {}, status: "none" as const, etag: null }))
         const metaIndex: Record<string, EffortInfo> = { ...bundledModelIndex(), ...catalog.index }
         supersetDefs = buildShells(supersetModels, metaIndex, {
           roAliases: true, degradedFamilyByProvider: true, markDegraded: true,
@@ -707,11 +699,20 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         const combo = registry[agent]?.comboKey
         // [2026-08-29]-[失败分类：厂商无关分类，一次判定全程复用（瞬时 429 与真额度分离）]
         const category = classifyFailure(reason)
+        // [2026-09-01]-[配置层失败分流：壳未注册＝调度层失败（探针 ok 的模型不因门控漏拦被毒化），
+        //  仅审计不隔离不熔断；端点不兼容＝永久配置错误，6h 长 TTL 隔离]
+        if (category === "shell_injection") {
+          recordInjection(agent, reason)
+          return
+        }
         // [2026-08-29]-[功能1 仅动态矩阵：legacy 维持原 recordFailure 熔断路径（tester 回归发现漏_gate）]-
         const realFailed = dynamic && Boolean(combo && ctx.matrix?.combos[combo]?.status === "ok")
         if (realFailed) {
-          // 限流用短 TTL（10 分钟自愈），真失败用默认长 TTL（30 分钟）
-          markRealFailure(combo!, undefined, category === "rate_limit" ? RATE_LIMIT_TTL_MS : REAL_FAIL_TTL_MS)
+          // 限流用短 TTL（10 分钟自愈）；endpoint 用 6h（永久配置错误重试无意义）；其余默认 30 分钟
+          const ttlMs = category === "rate_limit" ? RATE_LIMIT_TTL_MS : category === "endpoint" ? ENDPOINT_TTL_MS : undefined
+          markRealFailure(combo!, undefined, ttlMs)
+          // [2026-09-01]-[隔离事件落盘：此前纯内存零审计——横幅报 down 却查无此案]
+          recordIsolation(agent, combo!, category, ttlMs ?? REAL_FAIL_TTL_MS, reason)
           clearBannerCache()
         }
         const rec = realFailed ? null : recordFailure(agent, reason, registry)

@@ -35,15 +35,7 @@ OpenCode 六档壳矩阵编排插件——让主模型成为调度员，把任�
 
 opencode 启动时会自动经 Bun 安装并加载该 npm 包，无需其他步骤。
 
-需要自定义选项时使用元组形式：
-
-```json
-{
-  "plugin": [
-    ["opencode-switchman", { "billingWindow": { "glmPeakHours": [14, 18] } }]
-  ]
-}
-```
+> **除插件安装外无需改 opencode 配置**：全部插件配置（水位、计费、高峰、阈值、横幅、矩阵、自定义档链等）都在独立文件 `opencode-switchman.jsonc` 中（见下节），首启自动生成、带中文注释。旧的元组 options（`["opencode-switchman", {...}]` 第二项）已弃用，兼容保留一代（显式值仍优先，`/switchman-doctor` 会提示 SWM044 并建议迁移）。
 
 ### 方式二：源码安装
 
@@ -72,9 +64,13 @@ bun run build   # 生成 dist/opencode-switchman.js
 
 > **从旧版（switchman.js）升级**：请删除旧的 `~/.config/opencode/plugins/switchman.js`，避免新旧两份插件同时注入；状态目录已迁移至 `~/.config/opencode/opencode-switchman/`（旧目录可删，全部状态自动重建）。
 
-### 供应商水位配置
+### 统一配置：opencode-switchman.jsonc
 
-首次启动会在 OpenCode 配置目录创建 `opencode-switchman.jsonc`（优先级：`OPENCODE_CONFIG_DIR`、`$XDG_CONFIG_HOME/opencode`、`~/.config/opencode`）。随包内置稳定供应商键 `deepseek`、`zhipuai-coding-plan`、`github-copilot`（与 opencode 官方 provider ID 一致），且**任意 opencode 官方/自定义 provider 键均合法**——未知键按自定义 provider 处理（通用缺省参与编排；对内置键的近似拼写 doctor 会给 warn 建议）。`observe` 控制配额查询与横幅展示，`enabled` 独立控制水位、高峰和耗尽是否参与路由（默认分别为 `true`、`false`）。`billing` 显式声明计费结构——`subscription`（评分系数 1.0）或 `api`（0.85，同 tier 内沉底）；这是计费优先级的唯一来源（不从 models.dev/auth 推断）。高峰区间使用 ISO 周日 `1`–`7` 和 `[start,end)` 的 `HH:mm`；默认 GLM 工作日 14:00–18:00，DeepSeek 工作日 09:00–12:00、14:00–18:00。可运行 `/switchman-doctor` 获取本地、脱敏且不联网的诊断报告。
+**除插件安装（opencode 配置的 `plugin` 数组）外，插件全部配置都在独立文件 `opencode-switchman.jsonc`**——首次启动在 OpenCode 配置目录自动生成（优先级：`OPENCODE_CONFIG_DIR`、`$XDG_CONFIG_HOME/opencode`、`~/.config/opencode`），带 `$schema` 编辑器提示与逐键中文注释，坏值 fail-open 回退缺省；改文件后在 opencode 内重跑一次配置（或重启）即生效，`/switchman-doctor` 可出本地、脱敏且不联网的诊断报告。
+
+**providers——供应商策略段**：随包内置稳定键 `deepseek`、`zhipuai-coding-plan`、`github-copilot`（与 opencode 官方 provider ID 一致），且**任意 opencode 官方/自定义 provider 键均合法**——未知键按自定义 provider 处理（通用缺省参与编排；对内置键的近似拼写 doctor 会给 warn 建议）。`observe` 控制配额查询与横幅展示，`enabled` 独立控制水位、高峰和耗尽是否参与路由（默认分别为 `true`、`false`）。`billing` 显式声明计费结构——`subscription`（评分系数 1.0）或 `api`（0.85，同 tier 内沉底）；这是计费优先级的唯一来源（不从 models.dev/auth 推断）。`peak` 高峰区间使用 ISO 周日 `1`–`7` 与 `[start,end)` 的 `HH:mm`；出厂缺省 GLM 工作日 14:00–18:00、DeepSeek 工作日 09:00–12:00 与 14:00–18:00。
+
+**行为段**（`quota` / `cost` / `capability` / `matrix` / `banner` / `rules` / `lanes`）：详见下方「配置项」表——同样只写这一个文件。
 
 ### 验证安装
 
@@ -101,21 +97,21 @@ TUI 插件没有目录自动发现机制，需要在 **`tui.jsonc`/`tui.json`** 
 }
 ```
 
-### 配置项
+### 配置项（opencode-switchman.jsonc）
 
-| 选项 | 默认 | 说明 |
+| 键 | 默认 | 说明 |
 |---|---|---|
-| `quota.glm / quota.deepseek / quota.copilot.enabled` | `true` | 已弃用→迁移到 `opencode-switchman.jsonc`；显式使用时提示 SWM042 |
-| `quota.glm.fiveHourReservePct` | `90` | GLM 5 小时窗预留水位（%）：达到即硬拦 GLM 壳避免用满 429；周额度仍只认 100% |
-| `quota.deepseek.lowBalanceWarnCny` | `10` | DeepSeek 余额预警阈值（元）：低于该值横幅 [水位] 提示（仅预警不硬拦） |
+| `providers.<id>.enabled / observe / billing / peak` | `false / true / 见出厂 / 见出厂` | 供应商策略：路由参与、配额观察、计费结构（subscription=1.0 / api=0.85）、高峰窗口（详见上节） |
+| `quota.glmFiveHourReservePct` | `90` | GLM 5 小时窗预留水位（%）：达到即硬拦 GLM 壳避免用满 429；周额度仍只认 100% |
+| `quota.deepseekLowBalanceWarnCny` | `10` | DeepSeek 余额预警阈值（元）：低于该值横幅 [水位] 提示（仅预警不硬拦，按量计费） |
 | `cost.enabled` | `true` | models.dev 计价快照作为加权模型评分的一个系数 |
-| `billingWindow.glmPeakHours / dsPeakRanges` | GLM 工作日 14–18 | 已弃用→迁移到 `opencode-switchman.jsonc`；显式使用时提示 SWM043 |
-| `providers.glm / providers.deepseek` | `["zhipuai-coding-plan","glm","zai"]` / `["deepseek"]` | 池对应的 provider id 清单（凭证收集用） |
-| `matrix.mode` | `auto` | 动态激活模式：`auto` 按宿主自动（desktop=可见模型 / CLI/TUI=favorites），`app`/`tui` 强制指定，`legacy` 旧静态矩阵 |
-| `matrix.watch` | `true` | 双向同步 desktop 可见模型与 TUI favorites；配置面变化即重算激活矩阵并全量刷新探针 |
+| `capability.enabled / source / apiKey / tierThresholds / lmarenaCheck` | `true / auto / – / 内置分位 / false` | 动态能力分级：`auto`=有 apiKey 先 Artificial Analysis、失败/无 key 转 OpenRouter；key 也可走环境变量 `ARTIFICIAL_ANALYSIS_API_KEY` |
+| `matrix.mode / watch` | `auto / true` | 激活矩阵：`auto` 按宿主自动（desktop=可见模型 / CLI/TUI=favorites），`app`/`tui` 强制指定，`legacy` 旧静态矩阵；`watch`=配置面变化即重算并全量刷新探针（mode/watch 为启动级，重启生效） |
 | `banner.enabled` | `true` | 四行横幅注入开关 |
 | `rules.enabled` | `true` | 调度员规程（AGENTS.md）随包注入开关 |
-| `lanes` | 内置六档链 | 自定义各档壳链（覆盖内置偏好序） |
+| `lanes` | 内置六档链 | 自定义各档壳链（覆盖内置偏好序）；键=economy/mechanical/main/hard/vision/review |
+
+> **旧元组 options 迁移**：`quota.*.enabled`→`providers.<id>.observe`（SWM042）、`billingWindow.*`→`providers.<id>.peak`（SWM043）、其余行为段（`quota` 阈值/`cost`/`capability`/`matrix`/`banner`/`rules`/`lanes`）→同名 jsonc 段（SWM044）；`providers.glm/deepseek`（凭证收集清单）从未实际生效，已删除。元组显式配置兼容一代（值仍优先），下个大版本移除。
 
 ## 动态激活矩阵
 
@@ -233,7 +229,9 @@ ROUTE_META {"lane":"main","role":"programmer","producer_family":"glm","capabilit
 
 默认（`matrix.mode=auto`）矩阵在运行期动态构建：desktop 可见模型与 TUI favorites 自动双向同步，会话模型兜底，任一配置面变化都会触发全量探针重算，无需任何维护；模型临时 down 由探针自愈（每 10 分钟后台刷新，自动进降级/熔断），连续 404 的消失模型会 retired，直到配置面再次变化。
 
-内置静态矩阵仅作为 `legacy` 模式与运行期元数据的兜底。如需自定义 legacy 静态面：
+超集保底＝**opencode 自带免费模型**（OpenCode Zen：models.dev `opencode` provider 下 `-free` 后缀模型＋`big-pickle` 特例，且剔除 `status=deprecated` 的已轮换旧模型＝「今日可用」集，随目录每 24h 滚动、无需手工维护）；目录不可用（无网冷启动）时 fail-open 回退内置静态清单。
+
+内置静态矩阵仅作为 `legacy` 模式与离线兜底。如需自定义 legacy 静态面：
 
 ```bash
 # 1. 同步权威启用面（opencode 模型管理中打开的模型，每行 provider/model-id）

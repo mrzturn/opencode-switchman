@@ -104,6 +104,30 @@ export function renderDefaultConfigJsonc(): string {
       }
     }
   },
+  // ---- 行为段：除插件安装（opencode 配置的 plugin 数组）外，全部插件配置都在本文件 ----
+  "quota": {
+    // GLM 5 小时窗预留水位（%）：达到即硬拦 GLM 壳（避免 429）；周额度仍只认 100%。
+    "glmFiveHourReservePct": 90,
+    // DeepSeek 余额预警阈值（CNY 元）：低于该值在横幅 [水位] 提示；仅预警不硬拦（按量计费）。
+    "deepseekLowBalanceWarnCny": 10
+  },
+  // models.dev 价格快照是否作为加权评分系数之一。
+  "cost": { "enabled": true },
+  // 动态能力分级：auto=有 apiKey 先 AA、失败/无 key 转 OpenRouter；tierThresholds 缺省走内置分位映射。
+  "capability": {
+    "enabled": true,
+    "source": "auto",
+    // Artificial Analysis Data API key（也可走环境变量 ARTIFICIAL_ANALYSIS_API_KEY）；无 key 自动转 OpenRouter 公开源。
+    // "apiKey": "aa_xxx",
+    "lmarenaCheck": false
+  },
+  // 激活矩阵：auto=按客户端判定 desktop/cli；legacy=静态 shells.json；watch=监听配置面变化实时重算（改 watch 需重启）。
+  "matrix": { "mode": "auto", "watch": true },
+  // 四行路由横幅 / 调度员规程（AGENTS.md）系统提示注入。
+  "banner": { "enabled": true },
+  "rules": { "enabled": true },
+  // 自定义六档候选链（覆盖内置偏好序）；键=economy/mechanical/main/hard/vision/review，值为壳名数组。
+  "lanes": {},
   // 第三方/未来扩展数据放命名空间键，不进 providers。
   "extensions": {}
 }

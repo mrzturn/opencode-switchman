@@ -15,7 +15,8 @@ export function shortName(name: string): string {
 
 export interface BannerInput {
   lanes: Record<string, LaneResult> | null
-  down: Set<string> | string[]
+  /** down 集合；Map 形态携带来源标注（如「熔断」「实调隔离·剩12m」），横幅逐名展示 */
+  down: Set<string> | string[] | Map<string, string>
   quota: { glm: GlmQuota | null; copilot: CopilotQuota | null; deepseek?: DeepseekQuota | null }
   states?: Record<string, { state?: PoolStateKind } & Record<string, unknown>> | null
   billing: BillingWindow
@@ -126,9 +127,14 @@ function levelLine(input: BannerInput): string {
   return `[水位] ${segs.join(" | ")}`
 }
 
-function limitLine(down: Set<string> | string[], unknownCount?: number, matrixInfo?: BannerInput["matrixInfo"], doctorSummary?: string | null): string {
-  const arr = Array.isArray(down) ? down : [...down]
-  const names = arr.map((n) => (n.includes("-mx-") ? shortName(n) : n)).sort()
+function limitLine(down: Set<string> | string[] | Map<string, string>, unknownCount?: number, matrixInfo?: BannerInput["matrixInfo"], doctorSummary?: string | null): string {
+  // [2026-09-01]-[down 来源标注：Map 值＝来源（熔断/实调隔离·剩余时长），排查时可直接区分探针结论与内存隔离]
+  const pairs: [string, string][] = down instanceof Map
+    ? [...down.entries()]
+    : (Array.isArray(down) ? down : [...down]).map((n) => [n, ""] as [string, string])
+  const names = pairs
+    .map(([n, note]) => `${n.includes("-mx-") ? shortName(n) : n}${note ? `（${note}）` : ""}`)
+    .sort()
   const downTxt = names.length === 0 ? "无" : `${names.join("、")}（不可派发，deny 会附改派）`
   // [2026-08-31]-[去厂商化：删「DeepSeek 仅链尾兜底」池名商务语义——api/未知组由计费系数沉底]
   let line = `[限制] down: ${downTxt} | reviewer 须异族（producer family ≠ 壳 family，ROUTE_META 校验） | api 计费与未知模型按系数沉底（billing=subscription 显式配置优先）`

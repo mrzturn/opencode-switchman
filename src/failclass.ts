@@ -8,6 +8,10 @@ export type FailureCategory =
   | "not_found"
   | "server"
   | "network"
+  // [2026-09-01]-[配置层失败与瞬时失败分离：壳未注册＝调度层（不隔离不熔断）；
+  //  端点不兼容＝永久配置错误（长 TTL 隔离，30 分钟重试无意义）]
+  | "shell_injection"
+  | "endpoint"
   | "unknown"
 
 export function classifyFailure(reason: string): FailureCategory {
@@ -19,6 +23,16 @@ export function classifyFailure(reason: string): FailureCategory {
     /no such model/.test(s) || /unknown model/.test(s) || /invalid model/.test(s) ||
     /decommissioned/.test(s) || /已下线/.test(s)
   ) return "not_found"
+
+  // shell_injection（壳未注册为 opencode agent：调度/注入层失败，与模型健康无关——不隔离不熔断，
+  //  探针 ok 的模型不得因门控漏拦被毒化 30 分钟）
+  if (/unknown agent type/.test(s) || /not a valid agent/.test(s) || /no such agent/.test(s)) return "shell_injection"
+
+  // endpoint（模型在但端点/形态不兼容：配置层永久错误，短周期重试无意义 → 长 TTL 隔离）
+  if (
+    /not accessible via/.test(s) || /completions endpoint/.test(s) ||
+    /does not support/.test(s) || /unsupported (model|endpoint)/.test(s)
+  ) return "endpoint"
 
   // rate_limit（瞬时限流：短 TTL 内存隔离，绝不判池耗尽）
   if (
