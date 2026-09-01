@@ -4,8 +4,11 @@
 #       （可选参数透传给更新器，如 --version x.y.z / --dry-run）
 set -eu
 BASE="https://raw.githubusercontent.com/mrzturn/opencode-switchman/main/scripts/update-cli.mjs"
-TMP="$(mktemp "${TMPDIR:-/tmp}/switchman-update.XXXXXX.mjs")"
-trap 'rm -f "$TMP"' EXIT
+# [2026-09-01]-[BSD mktemp 要求 X 占位符在模板末尾，带 .mjs 后缀会创建字面量文件并卡死后续运行]-
+#  改用临时目录 + 固定文件名
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/switchman-update.XXXXXXXX")"
+TMP="$WORK/update-cli.mjs"
+trap 'rm -rf "$WORK"' EXIT
 
 if command -v curl >/dev/null 2>&1; then
   curl -fsSL "$BASE" -o "$TMP"

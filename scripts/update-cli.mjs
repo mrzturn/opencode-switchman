@@ -5,7 +5,7 @@
 //  改写为精确版本 opencode-switchman@x.y.z（每版本独立缓存目录）并清理旧缓存目录]-
 // 用法：update-cli.mjs [--version x.y.z] [--dry-run]
 import { execFileSync } from "node:child_process"
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { pathToFileURL } from "node:url"
@@ -194,7 +194,11 @@ export async function run(argv = process.argv.slice(2), io = {}) {
   return { spec, actions }
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+// [2026-09-01]-[macOS /var/folders→/private/var/folders 符号链接致 import.meta.url(realpath) 与
+//  pathToFileURL(argv[1])(原样) 永不相等，脚本静默空转 exit 0]-[入口判定改为对 argv[1] 取 realpath]
+let entryUrl = null
+try { entryUrl = pathToFileURL(realpathSync(process.argv[1] ?? "")).href } catch {}
+if (import.meta.url === entryUrl) {
   run().catch((exc) => {
     console.error(`[switchman] 更新失败: ${exc?.message ?? exc}`)
     process.exit(1)
