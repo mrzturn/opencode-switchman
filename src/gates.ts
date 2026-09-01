@@ -5,7 +5,7 @@ import type { GateSnapshot, Meta, ShellRegEntry } from "./types"
 import { metaErrorHint, parseRouteMeta } from "./meta"
 import { computeLane, firstCandidate, laneOfShell } from "./lane"
 import { baseScoreDynamic } from "./capability"
-import { isPromotionCandidate, meetsLaneCapability } from "./lane-policy"
+import { isFallbackCandidate, isPrimaryCandidate } from "./lane-policy"
 
 export interface GateResult { deny: string | null; note: string | null }
 
@@ -181,10 +181,10 @@ export function checkShell(
     return { deny: `${agent} lane=vision 必须声明 image/vision modality${hint("vision")}`, note: null }
   }
   const capability = baseScoreDynamic(shell.modelId)
-  if (!meetsLaneCapability(lane as import("./types").Lane, capability) && !isPromotionCandidate(lane as import("./types").Lane, capability)) {
+  if (!isPrimaryCandidate(lane as import("./types").Lane, capability) && !isFallbackCandidate(lane as import("./types").Lane, capability)) {
     return { deny: `${agent} 能力等级不足，不能承接 ${lane} 任务${hint()}`, note: null }
   }
-  if (isPromotionCandidate(lane as import("./types").Lane, capability)) {
+  if (isFallbackCandidate(lane as import("./types").Lane, capability) && meta!.source !== "user") {
     let current
     try {
       current = computeLane(lane as import("./types").Lane, snap.lanes[lane] ?? base, buildParams() as any)
@@ -192,10 +192,10 @@ export function checkShell(
       return { deny: `${agent} 无法确认 ${lane} 跨级补位资格，为避免错误降级拒绝派发${hint()}`, note: null }
     }
     if (!current.chain.some((candidate) => candidate.shell === agent)) {
-      return { deny: `${agent} 未入选 ${lane} 的前二补位候选${hint()}`, note: null }
+      return { deny: `${agent} 未入选 ${lane} 的前二跨级回退候选${hint()}`, note: null }
     }
-    if (current.chain.some((candidate) => meetsLaneCapability(lane as import("./types").Lane, baseScoreDynamic(snap.registry?.[candidate.shell]?.modelId ?? "")))) {
-      return { deny: `${agent} 为 ${lane} 的跨级补位候选；当前仍有可用本级模型${hint()}`, note: null }
+    if (current.chain.some((candidate) => isPrimaryCandidate(lane as import("./types").Lane, baseScoreDynamic(snap.registry?.[candidate.shell]?.modelId ?? "")))) {
+      return { deny: `${agent} 为 ${lane} 的跨级回退候选；当前仍有可用同级模型${hint()}`, note: null }
     }
   }
   // [2026-08-31]-[去厂商化：删 source=auto 误选按量池的硬 deny——api 计费由 billingBoost 乘积系数

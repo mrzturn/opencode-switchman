@@ -177,19 +177,17 @@ describe("六闸顺序", () => {
     expect(d).toContain("非视觉壳")
     expect(denyOf("glm-mx-53f-high", meta("vision", "observer", "glm", "rw", "image"), snap())).toBeNull()
   })
-  test("18 auto 选 api 计费壳不再硬 deny（去厂商化：系数软排序）；user 点名同样放行", () => {
-    // [2026-08-31]-[SWM 池名规则废除：source=auto 误选按量池的 deny 已删，api 计费由 billingBoost 沉底]
-    expect(denyOf("ds-mx-v4p-high", meta(), snap())).toBeNull()
+  test("18 自动派发跨级壳时优先同级；user 点名可覆盖该优先序", () => {
+    expect(denyOf("ds-mx-v4p-high", meta(), snap())).toContain("跨级回退")
     expect(denyOf("ds-mx-v4p-high", meta("main", "programmer", "glm", "rw", "text", "user"), snap())).toBeNull()
   })
   test("19 review A 级仅在 S 级候选均不可用时允许直接派发", () => {
-    const reviewNow = computeLane("review", LANES.review, { registry: fullRegistry(), matrix: matrixOk(), routing: { down_agents: {}, down_expiry: {} } })
-    const a = reviewNow.chain.find((candidate) => capabilityLevelFor(baseScoreDynamic(manifest.shells.find((shell) => shell.name === candidate.shell)!.modelId)) === "L4")!.shell
+    const a = LANES.review.find((name) => capabilityLevelFor(baseScoreDynamic(manifest.shells.find((shell) => shell.name === name)!.modelId)) === "L4")!
     const s = LANES.review.map((name) => manifest.shells.find((shell) => shell.name === name)!)
       .filter((shell) => capabilityLevelFor(baseScoreDynamic(shell.modelId)) === "L5")
     expect(s.length).toBeGreaterThan(0)
     const prompt = meta("review", "reviewer", "gpt", "ro")
-    expect(denyOf(a, prompt, snap())).toContain("跨级补位")
+    expect(denyOf(a, prompt, snap())).toContain("跨级回退")
     const matrix = matrixOk()
     for (const shell of s) matrix[shell.matrixKey] = { status: "down" }
     expect(denyOf(a, prompt, snap({ matrix }))).toBeNull()
@@ -214,7 +212,7 @@ describe("compute_lane", () => {
     const b = computeLane("main", LANES.main, p as any)
     expect(JSON.stringify(a)).toBe(JSON.stringify(b))
     expect(a.status).toBe("ok")
-    expect(a.chain.map((c) => c.shell)).toEqual(expect.arrayContaining(LANES.main))
+    expect(a.chain.map((c) => c.shell).every((name) => LANES.main.includes(name))).toBe(true)
   })
   test("20 api 计费由系数沉底（同 tier 排订阅后）；auto/user 不再影响门控", () => {
     // [2026-08-31]-[去厂商化：auto_ok/DS 恒尾门控删除——billingBoostOf 注入 api 0.85 后按乘积排序]
@@ -241,18 +239,17 @@ describe("compute_lane", () => {
     const r = computeLane("main", LANES.main, p as any)
     expect(r.chain.every((c, i, all) => i === 0 || (c.latency_ms ?? Infinity) >= (all[i - 1]!.latency_ms ?? Infinity))).toBe(true)
   })
-  test("22 tier 主导排序（软系数不跨能力级换序；billing 系数仅组内沉底）", () => {
+  test("22 同级优先；跨级回退按与目标等级的距离排序", () => {
     const base = { registry: fullRegistry(), matrix: matrixOk(), routing: { down_agents: {}, down_expiry: {} } }
     const peak = computeLane("mechanical", LANES.mechanical, { ...base, glmPeak: true } as any)
     expect(peak.chain.every((c) => LANES.mechanical.includes(c.shell))).toBe(true)
     const calm = computeLane("mechanical", LANES.mechanical, { ...base, glmPeak: false } as any)
     expect(calm.chain.every((c) => LANES.mechanical.includes(c.shell))).toBe(true)
-    // tier 分组不可逆：受压不让低 tier 越过高 tier
+    // economy 无 L1 时，最近的 C(L2) 回退优先于 A(L4)。
     const strained = computeLane("economy", LANES.economy, {
       ...base, glmPeak: false, states: { copilot: { state: "strained" } },
     } as any)
-    const tiers = strained.chain.map((c) => c.score!.tier)
-    expect(tiers).toEqual([...tiers].sort((a, b) => ({ S: 0, A: 1, B: 2, C: 3 }[a] - { S: 0, A: 1, B: 2, C: 3 }[b])))
+    expect(strained.chain[0]!.score!.tier).toBe("B")
   })
   test("23 v2.0 成本 tiebreaker：同 tier 且评分平局时便宜者前（immediate 按延迟）", () => {
     const base = { registry: fullRegistry(), matrix: matrixOk(), routing: { down_agents: {}, down_expiry: {} }, glmPeak: false }
@@ -339,7 +336,7 @@ describe("端到端与配额判定", () => {
     writeFileSync(join(process.env.SWITCHMAN_STATE!, "routing.json"), "{broken json")
     expect(loadRouting().down_agents).toEqual({})
     const d = denyOf("glm-mx-53-high", meta(), snap({ routing: loadRouting() }))
-    expect(d).toBeNull()
+    expect(d).toContain("跨级回退")
   })
   test("30 GLM 耗尽判定：100% 拦、99% 不拦（熔断兜底）", () => {
     const [dead1, why1] = glmExhausted({ status: "ok", fetched_at: 0, weekly: { used_pct: 100 } })

@@ -54,7 +54,31 @@ export function meetsLaneCapability(lane: Lane, capability: number | CapabilityS
   return minimum === null || CAPABILITY_LEVEL_RANK[capabilityLevelFor(capability)] >= CAPABILITY_LEVEL_RANK[minimum]
 }
 
-/** 每个非 S 级已知等级的前二模型可向上补一个文本任务池，未知 global 兜底不可晋级。 */
+/** 同级模型是常规候选；vision 不参与文本能力分池。 */
+export function isPrimaryCandidate(lane: Lane, capability: number | CapabilityScore): boolean {
+  // 旧数值回调没有等级信息，继续 fail-open，避免把外部旧调用误判为没有本级候选。
+  if (typeof capability === "number") return true
+  const target = LANE_SPEC[lane]?.minimumLevel
+  return target === null || capabilityLevelFor(capability) === target
+}
+
+/**
+ * 同级候选全不可用时的跨级回退。优先使用更高一级；main/hard/review 无更高项时，
+ * 可使用相邻低一级已知模型。L1 是未知模型兜底，不能向上承担文本任务。
+ */
+export function isFallbackCandidate(lane: Lane, capability: number | CapabilityScore): boolean {
+  if (typeof capability === "number" || !capability.tier || capability.source === "global") return false
+  const target = LANE_SPEC[lane]?.minimumLevel
+  if (target === null) return false
+  const level = capabilityLevelFor(capability)
+  const delta = CAPABILITY_LEVEL_RANK[level] - CAPABILITY_LEVEL_RANK[target]
+  if (delta > 0) return true
+  return (lane === "main" && level === "L2") ||
+    (lane === "hard" && level === "L3") ||
+    (lane === "review" && level === "L4")
+}
+
+/** 兼容原有调用名：低一级补位仍限 main/hard/review。 */
 export function isPromotionCandidate(lane: Lane, capability: number | CapabilityScore): boolean {
   if (typeof capability === "number" || !capability.tier || capability.source === "global") return false
   const level = capabilityLevelFor(capability)
@@ -119,11 +143,16 @@ export function computeLaneChain(shells: readonly LaneAlgorithmShell[], capabili
       const bc = typeof b.shell.cost === "number" ? b.shell.cost : Number.POSITIVE_INFINITY
       return ac - bc || a.shell.name.localeCompare(b.shell.name)
     })
-  // [2026-09-01]-[能力分池：C/B/A 每级前二可依次向 main/hard/review 补位；保留四席本级候选，
-  // 后接两席补位，防止本级前两项失效时跳过其余健康本级模型。]
-  const primary = ordered.filter(({ capability }) => meetsLaneCapability(lane, capability))
-  const promotions = ordered.filter(({ capability }) => isPromotionCandidate(lane, capability)).slice(0, 2)
-  return [...primary.slice(0, 4), ...promotions].map(({ shell }) => shell.name)
+  // [2026-09-01]-[同级优先：本级候选与回退候选分开保留；运行期先耗尽本级，才启用跨级项。]
+  const primary = ordered.filter(({ capability }) => isPrimaryCandidate(lane, capability))
+  // 回退从最近等级开始，避免 L1 缺席时 S 级模型越过 L2/L3 直接占用 economy。
+  const targetRank = spec.minimumLevel === null ? 0 : CAPABILITY_LEVEL_RANK[spec.minimumLevel]
+  const fallbacks = ordered
+    .filter(({ capability }) => isFallbackCandidate(lane, capability))
+    .sort((a, b) =>
+      Math.abs(CAPABILITY_LEVEL_RANK[a.level] - targetRank) - Math.abs(CAPABILITY_LEVEL_RANK[b.level] - targetRank) ||
+      a.tierRank - b.tierRank || b.score - a.score || a.shell.name.localeCompare(b.shell.name))
+  return [...primary.slice(0, 4), ...fallbacks.slice(0, 2)].map(({ shell }) => shell.name)
 }
 
 /** 激活面候选链：忽略过时 static lanes，直接对当前壳全集重跑同一算法。 */

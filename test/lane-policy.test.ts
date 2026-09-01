@@ -32,8 +32,8 @@ describe("候选链算法", () => {
       { name: "a-sub", modelId: "a-sub", provider: "github-copilot", pool: "copilot", effort: "high", capability: "rw", vision: false, cost: 0 },
     ]
     const cap = (id: string) => (id === "s-api" ? { score: 1.0, tier: "S" as const } : { score: 0.85, tier: "A" as const })
-    // 乘积分：s-api=1.0×0.85=0.85 与 a-sub=0.85×1.0=0.85 打平——tier 分组使 S 恒先，成本(9>0)不得反超
-    expect(computeLaneChain(mix, cap, "main", resolvers)).toEqual(["s-api", "a-sub"])
+    // main 无 B 同级时先向相邻 A 回退，S 只作为更远的后备。
+    expect(computeLaneChain(mix, cap, "main", resolvers)).toEqual(["a-sub", "s-api"])
     // 未知组（0.75）只在同 tier 内沉底：B-unknown 仍先于 C-known（tier 主键不可逆）
     const tierMix = [
       { name: "b-unknown", modelId: "b-unknown", provider: "my-gateway", pool: "zen", effort: "high", capability: "rw", vision: false },
@@ -87,7 +87,25 @@ describe("候选链算法", () => {
     expect(computeLaneChain(levels.slice(1, 3), cap, "hard")).toEqual(["a", "b"])
     expect(computeLaneChain(levels.slice(2), cap, "review")).toEqual(["s", "a"])
   })
-  test("补位不挤占本级冗余：main 保留四个 B 级候选后才附两项 C 级补位", () => {
+  test("同级优先：economy 有 L1 时不把更强模型放入候选链", () => {
+    const levels = ["l1", "l2", "l5"].map((id) => ({ name: id, modelId: id, pool: "glm", effort: "low", capability: "rw", vision: false }))
+    const cap = (id: string) => ({
+      l1: { score: 0.55, tier: "C" as const, source: "global" },
+      l2: { score: 0.55, tier: "C" as const, source: "exact" },
+      l5: { score: 1, tier: "S" as const, source: "exact" },
+    }[id]!)
+    expect(computeLaneChain(levels, cap, "economy")).toEqual(["l1", "l2", "l5"])
+  })
+  test("economy 无 L1 时按最近等级回退，不跨过 L2 直接使用 L5", () => {
+    const levels = ["l2", "l3", "l5"].map((id) => ({ name: id, modelId: id, pool: "glm", effort: "low", capability: "rw", vision: false }))
+    const cap = (id: string) => ({
+      l2: { score: 0.55, tier: "C" as const, source: "exact" },
+      l3: { score: 0.7, tier: "B" as const, source: "exact" },
+      l5: { score: 1, tier: "S" as const, source: "exact" },
+    }[id]!)
+    expect(computeLaneChain(levels, cap, "economy")).toEqual(["l2", "l3"])
+  })
+  test("回退不挤占同级冗余：main 保留四个 B 级候选后才附两项跨级回退", () => {
     const six = ["b1", "b2", "b3", "b4", "c1", "c2"].map((id) => ({ name: id, modelId: id, pool: "glm", effort: "high", capability: "rw", vision: false }))
     const cap = (id: string) => id.startsWith("b") ? { score: 0.7, tier: "B" as const } : { score: 0.55, tier: "C" as const }
     expect(computeLaneChain(six, cap, "main")).toEqual(["b1", "b2", "b3", "b4", "c1", "c2"])

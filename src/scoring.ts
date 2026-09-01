@@ -9,9 +9,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { paths, withPathLock, appendStatusLog } from "./state"
 import type { Lane, Pool, Routing, ShellRegEntry } from "./types"
 import { baseScoreDynamic } from "./capability"
-import { TIER_RANK, UNKNOWN_PENALTY } from "./model-ranks"
+import { CAPABILITY_LEVEL_RANK, TIER_RANK, UNKNOWN_PENALTY, capabilityLevelOf } from "./model-ranks"
 import type { Tier } from "./model-ranks"
-import { LANE_SPEC, isPromotionCandidate, meetsLaneCapability } from "./lane-policy"
+import { LANE_SPEC, isFallbackCandidate, isPrimaryCandidate } from "./lane-policy"
 
 /** [2026-08-31]-[去厂商化：api 计费系数（subscription=1.0）；取代按池名写死的链尾/按量惩罚] */
 export const BILLING_API_BOOST = 0.85
@@ -224,10 +224,9 @@ export function rankCandidates<T extends Rankable>(
       billingBoost: shell && ctx.billingBoostOf ? ctx.billingBoostOf(shell.provider) : ctx.billingBoostOf ? BILLING_API_BOOST : 1.0,
     }))
   }
-  // [2026-09-01]-[能力分池：本池合格模型 + 相邻低一档按动态综合分选出的前二补位模型；
-  // global 兜底不晋级。补位只在常规候选全部不可用时才会被实际派发。]
-  const eligible = survivors.filter((s) => meetsLaneCapability(ctx.lane, baseScoreDynamic(s.modelId)))
-  const promotionPool = survivors.filter((s) => isPromotionCandidate(ctx.lane, baseScoreDynamic(s.modelId)))
+  // [2026-09-01]-[同级优先：同级幸存者存在时绝不让跨级项参与排序；只有本级全被硬门淘汰才回退。]
+  const primary = survivors.filter((s) => isPrimaryCandidate(ctx.lane, baseScoreDynamic(s.modelId)))
+  const fallbackPool = survivors.filter((s) => isFallbackCandidate(ctx.lane, baseScoreDynamic(s.modelId)))
   const scoreCompare = (a: T, b: T): number => {
     const ba = breakdowns.get(a.key)!
     const bb = breakdowns.get(b.key)!
@@ -235,13 +234,18 @@ export function rankCandidates<T extends Rankable>(
       (bb.rawCapability ?? -Infinity) - (ba.rawCapability ?? -Infinity) ||
       (a.latencyMs ?? Number.POSITIVE_INFINITY) - (b.latencyMs ?? Number.POSITIVE_INFINITY)
   }
-  promotionPool.sort(scoreCompare)
+  const targetLevel = LANE_SPEC[ctx.lane].minimumLevel
+  fallbackPool.sort((a, b) => {
+    if (targetLevel === null) return scoreCompare(a, b)
+    const levelOf = (s: T) => capabilityLevelOf(baseScoreDynamic(s.modelId).tier, baseScoreDynamic(s.modelId).source)
+    const distance = (s: T) => Math.abs(CAPABILITY_LEVEL_RANK[levelOf(s)] - CAPABILITY_LEVEL_RANK[targetLevel])
+    return distance(a) - distance(b) || scoreCompare(a, b)
+  })
   survivors.length = 0
-  survivors.push(...eligible, ...promotionPool.slice(0, 2))
+  survivors.push(...(primary.length > 0 ? primary : fallbackPool.slice(0, 2)))
   const inputOrder = new Map(survivors.map((s, i) => [s.key, i]))
   if (ctx.immediate) {
     survivors.sort((a, b) =>
-      Number(!meetsLaneCapability(ctx.lane, baseScoreDynamic(a.modelId))) - Number(!meetsLaneCapability(ctx.lane, baseScoreDynamic(b.modelId))) ||
       (a.latencyMs ?? Number.POSITIVE_INFINITY) - (b.latencyMs ?? Number.POSITIVE_INFINITY) ||
       (inputOrder.get(a.key) ?? 0) - (inputOrder.get(b.key) ?? 0))
   } else {
@@ -252,9 +256,13 @@ export function rankCandidates<T extends Rankable>(
       return typeof v === "number" ? v : Number.POSITIVE_INFINITY
     }
     survivors.sort((a, b) => {
-        const aPromotion = !meetsLaneCapability(ctx.lane, baseScoreDynamic(a.modelId))
-        const bPromotion = !meetsLaneCapability(ctx.lane, baseScoreDynamic(b.modelId))
-        if (aPromotion !== bPromotion) return Number(aPromotion) - Number(bPromotion)
+        // 同级已耗尽时，回退必须从相邻等级开始，不能被通用 S/A/B/C 排序重新越级。
+        if (targetLevel !== null) {
+          const levelOf = (s: T) => capabilityLevelOf(baseScoreDynamic(s.modelId).tier, baseScoreDynamic(s.modelId).source)
+          const distance = (s: T) => Math.abs(CAPABILITY_LEVEL_RANK[levelOf(s)] - CAPABILITY_LEVEL_RANK[targetLevel])
+          const distanceDiff = distance(a) - distance(b)
+          if (distanceDiff !== 0) return distanceDiff
+        }
         const ba = breakdowns.get(a.key)!
       const bb = breakdowns.get(b.key)!
       return TIER_RANK[ba.tier] - TIER_RANK[bb.tier] ||

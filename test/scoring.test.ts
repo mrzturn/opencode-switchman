@@ -162,13 +162,13 @@ describe("rankCandidates", () => {
     expect(r.breakdowns.has("c")).toBe(true)
     expect(r.ranked.map((s) => s.key)).toEqual(["a", "c"])
   })
-  test("immediate 只按 latency 升序，忽略软系数（B 档快于 S 档慢）", () => {
+  test("immediate 在同级模型中只按 latency 升序，忽略软系数", () => {
     const shells = [
       rankable({ key: "slow-s", modelId: "gpt-5.6", pool: "copilot", family: "gpt", latencyMs: 900 }),
       rankable({ key: "fast-b", modelId: "glm-5.3-flash", latencyMs: 10 }),
     ]
     const r = rankCandidates(shells, ctx({ immediate: true }))
-    expect(r.ranked.map((s) => s.key)).toEqual(["fast-b", "slow-s"])
+    expect(r.ranked.map((s) => s.key)).toEqual(["fast-b"])
   })
   test("硬门：down/熔断/耗尽/退休/隔离全部剔除，strained 参与", () => {
     const shells = [
@@ -196,7 +196,7 @@ describe("rankCandidates", () => {
     expect(r.ranked.map((s) => s.key)).toEqual(["strained"])
     expect(r.breakdowns.get("strained")!.health).toBe(0.6)
   })
-  test("端到端小样本：同 tier 订阅前 api 后（billing 系数沉底，非池名硬门）", () => {
+  test("端到端小样本：main 没有 B 同级时，优先回退到相邻 A 而非更远 S", () => {
     const shells = [
       rankable({ key: "ds-s", modelId: "deepseek-v4-pro", pool: "deepseek", family: "deepseek", latencyMs: 5 }),
       rankable({ key: "glm-a", modelId: "glm-5.3", latencyMs: 50 }),
@@ -208,8 +208,7 @@ describe("rankCandidates", () => {
       "cp-s": shellReg({ name: "cp-s", pool: "copilot", provider: "github-copilot", modelId: "gpt-5.6", family: "gpt" }),
     }
     const r = rankCandidates(shells, ctx({ registry, billingBoostOf: (provider) => provider === "deepseek" ? BILLING_API_BOOST : 1.0 }))
-    // tier 分组优先：S 组内 api 计费（0.85）排订阅（1.0）之后，但仍先于 A 组——系数沉底而非池名硬门
-    expect(r.ranked.map((s) => s.key)).toEqual(["cp-s", "ds-s", "glm-a"])
+    expect(r.ranked[0]!.key).toBe("glm-a")
     expect(r.breakdowns.get("cp-s")!.tier).toBe("S")
     expect(r.breakdowns.get("glm-a")!.tier).toBe("A")
     expect(r.breakdowns.get("ds-s")!.tier).toBe("S")
@@ -232,6 +231,15 @@ describe("rankCandidates", () => {
     ]
     const r = rankCandidates(shells, ctx({ lane: "review" }))
     expect(r.ranked.map((s) => s.key)).toEqual(["a"])
+  })
+  test("economy 有 L1/L2 时不使用 L5，L1/L2 都不可用才向上回退", () => {
+    const shells = [
+      rankable({ key: "l1", modelId: "unknown-model", matrixStatus: "ok" }),
+      rankable({ key: "l2", modelId: "glm-4.5-air", matrixStatus: "ok" }),
+      rankable({ key: "l5", modelId: "claude-opus-5", matrixStatus: "ok" }),
+    ]
+    expect(rankCandidates(shells, ctx({ lane: "economy" })).ranked.map((s) => s.key)).toEqual(["l1"])
+    expect(rankCandidates(shells, ctx({ lane: "economy", registry: { l1: shellReg({ name: "l1", modelId: "unknown-model", status: "disabled" }), l2: shellReg({ name: "l2", modelId: "glm-4.5-air", status: "disabled" }), l5: shellReg({ name: "l5", modelId: "claude-opus-5" }) } })).ranked.map((s) => s.key)).toEqual(["l5"])
   })
 })
 

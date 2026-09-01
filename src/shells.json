@@ -1,6 +1,6 @@
 {
   "_note": "opencode-switchman 全量矩阵：权威启用面（模型管理打开的模型，scripts/visible-models.txt）× 全部声明思考档位（models.dev reasoning_options，toggle→off）。scripts/gen-shells.ts 生成，勿手改；模型开关变化后同步 pin 文件并重跑 bun run gen:shells。六档链由能力分×档位亲和×结构门×计费系数计算（api 计费 0.85、未知组 0.75 按系数沉底，无厂商预留席位）。",
-  "generated_at": "2026-09-01T08:20:43.197Z",
+  "generated_at": "2026-09-01T08:36:09.134Z",
   "counts": {
     "shells": 104,
     "visible_models": 13
@@ -1153,29 +1153,22 @@
   ],
   "lanes": {
     "economy": [
-      "glm-mx-53-low",
-      "copilot-mx-opus5-low",
-      "copilot-mx-sol-low",
-      "copilot-mx-grok46-low"
+      "ds-mx-v4fv-low",
+      "copilot-mx-haiku45-off"
     ],
     "mechanical": [
-      "copilot-mx-opus5-medium",
-      "copilot-mx-sol-medium",
-      "copilot-mx-grok46-medium",
-      "copilot-mx-terra-medium"
+      "ds-mx-v4fv-high",
+      "copilot-mx-haiku45-off"
     ],
     "main": [
-      "glm-mx-53-high",
-      "ds-mx-v4p-high",
-      "copilot-mx-opus5-high",
-      "copilot-mx-sol-high"
+      "ds-mx-v4fv-high",
+      "copilot-mx-haiku45-off",
+      "glm-mx-53-high"
     ],
     "hard": [
-      "copilot-mx-opus5-xhigh",
-      "copilot-mx-sol-xhigh",
-      "copilot-mx-grok46-xhigh",
-      "copilot-mx-terra-xhigh",
-      "ds-mx-v4fv-max"
+      "copilot-mx-haiku45-off",
+      "copilot-mx-claude5-xhigh",
+      "copilot-mx-grok46-xhigh"
     ],
     "vision": [
       "copilot-mx-opus5-high",
