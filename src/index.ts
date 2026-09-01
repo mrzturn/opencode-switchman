@@ -431,6 +431,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         mode: runMode, configStatus: manager.snapshot().configStatus,
         watch: options.matrix!.watch === true,
         restartRequired: manager.snapshot().restartRequired,
+        invalidConfigured: manager.snapshot().invalidConfigured,
         degradedModels: degradedModelCount,
         retiredModels: retiredModelKeys().length,
       } : undefined
@@ -581,7 +582,18 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           : [...new Set(loadManifest().shells.map((s) => `${s.provider}/${s.modelId}`))]
         if (freeFloor.length > 0) appendStatusLog(`保底=OpenCode Zen 免费模型 ${freeFloor.length} 个（catalog ${catalog.status}）`)
         else appendStatusLog(`保底回退静态清单（catalog ${catalog.status}，免费模型 0 个）`)
-        const supersetModels = [...new Set([...configured.models, ...providerModels.models, ...floorModels])]
+        // [2026-09-01]-[加固：configured（可见集/favorites）此前无脑并入 supersetModels，provider 不存在的
+        // 脏收藏（如手滑收藏 "glm/a"，provider "glm" 并非真实已连接 provider——真实 GLM 走
+        // "zhipuai-coding-plan"）会被 buildShells 当真实模型建出可调度但必挂的壳，且污染下方 knownProviders
+        // 令 computeActivation 的"provider 已知"判定失真、永远检测不到这条脏数据。改为先按真实已连接
+        // provider 集过滤，被过滤的单独记日志，不再被动提升为"看似合法"的壳]
+        const realKnownProviders = new Set(providerModels.providers)
+        const invalidFavoriteModels = configured.models.filter((m) => !realKnownProviders.has(m.slice(0, m.indexOf("/"))))
+        if (invalidFavoriteModels.length > 0) {
+          appendStatusLog(`可见集/收藏含未知 provider 的无效模型（provider 未连接，已忽略不建壳）：${invalidFavoriteModels.join("、")}`)
+        }
+        const validConfiguredModels = configured.models.filter((m) => realKnownProviders.has(m.slice(0, m.indexOf("/"))))
+        const supersetModels = [...new Set([...validConfiguredModels, ...providerModels.models, ...floorModels])]
           .filter((full) => isConversational(full.slice(full.indexOf("/") + 1)))
           .sort()
         const metaIndex: Record<string, EffortInfo> = { ...bundledModelIndex(), ...catalog.index }

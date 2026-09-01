@@ -6,6 +6,7 @@ import { readCopilotGithubToken, markCopilotGatewayExhausted } from "./quota"
 import { loadManifest, loadMatrix, paths, writeJsonAtomic, withPathLock, PROBE_TTL, appendStatusLog } from "./state"
 import { classifyFailure } from "./failclass"
 import { poolForProviderId } from "./provider-config"
+import { refreshThinkingShapesIfStale, loadCachedThinkingShapes, deriveThinkingParam, type CopilotThinkingShape } from "./copilot-thinking"
 import type { Matrix } from "./types"
 
 const PROBE_TIMEOUT_MS = 45_000
@@ -34,26 +35,41 @@ function copilotHeaders(token: string, extra: Record<string, string> = {}): Reco
 
 function buildRequest(
   provider: string, modelId: string, effort: string, eps: ProbeEndpoints, ghToken: string | undefined,
+  shapes: Record<string, CopilotThinkingShape>,
 ): { url: string; headers: Record<string, string>; body: Record<string, unknown> } | null {
   const hasEffort = effort !== "off" && effort !== ""
   if (provider === "github-copilot") {
     if (!ghToken) return null
     const base = eps.copilotApiBase ?? COPILOT_BASE
-    if (modelId.startsWith("claude")) {
+    const shape = shapes[modelId]
+    // [2026-09-01]-[端点选择对齐核心 isMsgApi（supported_endpoints 含 /v1/messages）：形状缓存已知则
+    //  按真实值路由，未知（冷启动/无 token）才回退 modelId 前缀启发式，避免"新增非 claude 命名但走
+    //  messages API 的模型"或反之被误判导致 400]
+    const useMessagesApi = shape ? shape.messagesApi : modelId.startsWith("claude")
+    if (useMessagesApi) {
       const headers = copilotHeaders(ghToken, { "anthropic-version": "2023-06-01" })
       const body: Record<string, unknown> = {
         model: modelId, max_tokens: 16,
         messages: [{ role: "user", content: "回复：OK" }],
       }
-      if (hasEffort) {
-        body.thinking = { type: "enabled", budget_tokens: effort === "low" ? 1024 : effort === "medium" ? 2048 : 16384 }
+      // [2026-09-01]-[对齐核心 models.ts：按该模型真实 capabilities.supports 推导，形状未知/不满足→不发
+      //  thinking（不再无条件按 modelId 前缀猜测），budget 分支需相应抬高 max_tokens（Anthropic 硬约束
+      //  max_tokens 必须 > thinking.budget_tokens）]
+      const param = hasEffort ? deriveThinkingParam(shape, effort) : null
+      if (param?.kind === "budget") {
+        body.thinking = { type: "enabled", budget_tokens: param.budgetTokens }
+        body.max_tokens = Math.max(16, param.budgetTokens + 8)
+      } else if (param?.kind === "adaptive") {
+        body.thinking = { type: "adaptive" }
       }
       return { url: `${base}/v1/messages`, headers, body }
     }
     const useResponses = !/^(gemini|kimi|mai)/.test(modelId)
     if (useResponses) {
       const body: Record<string, unknown> = { model: modelId, input: "回复：OK", max_output_tokens: 16 }
-      if (hasEffort) body.reasoning = { effort }
+      const param = hasEffort ? deriveThinkingParam(shape, effort) : null
+      if (param?.kind === "reasoningEffort") body.reasoning = { effort: param.value }
+      else if (hasEffort && !shape) body.reasoning = { effort } // 形状未知：沿用旧启发式兜底
       return { url: `${base}/responses`, headers: copilotHeaders(ghToken), body }
     }
     const body: Record<string, unknown> = { model: modelId, max_tokens: 8, messages: [{ role: "user", content: "回复：OK" }] }
@@ -88,8 +104,9 @@ export function classifyProbeStatus(raw: { status: "ok" | "down" | "unknown"; re
 
 async function probeOne(
   provider: string, modelId: string, effort: string, eps: ProbeEndpoints, ghToken: string | undefined,
+  shapes: Record<string, CopilotThinkingShape>,
 ): Promise<{ status: "ok" | "down" | "unknown"; reason?: string; latency_ms: number | null }> {
-  const req = buildRequest(provider, modelId, effort, eps, ghToken)
+  const req = buildRequest(provider, modelId, effort, eps, ghToken, shapes)
   if (!req) return { status: "unknown", reason: "无可用端点/凭证", latency_ms: null }
   const t0 = Date.now()
   try {
@@ -155,13 +172,16 @@ async function probeTargets(
     const gen0 = loadMatrix()?.target_generation
     const results: Record<string, any> = {}
     const gh = readCopilotGithubToken()
+    // [2026-09-01]-[对齐核心：探针前刷新 Copilot 真实能力形状缓存（TTL 24h 门控内部短路，fail-open）]
+    await refreshThinkingShapesIfStale(gh, eps.copilotApiBase ?? COPILOT_BASE)
+    const shapes = loadCachedThinkingShapes()
     const workers = Math.max(8, Math.min(32, sorted.length))
     let idx = 0
     async function run() {
       while (idx < sorted.length) {
         const key = sorted[idx++]!
         const [prov, model, eff] = targets.get(key)!
-        const r = await probeOne(prov, model, eff, eps, gh)
+        const r = await probeOne(prov, model, eff, eps, gh, shapes)
         // [2026-08-29]-[评分引擎：429 限流类失败不再写 down——写 strained（保留 reason/latency/checked_at），
         //  评分层 health=0.6 参与而非出局；其余类别维持原状]
         results[key] = { ...r, status: classifyProbeStatus(r), checked_at: new Date().toISOString() }

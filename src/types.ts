@@ -79,6 +79,9 @@ export interface ActivationState {
   activeModels: ModelKey[] // configured ∪ sessionModels
   activeShells: string[] // activeModels 展开的壳名
   restartRequired: string[] // 超集外 providerID 去重（壳注册需重启）
+  // [2026-09-01]-[加固：favorites/可见集里 provider 已知但 modelId 在超集中查无对应壳的脏数据（如手滑
+  // 收藏了不存在的 "glm/a"），既不贡献壳也不该静默消失——记下来供横幅/日志提示，帮用户定位]-
+  invalidConfigured: ModelKey[]
 }
 
 // 闸1 动态三层注入（gates 快照可选字段；缺省＝legacy 路径不启用）

@@ -156,6 +156,11 @@ export class MatrixManager {
       knownProviders: this.opts.knownProviders,
     })
     if (sameActivation(this.current_, next)) return this.current_
+    if (next.invalidConfigured.length > 0) {
+      // [2026-09-01]-[加固：favorites/可见集里存在 provider 已知但 modelId 查无壳的脏数据（如手滑收藏
+      // "glm/a"），此前静默丢弃无处诊断；sameActivation 已短路去重，此处只在真变化时记一次，不刷屏]
+      appendStatusLog(`可见集/收藏含无效模型（provider 已知但无此 modelId，未生成壳）：${next.invalidConfigured.join("、")}`)
+    }
     const prevKeys = new Set(this.lastActiveKeys)
     const activeKeys = new Set(this.activeMatrixKeysOf(next))
     const newTargets = [...activeKeys].filter((k) => !prevKeys.has(k)).sort()

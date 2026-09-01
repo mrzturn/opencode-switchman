@@ -26,7 +26,7 @@ export interface BannerInput {
   providerPolicy?: Partial<Record<"glm" | "copilot" | "deepseek", { observe: boolean; routing: boolean }>>
   doctorSummary?: string | null
   /** [2026-08-29]-[动态矩阵：[限制] 行追加 模式/watch/configStatus、restartRequired、models.dev 降级标注；缺省=legacy 原样] */
-  matrixInfo?: { mode: string; configStatus: string; watch: boolean; restartRequired?: string[]; degradedModels?: number; retiredModels?: number } | null
+  matrixInfo?: { mode: string; configStatus: string; watch: boolean; restartRequired?: string[]; invalidConfigured?: string[]; degradedModels?: number; retiredModels?: number } | null
 }
 
 function routeLine(lanes: Record<string, LaneResult> | null): string {
@@ -143,6 +143,11 @@ function limitLine(down: Set<string> | string[] | Map<string, string>, unknownCo
     line += ` | 矩阵: ${matrixInfo.mode}${matrixInfo.watch ? "·watch" : ""}/${matrixInfo.configStatus}`
     if (matrixInfo.restartRequired && matrixInfo.restartRequired.length > 0) {
       line += ` | 新 provider ${matrixInfo.restartRequired.join("、")} 待重启注册`
+    }
+    if (matrixInfo.invalidConfigured && matrixInfo.invalidConfigured.length > 0) {
+      // [2026-09-01]-[加固：收藏/可见集里有 provider 已知但 modelId 不存在的脏数据（如误收藏 "glm/a"），
+      // 直接提示而非静默不生效，方便用户定位是收藏配错而非路由算法 bug]
+      line += ` | 收藏含无效模型 ${matrixInfo.invalidConfigured.join("、")}（请检查 favorites）`
     }
     if (matrixInfo.degradedModels && matrixInfo.degradedModels > 0) {
       line += ` | models.dev 缺元数据：${matrixInfo.degradedModels} 模型降级单档 off`

@@ -3,20 +3,32 @@
 // [兜底两轨：config 注入若实测不生效，切换 writeShellFiles 落 ~/.config/opencode/agent/*.md]
 import type { ShellRegEntry } from "./types"
 import type { ShellDefinition } from "./catalog"
+import { loadCachedThinkingShapes, deriveThinkingParam } from "./copilot-thinking"
 
-// 思考档位 → agent options（family 分协议映射；off＝不附带推理参数）
-const CLAUDE_BUDGET: Record<string, number> = {
-  low: 1024, medium: 2048, high: 16384, xhigh: 32768, max: 32768,
-}
-
-export function effortOptions(family: string, effort: string): Record<string, unknown> | undefined {
+// [2026-09-01]-[对齐核心 packages/opencode/src/plugin/github-copilot/models.ts：github-copilot 池全部
+// family（含 claude）的 options 一律按该 modelId 真实 capabilities.supports 形状缓存推导
+// （copilot-thinking.json），不再按 family 猜协议/猜固定 budget 表；形状缓存缺失（冷启动/无 token）时
+// 才回退到旧按 family 分协议的启发式（fail-open，保委派可用而非直接不发参数）]
+export function effortOptions(
+  family: string, effort: string, modelId?: string, provider?: string,
+): Record<string, unknown> | undefined {
   if (!effort || effort === "off") return undefined
-  if (family === "claude") {
-    const budget = CLAUDE_BUDGET[effort]
-    return budget ? { thinking: { type: "enabled", budgetTokens: budget } } : undefined
+  if (provider === "github-copilot" && modelId) {
+    const shape = loadCachedThinkingShapes()[modelId]
+    const param = deriveThinkingParam(shape, effort)
+    if (param?.kind === "budget") return { thinking: { type: "enabled", budgetTokens: param.budgetTokens } }
+    if (param?.kind === "adaptive") {
+      return { thinking: { type: "adaptive", ...(modelId.includes("opus-4.7") ? { display: "summarized" } : {}) } }
+    }
+    if (param?.kind === "reasoningEffort") {
+      return { reasoningEffort: param.value, reasoningSummary: "auto", include: ["reasoning.encrypted_content"] }
+    }
+    if (shape) return undefined // 形状已知且三分支均不匹配 → 核心口径下该模型此档不带任何推理参数
+    // 形状缓存未就绪：回退旧按 family 启发式（下方通用兜底），不阻塞委派
   }
   // gpt/grok/gemini（openai 系 options.reasoningEffort）；glm/deepseek（openai-compatible reasoning_effort）
   if (family === "glm" || family === "deepseek") return { reasoning_effort: effort }
+  if (family === "claude") return undefined // claude 无形状缓存兜底：宁可不发，不猜错 budget 表
   return { reasoningEffort: effort }
 }
 
@@ -41,7 +53,7 @@ export function shellAgentConfig(s: ShellRegEntry): Record<string, unknown> {
     model: `${s.provider}/${s.modelId}`,
     prompt: SHELL_BODY,
   }
-  const options = effortOptions(s.family, s.effort)
+  const options = effortOptions(s.family, s.effort, s.modelId, s.provider)
   if (options) cfg.options = options
   if (s.capability === "ro") {
     cfg.permission = { edit: "deny", bash: "deny" }

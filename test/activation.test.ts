@@ -255,7 +255,7 @@ describe("复审 P1 修复（形状契约/首轮时序/双根路径/全字段等
       generation: 1, mode: "cli" as const, configStatus: "ok" as const,
       configured, sessionModels,
       activeModels: sortUniqueKeys([...configured, ...sessionModels]),
-      activeShells: ["glm-mx-53-high"], restartRequired: [],
+      activeShells: ["glm-mx-53-high"], restartRequired: [], invalidConfigured: [],
     })
     expect(sameActivation(mk(["a/m1"], ["b/m2"]), mk(["b/m2"], ["a/m1"]))).toBe(false) // 并集同、来源不同
     expect(sameActivation(mk(["a/m1"], ["b/m2"]), mk(["a/m1"], ["b/m2"]))).toBe(true)

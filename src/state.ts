@@ -27,6 +27,10 @@ export const paths = () => {
     capability: join(dir, "capability.json"),
     // [2026-08-29]-[动态矩阵 v1.3 新增状态文件]
     modelCatalog: join(dir, "model-catalog.json"),
+    // [2026-09-01]-[对齐 opencode 内置 github-copilot/models.ts：Copilot /models 真实 capabilities.supports
+    //  （messagesApi/reasoning_effort/adaptive_thinking/max_thinking_budget）缓存，TTL 24h；
+    //  取代 probe.ts/shells.ts 原先按 modelId 前缀猜测的固定 thinking 参数表]
+    copilotThinking: join(dir, "copilot-thinking.json"),
     shellSuperset: join(dir, "shell-superset.json"),
     // [2026-09-01]-[provider.list 结果跨重启缓存：仅在真实探测成功（非回退）时写入，下次启动直接
     //  用缓存建壳，免去每次重启都要重新等 provider.list 网络竞态——新 provider 由后台探测发现后

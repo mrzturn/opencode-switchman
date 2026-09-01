@@ -125,13 +125,17 @@ export function computeActivation(input: ActivationInput): ActivationState {
   const activeModels = sortUnique([...configured, ...sessionModels])
   const activeShells = new Set<string>()
   const restartRequired = new Set<string>()
+  const invalidConfigured = new Set<ModelKey>()
   // restartRequired：无论是否收紧，凡是「非壳会话真用过的模型」不在超集里且 provider 未知，都要提示重启
   for (const mk of activeModels) {
     const slash = mk.indexOf("/")
     const provider = slash > 0 ? mk.slice(0, slash) : ""
     const defs = input.shellsByModel.get(mk)
-    if ((!defs || defs.length === 0) && provider && !input.knownProviders.has(provider)) {
-      restartRequired.add(provider)
+    if (!defs || defs.length === 0) {
+      if (provider && !input.knownProviders.has(provider)) restartRequired.add(provider)
+      // [2026-09-01]-[provider 已知但 modelId 查无壳＝脏收藏（如 "glm/a"），非"需重启"而是"配置本身无效"，
+      // 单独归类，避免与真正待注册的新 provider 混淆，也避免被静默丢弃无处诊断]
+      else if (provider && input.knownProviders.has(provider) && configured.includes(mk)) invalidConfigured.add(mk)
     }
   }
   if (configured.length === 0) {
@@ -154,6 +158,7 @@ export function computeActivation(input: ActivationInput): ActivationState {
     activeModels,
     activeShells: [...activeShells].sort(),
     restartRequired: [...restartRequired].sort(),
+    invalidConfigured: [...invalidConfigured].sort(),
   }
 }
 
@@ -184,6 +189,7 @@ export function sameActivation(a: ActivationState, b: ActivationState): boolean 
     && eqList(a.activeModels, b.activeModels)
     && eqList(a.activeShells, b.activeShells)
     && eqList(a.restartRequired, b.restartRequired)
+    && eqList(a.invalidConfigured, b.invalidConfigured)
 }
 function eqList(x: readonly string[], y: readonly string[]): boolean {
   return x.length === y.length && x.join("\u0000") === y.join("\u0000")
