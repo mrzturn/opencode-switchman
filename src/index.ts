@@ -15,6 +15,7 @@ import {
   cleanExpired, ensureStateDir, stateDir, loadSupersetShells, writeJsonAtomic,
   appendStatusLog,
   writeRouteSnapshot,
+  writeQuotaBrief,
   loadProviderCache, saveProviderCache, nowIso,
 } from "./state"
 import { checkShell, noteUnknownAgent, shellLikeName, denyUninjected } from "./gates"
@@ -29,7 +30,7 @@ import { costOf, refreshCosts, costsStale } from "./cost"
 import { baseScoreDynamic, refreshCapability, capabilityStale } from "./capability"
 import { refreshMatrixIfStale, refreshActiveMatrixIfStale, probeKeys } from "./probe"
 import { injectShells, injectShellDefs } from "./shells"
-import { buildBanner, shortName } from "./banner"
+import { buildBanner, shortName, providerStatusEntries } from "./banner"
 import { refreshSelfUpdate, updateBannerText, ensureUpdateCommands, detectLoadMode } from "./selfupdate"
 import { billingOfProvider, loadUserConfig, resolveEffectiveOptions, routingPeakActive, routePolicy } from "./config"
 import { poolForProviderId } from "./provider-config"
@@ -482,6 +483,15 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             best: top ? shortName(top.shell) : null,
             degraded: r ? r.status.endsWith("*") : false,
           }
+        }))
+      } catch { /* fail-open */ }
+      // [2026-09-01]-[TUI 侧边栏「水位/峰值」面板：与 [水位] 横幅同源、常态可见，覆盖写入供 tui.tsx 轮询]
+      try {
+        writeQuotaBrief(providerStatusEntries({
+          quota: { glm: qv.glm, copilot: qv.copilot, deepseek: qv.deepseek },
+          providerPolicy: policy as any,
+          dsLowWarnCny: options.quota!.deepseek!.lowBalanceWarnCny,
+          peakOf: peakOfProvider,
         }))
       } catch { /* fail-open */ }
       bannerCache = { at: Date.now(), lines: lines2 }

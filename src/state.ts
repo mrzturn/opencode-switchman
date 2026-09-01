@@ -45,6 +45,8 @@ export const paths = () => {
     statusLog: join(dir, "status-log.json"),
     // [2026-09-01]-[TUI 侧边栏新增「各任务档位实时最佳候选」面板：横幅重建时同步落盘，供 tui.tsx 轮询渲染]
     routeSnapshot: join(dir, "route-snapshot.json"),
+    // [2026-09-01]-[TUI 侧边栏新增「provider 水位/峰值」面板：与 [水位] 横幅同源、常态可见，供 tui.tsx 轮询渲染]
+    quotaBrief: join(dir, "quota-brief.json"),
   }
 }
 
@@ -65,6 +67,15 @@ export type RouteSnapshotEntry = { lane: string; best: string | null; degraded: 
 export function writeRouteSnapshot(entries: RouteSnapshotEntry[]): void {
   try {
     writeJsonAtomic(paths().routeSnapshot, { ts: nowIso(), entries })
+  } catch { /* fail-open：快照写入失败不影响主流程 */ }
+}
+
+// [2026-09-01]-[provider 水位/峰值快照：整体覆盖写入，供侧边栏「水位」面板渲染；结构与 banner.ts
+//  providerStatusEntries 同源（observe=false 的 provider 已在调用方过滤，不出现在此文件里）]
+export type QuotaBriefEntry = { pool: string; label: string; text: string; observeOnly: boolean; peakActive: boolean; usedPct: number | null }
+export function writeQuotaBrief(entries: QuotaBriefEntry[]): void {
+  try {
+    writeJsonAtomic(paths().quotaBrief, { ts: nowIso(), entries })
   } catch { /* fail-open：快照写入失败不影响主流程 */ }
 }
 
