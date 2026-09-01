@@ -151,9 +151,10 @@ export async function run(argv = process.argv.slice(2), io = {}) {
 
   const cfgDir = configDirOf(env, home)
   const mainPath = firstExisting(cfgDir, ["opencode.jsonc", "opencode.json"]) ?? join(cfgDir, "opencode.jsonc")
-  const tuiPath = firstExisting(cfgDir, ["tui.jsonc", "tui.json"])
-    ?? (existsSync(mainPath) ? null : join(cfgDir, "tui.jsonc")) // 全新安装时顺带建 tui 配置（侧边栏面板）
-  const targets = [{ path: mainPath, text: tuiPath === mainPath || existsSync(mainPath) ? readFileSync(mainPath, "utf8") : "" }]
+  // [2026-09-01]-[升级场景（有 opencode 配置、tui 缺失）时 tui 被静默跳过，与 README create-if-missing 承诺不符]-
+  //  改为缺失即补建（侧边栏面板），与 plugin-mode.ts 口径一致
+  const tuiPath = firstExisting(cfgDir, ["tui.jsonc", "tui.json"]) ?? join(cfgDir, "tui.jsonc")
+  const targets = [{ path: mainPath, text: existsSync(mainPath) ? readFileSync(mainPath, "utf8") : "" }]
   if (tuiPath) targets.push({ path: tuiPath, text: existsSync(tuiPath) ? readFileSync(tuiPath, "utf8") : '{\n  "$schema": "https://opencode.ai/tui.json",\n  "plugin": []\n}\n' })
 
   const actions = []

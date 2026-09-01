@@ -105,6 +105,16 @@ describe("update-cli run 端到端（沙箱 env，不联网）", () => {
     expect(out.actions.map((a) => a.action).sort()).toEqual(["created", "inserted"])
     void readdirSync(cfg)
   })
+  test("升级场景但 tui 配置缺失：tui.jsonc 补建并写入 spec（create-if-missing）", async () => {
+    const home = sandbox()
+    const cfg = join(home, ".config", "opencode")
+    mkdirSync(cfg, { recursive: true })
+    writeFileSync(join(cfg, "opencode.jsonc"), '{\n  "plugin": ["opencode-switchman@0.1.0"]\n}\n')
+    const env = { XDG_CONFIG_HOME: join(home, ".config"), XDG_CACHE_HOME: join(home, ".cache") }
+    const out = await run(["--version", "0.2.0"], { env, home, log: () => {} })
+    expect(JSON.parse(readFileSync(join(cfg, "tui.jsonc"), "utf8")).plugin).toEqual(["opencode-switchman@0.2.0"])
+    expect(out.actions.find((a) => a.file === join(cfg, "tui.jsonc"))?.action).toBe("inserted")
+  })
   test("无效版本号直接报错", async () => {
     const home = sandbox()
     await expect(run(["--version", "abc"], { env: {}, home, log: () => {} })).rejects.toThrow("无效版本号")
