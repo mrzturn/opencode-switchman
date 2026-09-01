@@ -151,7 +151,7 @@ describe("baseScoreDynamic", () => {
   test("api 精确命中（版本透出）", () => {
     writeIndex({})
     expect(baseScoreDynamic("glm-5.3")).toEqual({
-      score: 0.7, tier: "B", source: "api", version: "test-ver-1", matchedAs: "glm-5.3",
+      score: 0.7, rawScore: 47, tier: "B", source: "api", version: "test-ver-1", matchedAs: "glm-5.3",
     })
   })
   test("api 最长前缀命中（≥4 字符）", () => {
@@ -242,11 +242,12 @@ describe("评分链接入", () => {
   beforeAll(() => {
     mkdirSync(paths().dir, { recursive: true })
   })
-  test("scoreShell：baseSource=api + baseVersion，乘积链不变", () => {
+  test("scoreShell：baseSource=api + 原始能力指数 + baseVersion，乘积链不变", () => {
     rmSync(paths().capability, { force: true })
     writeIndex({})
     const b = scoreShell(scoreInput({ modelId: "glm-5.3" }))
     expect(b.base).toBeCloseTo(0.7)
+    expect(b.rawCapability).toBe(47)
     expect(b.baseSource).toBe("api")
     expect(b.baseVersion).toBe("test-ver-1")
     expect(b.total).toBeCloseTo(b.base * b.effortFit * b.health * b.water * b.costBias * b.peak)

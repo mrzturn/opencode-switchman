@@ -49,7 +49,6 @@ import type { MatrixModeOption } from "./activation"
 //  opencode 会把它们当插件工厂调用产生 null hooks，炸掉 config 钩子与 provider.list]-[修复启动报错]
 import { chatParamsModelKey, sessionDeletedId, sessionCreatedInfo } from "./helpers"
 import { MatrixManager } from "./matrix-manager"
-import { syncIfDiverged } from "./sync"
 import { laneBaseChain } from "./lane-policy"
 import {
   buildShells, loadCatalog, bundledModelIndex, isConversational, toManifestEntry, freeFloorModels,
@@ -122,6 +121,14 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
 
   function clearBannerCache(): void {
     bannerCache = null
+  }
+
+  /** 侧栏只轮询落盘快照；刷新后主动重建，不能依赖下一次聊天请求读取横幅。 */
+  function refreshSidebarState(): void {
+    try {
+      clearBannerCache()
+      bannerLines()
+    } catch { /* fail-open */ }
   }
 
   function routingWithRealFailures(routing: ReturnType<typeof loadContext>["routing"]) {
@@ -278,9 +285,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         copilot: policy.copilot.observe,
       } })
       // [2026-09-01]-[探针实时联动：待启动探针/矩阵/能力刷新真正落地后再写侧栏快照，避免读到刷新前的旧数据]-[fail-open 不阻塞启动]
-      Promise.allSettled([costsP, capP, matrixP]).then(() => {
-        try { bannerCache = null; bannerLines() } catch { /* fail-open */ }
-      }).catch(() => {})
+      Promise.allSettled([costsP, capP, matrixP]).then(refreshSidebarState).catch(() => {})
       // [2026-08-28]-[探针/配额/成本只在启动跑一次，启动竞态（如核心晚回写 token）或高峰限流后永不自愈]-
       // [10min 周期刷新：矩阵 TTL 内自动跳过，配额/成本由各自 TTL 兜底；timer unref 不阻进程退出]
       // [2026-08-29]-[动态矩阵只探激活组合（增量，ro 别名共享 key 去重）；legacy 保持全量]
@@ -298,9 +303,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           // [2026-08-31]-[动态能力分级：10min 周期同频检查，capabilityStale/TTL 24h 门控实际拉取]
           const capP = capabilityStale() && options.capability!.enabled ? refreshCapability(options.capability!).catch(() => {}) : Promise.resolve()
           // [2026-09-01]-[探针实时联动：10min 周期刷新落地后立即使横幅缓存失效并重写侧栏快照，不等下一条聊天消息]
-          Promise.allSettled([matrixP, costsP, capP]).then(() => {
-            try { bannerCache = null; bannerLines() } catch { /* fail-open */ }
-          }).catch(() => {})
+           Promise.allSettled([matrixP, costsP, capP]).then(refreshSidebarState).catch(() => {})
         } catch { /* fail-open */ }
       }, 600_000)
       if (typeof timer === "object" && timer !== null && "unref" in timer) (timer as any).unref()
@@ -593,8 +596,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         if (freeFloor.length > 0) appendStatusLog(`保底=OpenCode Zen 免费模型 ${freeFloor.length} 个（catalog ${catalog.status}）`)
         else appendStatusLog(`保底回退静态清单（catalog ${catalog.status}，免费模型 0 个）`)
         // [2026-09-01]-[加固：configured（可见集/favorites）此前无脑并入 supersetModels，provider 不存在的
-        // 脏收藏（如手滑收藏 "glm/a"，provider "glm" 并非真实已连接 provider——真实 GLM 走
-        // "zhipuai-coding-plan"）会被 buildShells 当真实模型建出可调度但必挂的壳，且污染下方 knownProviders
+        // 脏收藏（如手滑收藏 "provider/not-a-model"，provider 不在真实已连接 provider 集）此前会被
+        // buildShells 当真实模型建出可调度但必挂的壳，且污染下方 knownProviders
         // 令 computeActivation 的"provider 已知"判定失真、永远检测不到这条脏数据。改为先按真实已连接
         // provider 集过滤，被过滤的单独记日志，不再被动提升为"看似合法"的壳]
         const realKnownProviders = new Set(providerModels.providers)
@@ -635,17 +638,18 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           watchEnabled: options.matrix!.watch === true,
           onRecompute: (state, newTargets, source) => {
             clearBannerCache()
-            if (source === "config") syncIfDiverged(stateRoot, runMode as "desktop" | "cli")
             // [2026-08-29]-[配置面变化即探：desktop 可见集开关/TUI favorites 增删（config 源）全量重探
             //  激活组合、不等 TTL；session/startup 源维持仅探新增组合；10min 周期刷新保持不变]-
-            const targets = source === "config" ? (manager?.activeMatrixKeys() ?? newTargets) : newTargets
-            if (targets.length > 0) probeKeys(targets, probeEndpoints()).catch(() => {})
+           const targets = source === "config" ? (manager?.activeMatrixKeys() ?? newTargets) : newTargets
+            // [2026-09-01]-[favorites/可见集变更后，侧栏快照必须等待强制全量探针完成后主动重写；
+            // 不能依赖下一条聊天消息触发 bannerLines，否则推荐会长期显示旧路由]-[配置改动即时可见]
+            const probeP = targets.length > 0
+              ? probeKeys(targets, probeEndpoints()).catch(() => {})
+              : Promise.resolve()
+            probeP.then(refreshSidebarState).catch(() => {})
             // [2026-08-31]-[改落盘 status-log 供 tui.tsx 侧边栏渲染，不再刷屏 stderr 遮挡输入框]-[高频重算通知]
             appendStatusLog(`激活矩阵已重算（gen=${state.generation}，激活壳 ${state.activeShells.length}，探针 ${source}×${targets.length}）`)
           },
-          // [2026-08-29]-[复审P1-1：被动侧文件变更被 sameActivation 短路时 onRecompute 不触发——
-          //  debounce 尾部无条件同步（同集 no-op，无环）；onRecompute 里的 config 源同步保留为变更时的即时路径]-
-          onConfigSync: () => syncIfDiverged(stateRoot, runMode as "desktop" | "cli"),
         })
         manager.recompute(configured)
         manager.start()

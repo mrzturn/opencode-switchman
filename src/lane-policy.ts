@@ -17,7 +17,7 @@ export interface LaneShellAttr {
 }
 
 /** 能力分结果（tier 供分组排序主键；与 capability.DynamicBaseResult 形状同源） */
-export interface CapabilityScore { score: number; tier: Tier | null }
+export interface CapabilityScore { score: number; tier: Tier | null; rawScore?: number }
 
 export interface LanePolicyInput {
   /** 兼容旧调用形状；候选不再由该静态列表决定。 */
@@ -70,7 +70,12 @@ export function computeLaneChain(shells: readonly LaneAlgorithmShell[], capabili
       const cap = capabilityOf(shell.modelId)
       const capScore = typeof cap === "number" ? cap : cap.score
       const tierRank = typeof cap === "number" ? 0 : (cap.tier ? TIER_RANK[cap.tier] : 0)
-      return { shell, score: capScore / (1 + effortPenalty) / (1 + visionPenalty) * billingBoost * unknownPenalty, tierRank }
+       return {
+         shell,
+         score: capScore / (1 + effortPenalty) / (1 + visionPenalty) * billingBoost * unknownPenalty,
+         tierRank,
+         rawScore: typeof cap === "number" ? undefined : cap.rawScore,
+       }
     })
   // 每模型只留一个档位/面：普通 lane 优先 rw，review 优先 ro；无优先面时才允许另一面兜底。
   const preferred = spec.ro ? "ro" : "rw"
@@ -79,8 +84,10 @@ export function computeLaneChain(shells: readonly LaneAlgorithmShell[], capabili
   for (const candidate of ranked) if (!onePerModel.has(candidate.shell.modelId)) onePerModel.set(candidate.shell.modelId, candidate)
   const ordered = [...onePerModel.values()]
     .sort((a, b) => {
-      if (a.tierRank !== b.tierRank) return a.tierRank - b.tierRank
-      if (b.score !== a.score) return b.score - a.score
+       if (a.tierRank !== b.tierRank) return a.tierRank - b.tierRank
+       if (b.score !== a.score) return b.score - a.score
+       // tier 保证跨档不逆序；同档总分持平时再用真实能力指数，避免 S/A/B/C 离散化退化为名称排序。
+       if (a.rawScore !== undefined || b.rawScore !== undefined) return (b.rawScore ?? -Infinity) - (a.rawScore ?? -Infinity)
       const ac = typeof a.shell.cost === "number" ? a.shell.cost : Number.POSITIVE_INFINITY
       const bc = typeof b.shell.cost === "number" ? b.shell.cost : Number.POSITIVE_INFINITY
       return ac - bc || a.shell.name.localeCompare(b.shell.name)

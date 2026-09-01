@@ -41,6 +41,8 @@ export type BaseSourceKind = "api" | "bundled" | "exact" | "prefix" | "family" |
 
 export interface DynamicBaseResult {
   score: number
+  /** 原始能力指数：仅在同 tier 内用于细粒度排序，避免 tier 离散化抹平真实差异。 */
+  rawScore?: number
   tier: Tier
   source: BaseSourceKind
   version: string | null // api/bundled 命中时非空（capability.json 实时版本 / bundled-xx 内置快照版本）
@@ -237,7 +239,7 @@ export function baseScoreFromCapabilityIndex(modelId: string, idx: CapabilityInd
   const hit = norm ? apiMatch(idx, norm) : null
   if (!hit) return null
   const tier = tierOfScore(hit.entry.score, idx.thresholds)
-  return { score: TIER_SCORE[tier], tier, source: idx.bundled ? "bundled" : "api", version: idx.version, matchedAs: hit.matchedAs }
+  return { score: TIER_SCORE[tier], rawScore: hit.entry.score, tier, source: idx.bundled ? "bundled" : "api", version: idx.version, matchedAs: hit.matchedAs }
 }
 
 // ---- 拉取层（AA → OR 链式回退；失败沿用 last-good；全链 fail-open 不抛出）----

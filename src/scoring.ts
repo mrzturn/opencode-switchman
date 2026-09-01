@@ -48,6 +48,8 @@ export interface ScoreInput {
 
 export interface ScoreBreakdown {
   base: number
+  /** 第三方能力源的原始指数；tier 相同才参与排序。 */
+  rawCapability?: number
   baseSource: string
   /** [2026-08-31]-[动态能力分级：api 命中时为 capability.json 数据版本（决策日志追溯）；策展回退为 null] */
   baseVersion?: string | null
@@ -127,6 +129,7 @@ export function scoreShell(input: ScoreInput): ScoreBreakdown {
   const total = base.score * effortFit * health * water * costBias * peak * billingBoost * unknownPenalty
   return {
     base: base.score,
+    rawCapability: base.rawScore,
     baseSource: base.source,
     baseVersion: base.version,
     effortFit,
@@ -239,6 +242,8 @@ export function rankCandidates<T extends Rankable>(
       const bb = breakdowns.get(b.key)!
       return TIER_RANK[ba.tier] - TIER_RANK[bb.tier] ||
         bb.total - ba.total ||
+        // tier 是跨档硬门；同档总分持平时再用真实能力指数，不能因统一映射到 TIER_SCORE 而平分。
+        (bb.rawCapability ?? -Infinity) - (ba.rawCapability ?? -Infinity) ||
         costOfKey(a) - costOfKey(b) ||
         (inputOrder.get(a.key) ?? 0) - (inputOrder.get(b.key) ?? 0)
     })

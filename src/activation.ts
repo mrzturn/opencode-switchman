@@ -133,12 +133,13 @@ export function computeActivation(input: ActivationInput): ActivationState {
     const defs = input.shellsByModel.get(mk)
     if (!defs || defs.length === 0) {
       if (provider && !input.knownProviders.has(provider)) restartRequired.add(provider)
-      // [2026-09-01]-[provider 已知但 modelId 查无壳＝脏收藏（如 "glm/a"），非"需重启"而是"配置本身无效"，
+      // [2026-09-01]-[provider 已知但 modelId 查无壳＝脏收藏，非"需重启"而是"配置本身无效"，
       // 单独归类，避免与真正待注册的新 provider 混淆，也避免被静默丢弃无处诊断]
       else if (provider && input.knownProviders.has(provider) && configured.includes(mk)) invalidConfigured.add(mk)
     }
   }
-  if (configured.length === 0) {
+  const configuredShells = configured.some((mk) => input.shellsByModel.has(mk))
+  if (!configuredShells) {
     // 未配置可见集：默认全部已注入超集可调度（不因 sessionModels 而收紧）
     for (const defs of input.shellsByModel.values()) {
       for (const d of defs) activeShells.add(d.name)

@@ -235,7 +235,7 @@ function limitLine(down: Set<string> | string[] | Map<string, string>, unknownCo
       line += ` | 新 provider ${matrixInfo.restartRequired.join("、")} 待重启注册`
     }
     if (matrixInfo.invalidConfigured && matrixInfo.invalidConfigured.length > 0) {
-      // [2026-09-01]-[加固：收藏/可见集里有 provider 已知但 modelId 不存在的脏数据（如误收藏 "glm/a"），
+      // [2026-09-01]-[加固：收藏/可见集里有 provider 已知但 modelId 不存在的脏数据，
       // 直接提示而非静默不生效，方便用户定位是收藏配错而非路由算法 bug]
       line += ` | 收藏含无效模型 ${matrixInfo.invalidConfigured.join("、")}（请检查 favorites）`
     }

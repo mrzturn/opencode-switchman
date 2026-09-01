@@ -250,6 +250,16 @@ describe("复审 P1 修复（形状契约/首轮时序/双根路径/全字段等
       { providerID: "deepseek", modelID: "deepseek-v4-pro", visibility: "show" }, // 双 show → 保留
     ] } })).toEqual(["deepseek/deepseek-v4-pro"])
   })
+  test("只有无效收藏时不收紧：保留全部已注入壳，同时标记脏配置", () => {
+    const shells = new Map<ModelKey, any[]>([["glm/glm-5.3", [{ name: "glm-mx-53-high" }]]])
+    const state = computeActivation({
+      generation: 1, mode: "cli", configStatus: "ok",
+      configured: ["glm/not-a-model"], sessionModels: [], shellsByModel: shells,
+      knownProviders: new Set(["glm"]),
+    })
+    expect(state.activeShells).toEqual(["glm-mx-53-high"])
+    expect(state.invalidConfigured).toEqual(["glm/not-a-model"])
+  })
   test("sameActivation 全字段：并集相同但 configured/sessionModels 互换 → 不等价（切模快照须反映新会话信息）", () => {
     const mk = (configured: ModelKey[], sessionModels: ModelKey[]) => ({
       generation: 1, mode: "cli" as const, configStatus: "ok" as const,
@@ -489,8 +499,8 @@ describe("闸1 三层语义（未注入/同名冲突/未激活）", () => {
     const r = checkShell("copilot-mx-terra-high", shell, metaOf("main"), s1)
     expect(r.deny).toContain("未激活")
     expect(r.deny).toContain("模型管理")
-    // [2026-08-31]-[去厂商化：DS 恒尾删除后 tier 分组主导——S 档 api 壳（ds-v4p）排 A 档订阅壳（glm-53）前]
-    expect(r.deny).toContain("请改派 ds-mx-v4p-high")
+    // 同档候选以动态能力指数排序；当前内置索引中 glm-5.3 高于 deepseek-v4-pro。
+    expect(r.deny).toContain("请改派 glm-mx-53-high")
     // 激活壳放行
     expect(checkShell("glm-mx-53-high", s1.registry!["glm-mx-53-high"]!, metaOf("main"), s1).deny).toBeNull()
   })

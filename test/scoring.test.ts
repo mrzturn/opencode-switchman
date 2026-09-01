@@ -21,6 +21,7 @@ import type { ScoreInput, WaterFactor, Rankable, RankContext, DecisionRecord } f
 import { classifyProbeStatus } from "../src/probe"
 import { classifyFailure } from "../src/failclass"
 import { paths } from "../src/state"
+import { resetCapabilityCache } from "../src/capability"
 import type { ShellRegEntry } from "../src/types"
 
 const W: WaterFactor = {}
@@ -130,6 +131,28 @@ describe("scoreShell", () => {
 
 // ================= 3. rankCandidates =================
 describe("rankCandidates", () => {
+  test("同 tier 按原始能力指数排序，而非壳名顺序", () => {
+    try {
+      writeFileSync(join(process.env.SWITCHMAN_STATE!, "capability.json"), JSON.stringify({
+        source: "artificial-analysis", version: "within-tier", fetched_at: Date.now() / 1000,
+        thresholds: { S: 80, A: 60, B: 40 },
+        models: { "gpt-5.6-luna": { score: 93.2 }, "gpt-5.6-terra": { score: 98.8 } },
+      }))
+      resetCapabilityCache()
+      const r = rankCandidates([
+        rankable({ key: "luna", modelId: "gpt-5.6-luna", pool: "copilot", family: "gpt" }),
+        rankable({ key: "terra", modelId: "gpt-5.6-terra", pool: "copilot", family: "gpt" }),
+      ], ctx())
+      expect(r.ranked.map((s) => s.key)).toEqual(["terra", "luna"])
+      expect(r.breakdowns.get("terra")!.rawCapability).toBe(98.8)
+    } finally {
+      writeFileSync(join(process.env.SWITCHMAN_STATE!, "capability.json"), JSON.stringify({
+        source: "artificial-analysis", version: "fixed-empty", fetched_at: Date.now() / 1000,
+        thresholds: { S: 62, A: 55, B: 45 }, models: {},
+      }))
+      resetCapabilityCache()
+    }
+  })
   test("tier 分组不可逆：C 档完美系数不越 A 档最差系数", () => {
     const shells = [
       rankable({ key: "a", modelId: "glm-5.3", effort: "off", matrixStatus: "strained", latencyMs: 999 }),

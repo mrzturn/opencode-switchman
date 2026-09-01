@@ -33,9 +33,6 @@ export interface MatrixManagerOptions {
   pollMs?: number
   /** 重算回调：清横幅缓存＋提交探针差集；source 区分触发面（config=可见集/favorites 变化） */
   onRecompute?: (state: ActivationState, newTargets: string[], source: RecomputeSource) => void
-  /** [2026-08-29]-[复审P1-1：被动侧文件变更被 sameActivation 短路吞掉导致反向镜像不触发——
-   *  debounce 回调里无条件调用（短路也调）；syncIfDiverged 同集 no-op，写回后收敛无环] */
-  onConfigSync?: () => void
 }
 
 /** 重算触发源：config=配置面文件变化（desktop 可见集开关/TUI favorites 增删）；
@@ -158,7 +155,7 @@ export class MatrixManager {
     if (sameActivation(this.current_, next)) return this.current_
     if (next.invalidConfigured.length > 0) {
       // [2026-09-01]-[加固：favorites/可见集里存在 provider 已知但 modelId 查无壳的脏数据（如手滑收藏
-      // "glm/a"），此前静默丢弃无处诊断；sameActivation 已短路去重，此处只在真变化时记一次，不刷屏]
+      // "provider/not-a-model"），此前静默丢弃无处诊断；sameActivation 已短路去重，此处只在真变化时记一次，不刷屏]
       appendStatusLog(`可见集/收藏含无效模型（provider 已知但无此 modelId，未生成壳）：${next.invalidConfigured.join("、")}`)
     }
     const prevKeys = new Set(this.lastActiveKeys)
@@ -259,11 +256,6 @@ export class MatrixManager {
       this.debounceTimer = null
       this.recomputeWithRetry().catch((exc) => appendStatusLog(`重算 fail-open: ${exc}`))
       this.refreshMtimes()
-      try {
-        this.opts.onConfigSync?.()
-      } catch (exc) {
-        appendStatusLog(`配置面同步 fail-open: ${exc}`)
-      }
     }, delay ?? this.opts.debounceMs)
     unref(this.debounceTimer)
   }
