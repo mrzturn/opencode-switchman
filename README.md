@@ -23,7 +23,7 @@ If you hold multiple model subscriptions (GitHub Copilot premium credits, Zhipu 
   - **DeepSeek**: custom provider (`deepseek` + apiKey)
 - Zero-config credentials: the plugin reads them **read-only** from opencode's auth layer (auth.json / provider options / env vars) — it never stores secrets or refreshes tokens itself
 
-### Option 1: npm (recommended, available after first release)
+### Option 1: npm (recommended)
 
 Add to your opencode config (`~/.config/opencode/opencode.json` or project `opencode.json`):
 
@@ -87,7 +87,11 @@ The log also shows `[opencode-switchman] injected N model shells (agents)` — N
 
 ### Sidebar status panel (TUI plugin, optional)
 
-All non-banner runtime notices (matrix refresh, model retirement, breaker trips, probe results, etc.) that used to spam `stderr` and cover the input box are now written to a 20-entry ring buffer and rendered in a dedicated `switchman` panel at the bottom of the TUI sidebar (polling every 2s, showing the last 4 lines) — the input box stays clean. This is a separate TUI Slot plugin (`src/tui.tsx`, exported at `opencode-switchman/tui`) with its own registration path, independent of the server-side hook plugin above.
+v0.2.0 adds a live `switchman` panel at the bottom of the OpenCode TUI sidebar. It turns routing state into an at-a-glance operational view: observed provider water levels with peak-period and gradient warnings, the best current candidate for each of the six lanes, restart-required badges for newly detected models/providers, and the most recent status notice. The panel polls local state every 2 seconds; non-banner notices no longer flood `stderr` or cover the input box. It is a separate TUI Slot plugin (`src/tui.tsx`, exported at `opencode-switchman/tui`) and is independent of the server-side hook plugin above.
+
+![Switchman sidebar: quotas, peak periods, lane candidates, and status notice](docs/assets/tui-sidebar-status.png)
+
+![OpenCode model picker alongside the Switchman TUI integration](docs/assets/tui-model-picker.png)
 
 Since TUI plugins have no directory auto-discovery, add the same package spec to your **`tui.jsonc`/`tui.json`** `plugin` array (npm install and `opencode plugin <spec>` do this automatically; only needed manually if you hand-edit config or use `mode:local`/`mode:prod` from source):
 
@@ -96,6 +100,19 @@ Since TUI plugins have no directory auto-discovery, add the same package spec to
   "plugin": ["opencode-switchman"]
 }
 ```
+
+## What's New in v0.2.0
+
+v0.2.0 evolves switchman from a fixed multi-provider dispatcher into a live, capability-aware orchestration layer.
+
+- **TUI operations view**: optional sidebar panel for water levels, peak windows, the six lane leaders, restart-required state, and the latest runtime notice.
+- **Dynamic activation matrix**: synchronizes desktop visible models and CLI/TUI favorites, falls back to active session models, and refreshes probes immediately when the model surface changes.
+- **Capability-aware routing**: dynamically classifies models into capability tiers, keeps stronger tiers ahead of weaker tiers, then uses effort fit, health, water level, peak timing, explicit billing, and unknown-model confidence as transparent tie-breakers.
+- **Provider-neutral policy**: any official or custom OpenCode provider can participate. Explicit `billing: "subscription" | "api"` replaces vendor-specific routing preferences.
+- **Safer live operations**: real-dispatch isolation, retirement of repeatedly missing models, route-decision audit logs, and clearer restart/update guidance make routing failures observable and self-healing.
+- **Simpler configuration and upgrades**: all plugin settings now live in generated `opencode-switchman.jsonc`; legacy tuple options are diagnosed and supported for one compatibility release. `/handover` preserves the active model, agent, and reasoning setting in a new compact session.
+
+See the complete, user-facing release notes and migration guide in [CHANGELOG.md](./CHANGELOG.md).
 
 ### Options (opencode-switchman.jsonc)
 

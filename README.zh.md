@@ -23,7 +23,7 @@ OpenCode 六档壳矩阵编排插件——让主模型成为调度员，把任�
   - **DeepSeek**：自定义 provider（`deepseek` + apiKey）
 - 凭证零配置：插件从 opencode 鉴权层（auth.json / provider options / 环境变量）**只读**获取，不另存密钥、绝不自行刷新 token
 
-### 方式一：npm 安装（推荐，发布后可用）
+### 方式一：npm 安装（推荐）
 
 在 opencode 配置（`~/.config/opencode/opencode.json` 或项目 `opencode.json`）中添加：
 
@@ -87,7 +87,11 @@ bun run build   # 生成 dist/opencode-switchman.js
 
 ### 侧边栏状态面板（TUI 插件，可选）
 
-原先会刷屏挡输入框的 `stderr` 非横幅通知（矩阵刷新、模型下线、熔断、探针结果等）现已改为写入 20 条环形日志，在 TUI 侧边栏底部一个独立的 `switchman` 面板中滚动展示（每 2 秒轮询，只显示最近 4 条）——输入框不再被遮挡。这是一套独立的 TUI Slot 插件（`src/tui.tsx`，导出路径 `opencode-switchman/tui`），有自己的注册路径，与上面的 server 端 hook 插件互相独立。
+v0.2.0 在 OpenCode TUI 侧边栏底部新增实时 `switchman` 面板，把路由状态收敛成一眼可读的运行视图：已观察 provider 的水位、高峰标记与渐变告警色，六个任务档位当前最佳候选，新增模型/provider 的「需要重启」标记，以及最新一条运行通知。面板每 2 秒轮询本地状态；原先会刷屏、遮挡输入框的非横幅 `stderr` 通知不再干扰操作。这是一套独立的 TUI Slot 插件（`src/tui.tsx`，导出路径 `opencode-switchman/tui`），与上面的 server 端 hook 插件互相独立。
+
+![Switchman 侧边栏：水位、高峰、任务档位候选与状态通知](docs/assets/tui-sidebar-status.png)
+
+![OpenCode 模型选择器与 Switchman TUI 集成](docs/assets/tui-model-picker.png)
 
 TUI 插件没有目录自动发现机制，需要在 **`tui.jsonc`/`tui.json`** 的 `plugin` 数组里加入同一个包 spec（npm 安装或 `opencode plugin <spec>` 会自动完成；只有手改配置或从源码用 `mode:local`/`mode:prod` 时才需要手动确认）：
 
@@ -96,6 +100,19 @@ TUI 插件没有目录自动发现机制，需要在 **`tui.jsonc`/`tui.json`** 
   "plugin": ["opencode-switchman"]
 }
 ```
+
+## v0.2.0 更新内容
+
+v0.2.0 将 switchman 从固定多供应商调度器升级为实时、能力感知的编排层。
+
+- **TUI 运行视图**：可选侧边栏面板集中展示水位、高峰窗口、六档链首、待重启状态和最新运行通知。
+- **动态激活矩阵**：双向同步 desktop 可见模型和 CLI/TUI favorites；未配置时以活跃会话模型兜底；模型面变化即刻重算并刷新探针。
+- **能力感知路由**：运行期动态分级，强模型优先于低级模型；再以档位亲和、健康、水位、高峰、显式计费和未知模型置信度做可追溯的同级排序。
+- **供应商中立策略**：任意 OpenCode 官方或自定义 provider 都可参与；由显式 `billing: "subscription" | "api"` 取代厂商专属路由偏好。
+- **更可靠的在线运行**：新增实调失败隔离、重复缺失模型下线、路由决策审计日志和更清晰的重启/更新提示，让失败可观察、可自愈。
+- **更简单的配置与升级**：全部插件配置统一到自动生成的 `opencode-switchman.jsonc`；旧元组 options 会被诊断，并再兼容一个版本。`/handover` 可在新会话中保留当前模型、agent 与思考档位。
+
+完整的用户向发布说明与升级指南见 [CHANGELOG.md](./CHANGELOG.md)。
 
 ### 配置项（opencode-switchman.jsonc）
 

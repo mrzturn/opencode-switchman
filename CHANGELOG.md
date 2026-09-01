@@ -1,0 +1,71 @@
+# Changelog
+
+[中文](#更新日志)
+
+This project follows [Semantic Versioning](https://semver.org/). Release notes describe user-visible behavior; implementation details remain in the technical specification and commit history.
+
+## [0.2.0] - 2026-09-01
+
+### Highlights
+
+- Added the optional OpenCode TUI `switchman` sidebar panel. It shows observed provider water levels, peak periods, six lane leaders, restart-required state, and the latest status message without obscuring the input area.
+- Replaced the static shell list with a dynamic activation matrix. Desktop visible models and CLI/TUI favorites synchronize bidirectionally; active session models provide a fallback; a model-surface change recomputes the matrix and refreshes probes immediately.
+- Added capability-tier routing and transparent scoring. Higher capability tiers remain ahead, while effort fit, health, water level, peak window, explicit billing, and unknown-model confidence resolve same-tier ordering.
+- Made routing provider-neutral. Any official or custom OpenCode provider is valid; the explicit `billing` setting now controls the subscription/API preference instead of vendor-specific rules.
+- Added real-dispatch isolation, repeatedly-missing model retirement, route-decision audit logs, restart-required indicators, and production self-update commands.
+- Added `/handover`, which creates a compact continuation session while preserving the active model, agent, and reasoning effort.
+
+### Configuration and upgrade notes
+
+- Plugin configuration now lives in generated `opencode-switchman.jsonc`. Keep only the package entry in OpenCode's `plugin` array.
+- Legacy tuple configuration (`["opencode-switchman", { ... }]`) remains supported for this compatibility release. `/switchman-doctor` identifies migration work with `SWM042` through `SWM044`; migrate before the next major version.
+- If upgrading from the renamed `switchman.js` plugin, remove `~/.config/opencode/plugins/switchman.js` to prevent duplicate injection. The current state directory is `~/.config/opencode/opencode-switchman/`.
+- To use the sidebar, ensure the same package spec is present in `tui.jsonc` or `tui.json`. `opencode plugin <spec>`, `bun run mode:local`, and `bun run mode:prod` manage this automatically.
+
+### Screenshot assets
+
+The release documentation uses these repository assets:
+
+- `docs/assets/tui-sidebar-status.png`
+- `docs/assets/tui-model-picker.png`
+
+## [0.1.0]
+
+- Initial public release.
+
+---
+
+# 更新日志
+
+[English](#changelog)
+
+本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。此处记录面向使用者的行为变化；实现细节见技术方案与提交历史。
+
+## [0.2.0] - 2026-09-01
+
+### 重点更新
+
+- 新增可选的 OpenCode TUI `switchman` 侧边栏面板：展示已观察 provider 的水位、高峰时段、六档链首、待重启状态和最新通知，输入区不再被运行日志遮挡。
+- 静态壳清单升级为动态激活矩阵：desktop 可见模型与 CLI/TUI favorites 双向同步；活跃会话模型负责兜底；模型面变化会立即重算矩阵并刷新探针。
+- 新增能力分级与透明评分：高能力级始终优先；同级再按档位亲和、健康、水位、高峰、显式计费和未知模型置信度排序。
+- 编排策略去厂商化：任意 OpenCode 官方或自定义 provider 都合法；订阅/按量偏好改由显式 `billing` 配置决定，不再依赖厂商专属规则。
+- 新增实调失败隔离、重复缺失模型自动下线、路由决策审计日志、待重启提示和生产环境自更新命令。
+- 新增 `/handover`：创建带压缩上下文的续接会话，并保留当前模型、agent 与思考档位。
+
+### 配置与升级说明
+
+- 插件配置现统一写入自动生成的 `opencode-switchman.jsonc`；OpenCode 配置的 `plugin` 数组只保留包引用。
+- 旧元组配置（`["opencode-switchman", { ... }]`）在此兼容版本继续可用。`/switchman-doctor` 会用 `SWM042` 至 `SWM044` 标出迁移项；请在下一个大版本前完成迁移。
+- 从旧名 `switchman.js` 升级时，删除 `~/.config/opencode/plugins/switchman.js`，避免重复注入。当前状态目录为 `~/.config/opencode/opencode-switchman/`。
+- 如需侧边栏，确认 `tui.jsonc` 或 `tui.json` 的 `plugin` 数组也包含同一个包引用。`opencode plugin <spec>`、`bun run mode:local` 和 `bun run mode:prod` 会自动维护这一项。
+
+### 截图资源
+
+发布文档引用以下仓库资源：
+
+- `docs/assets/tui-sidebar-status.png`
+- `docs/assets/tui-model-picker.png`
+
+## [0.1.0]
+
+- 首个公开版本。
