@@ -152,6 +152,7 @@ function View(props: { api: TuiPluginApi }) {
           <For each={quotaBrief()}>
             {(q) => (
               <text fg={theme().textMuted}>
+                {!q.observeOnly && <span style={{ fg: MODEL_COLOR }}>✓ </span>}
                 <span style={{ fg: theme().textMuted }}>{q.label.padEnd(8)} </span>
                 <span style={{ fg: waterColor(q.usedPct) ?? theme().textMuted }}>{q.text}</span>
                 {q.peakActive && <span style={{ fg: theme().warning }}> ·高峰</span>}
