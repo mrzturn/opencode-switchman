@@ -218,10 +218,10 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
 .close h2 .grad{background:linear-gradient(92deg,var(--cyan),var(--violet),var(--emerald));-webkit-background-clip:text;background-clip:text;color:transparent}
 .close .sub{margin:22px auto 40px}
 .close .chips{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-bottom:46px}
-.cmd .sep{opacity:.4;margin:0 4px}
+.cmd .sep{opacity:.55;align-self:center;font-size:11px;letter-spacing:.35em;margin:2px 0}
 .cmd{text-align:left}
 .slide.cover .cmd{margin-top:30px}
-.cmd{display:inline-flex;align-items:center;gap:14px;font-family:var(--mono);font-size:14px;background:rgba(34,211,238,.07);border:1px solid rgba(34,211,238,.35);border-radius:12px;padding:15px 28px;color:var(--cyan);box-shadow:0 0 40px rgba(34,211,238,.1);overflow-x:auto;max-width:100%}
+.cmd{display:inline-flex;flex-direction:column;align-items:flex-start;gap:10px;font-family:var(--mono);font-size:14px;background:rgba(34,211,238,.07);border:1px solid rgba(34,211,238,.35);border-radius:12px;padding:15px 28px;color:var(--cyan);box-shadow:0 0 40px rgba(34,211,238,.1);overflow-x:auto;max-width:100%}
 .cmd .ps{color:var(--faint)}
 
 .topnav{position:fixed;top:20px;right:24px;z-index:60;display:flex;gap:10px;align-items:center}
@@ -309,11 +309,9 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
   .chip{font-size:10.5px;padding:7px 11px}
   .close h2{font-size:clamp(26px,8vw,40px)}
   .close .sub{font-size:16px;line-height:1.65;margin-bottom:24px}
-  /* [2026-09-01]-[安装命令改为 curl 一键脚本 + npx 两条等价路径；移动端两行：curl 一行、npx 独占一行，桌面同行] */
-  .cmd{font-size:12px;padding:12px 14px;gap:6px 8px;justify-content:flex-start;flex-wrap:wrap}
+  /* [2026-09-01]-[安装命令改为 curl 一键脚本 + npx 两条等价路径；拆两行竖排，中间「或」分隔行标识二选一] */
+  .cmd{font-size:12px;padding:12px 14px;gap:8px}
   .cmd .c1,.cmd .c2{white-space:nowrap}
-  .cmd .sep{display:none}
-  .cmd .c2{flex-basis:100%}
   .brand,.hint{display:none}
   .counter{right:14px;bottom:12px;font-size:10.5px}
   .navbtns{right:14px;bottom:58px}
@@ -344,7 +342,7 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
       <span class="chip"><b>174</b> 项行为 fixture</span>
       <span class="chip">全供应商接入 · 三池额度控制</span>
         </div>
-    <div class="cmd rv" data-d="5"><span class="ps">$</span><span class="c1">curl -fsSL https://raw.githubusercontent.com/mrzturn/opencode-switchman/main/scripts/setup.sh | bash</span><span class="sep">·</span><span class="c2">npx -y opencode-switchman@latest</span></div>
+    <div class="cmd rv" data-d="5"><span class="c1"><span class="ps">$</span> curl -fsSL https://raw.githubusercontent.com/mrzturn/opencode-switchman/main/scripts/setup.sh | bash</span><span class="sep">或</span><span class="c2"><span class="ps">$</span> npx -y opencode-switchman@latest</span></div>
   </div>
 </section>
 
@@ -564,7 +562,7 @@ ROUTE_META <span class="tk-p">{</span>
     <div class="chips rv" data-d="4">
       <span class="chip">六档认知分层</span><span class="chip">加权评分引擎</span><span class="chip">决策可追溯</span><span class="chip">失败隔离</span><span class="chip">自更新命令</span>
     </div>
-    <div class="cmd rv" data-d="5"><span class="ps">$</span><span class="c1">curl -fsSL https://raw.githubusercontent.com/mrzturn/opencode-switchman/main/scripts/setup.sh | bash</span><span class="sep">·</span><span class="c2">npx -y opencode-switchman@latest</span></div>
+    <div class="cmd rv" data-d="5"><span class="c1"><span class="ps">$</span> curl -fsSL https://raw.githubusercontent.com/mrzturn/opencode-switchman/main/scripts/setup.sh | bash</span><span class="sep">或</span><span class="c2"><span class="ps">$</span> npx -y opencode-switchman@latest</span></div>
   </div>
 </section>
 
