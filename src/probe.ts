@@ -3,7 +3,7 @@
 // 免 v2/token 交换（gho_ token 换取会 403）；端点/请求头照抄 packages/opencode/src/plugin/github-copilot/copilot.ts]-
 // [口径：TTL 600s；2xx=ok；30s 内有响应=慢而可用不判 down（超时 45s 判 down）；并发 8-32]
 import { readCopilotGithubToken, markCopilotGatewayExhausted } from "./quota"
-import { loadManifest, loadMatrix, paths, writeJsonAtomic, withPathLock, PROBE_TTL } from "./state"
+import { loadManifest, loadMatrix, paths, writeJsonAtomic, withPathLock, PROBE_TTL, appendStatusLog } from "./state"
 import { classifyFailure } from "./failclass"
 import { poolForProviderId } from "./provider-config"
 import type { Matrix } from "./types"
@@ -122,7 +122,7 @@ export async function refreshMatrix(eps: ProbeEndpoints): Promise<number | null>
     }
     return await probeTargets([...targets.keys()], eps, targets)
   } catch (exc) {
-    console.error(`[opencode-switchman] 探针 fail-open: ${exc}`)
+    appendStatusLog(`探针 fail-open: ${exc}`)
     return null
   }
 }
@@ -140,7 +140,7 @@ export async function probeKeys(keys: string[], eps: ProbeEndpoints): Promise<nu
     }
     return await probeTargets([...targets.keys()], eps, targets)
   } catch (exc) {
-    console.error(`[opencode-switchman] 增量探针 fail-open: ${exc}`)
+    appendStatusLog(`增量探针 fail-open: ${exc}`)
     return null
   }
 }
@@ -175,23 +175,24 @@ async function probeTargets(
     // [2026-08-28]-[402 是月度池耗尽真值（429 为并发限流噪音），阈值从 50% 降到 ≥3 个组合即置耗尽]
     if (cpKeys.length > 0 && cp402.length >= 3) {
       markCopilotGatewayExhausted(`探针 ${cp402.length}/${cpKeys.length} 组合 402 月度池耗尽`)
-      console.log(`[opencode-switchman] Copilot 月度池耗尽（网关第二真值源），信任至 reset_date`)
+      appendStatusLog(`Copilot 月度池耗尽（网关第二真值源），信任至 reset_date`)
     }
     return await withPathLock(paths().matrix, () => {
       const cur = loadMatrix() ?? ({} as Matrix)
       if ((cur.target_generation ?? undefined) !== (gen0 ?? undefined)) {
-        console.error(`[opencode-switchman] 探针结果丢弃（矩阵代际已变 ${gen0 ?? "n/a"}→${cur.target_generation ?? "n/a"}；由新代际重算重新调度）`)
+        // [2026-08-31]-[改落盘 status-log 供 tui.tsx 侧边栏渲染，不再刷屏 stderr 遮挡输入框]
+        appendStatusLog(`探针结果丢弃（矩阵代际已变 ${gen0 ?? "n/a"}→${cur.target_generation ?? "n/a"}；由新代际重算重新调度）`)
         return null
       }
       // 合并以写入时最新盘面为基（保留并发写入的其余组合与 active_keys/target_generation，不丢更新）
       const matrix: Matrix = { ...cur, combos: { ...(cur.combos ?? {}), ...results }, generated_at: new Date().toISOString() }
       writeJsonAtomic(paths().matrix, matrix)
       const ok = Object.values(matrix.combos).filter((c) => c.status === "ok").length
-      console.log(`[opencode-switchman] 矩阵已刷新：${sorted.length} 组合 ${ok} ok（累计 ${Object.keys(matrix.combos).length}）`)
+      appendStatusLog(`矩阵已刷新：${sorted.length} 组合 ${ok} ok（累计 ${Object.keys(matrix.combos).length}）`)
       return ok
     })
   } catch (exc) {
-    console.error(`[opencode-switchman] 探针 fail-open: ${exc}`)
+    appendStatusLog(`探针 fail-open: ${exc}`)
     return null
   }
 }
@@ -206,7 +207,7 @@ export async function refreshMatrixIfStale(eps: ProbeEndpoints): Promise<void> {
     }
     await refreshMatrix(eps)
   } catch (exc) {
-    console.error(`[opencode-switchman] 探针调度 fail-open: ${exc}`)
+    appendStatusLog(`探针调度 fail-open: ${exc}`)
   }
 }
 
@@ -221,6 +222,6 @@ export async function refreshActiveMatrixIfStale(eps: ProbeEndpoints, activeKeys
     }
     await probeKeys(activeKeys, eps)
   } catch (exc) {
-    console.error(`[opencode-switchman] 探针调度 fail-open: ${exc}`)
+    appendStatusLog(`探针调度 fail-open: ${exc}`)
   }
 }

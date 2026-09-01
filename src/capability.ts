@@ -8,7 +8,7 @@
 //  匹配：api 精确 → api 最长前缀（≥4 字符防误配）→ 策展 exact/prefix/family/global 逐级回退]
 // [评分链不变：total=base*effortFit*health*water*costBias*peak，仅 base 来源可切换；
 //  tier 仍用 TIER_SCORE 折算（S=1.0/A=0.85/B=0.7/C=0.55），与策展口径可比、tier 分组序不变]
-import { CAPABILITY_TTL, paths, readJson, writeJsonAtomic } from "./state"
+import { CAPABILITY_TTL, paths, readJson, writeJsonAtomic, appendStatusLog } from "./state"
 import { baseScore, TIER_SCORE, type Tier } from "./model-ranks"
 import bundledDefaultJson from "./capability-default.json"
 import type { CapabilityOptions } from "./types"
@@ -226,7 +226,7 @@ export function loadBundledCapability(): CapabilityIndex | null {
   if (bundledCache !== undefined) return bundledCache
   const v = bundledDefaultJson as unknown as CapabilityIndex
   bundledCache = validIndex(v) ? { ...v, bundled: true } : null
-  if (bundledCache === null) console.error("[opencode-switchman] 内置能力排名快照损坏（跳过，回退策展表）")
+  if (bundledCache === null) appendStatusLog("内置能力排名快照损坏（跳过，回退策展表）")
   return bundledCache
 }
 
@@ -279,7 +279,7 @@ export async function refreshCapability(opts: CapabilityOptions): Promise<void> 
         used = "artificial-analysis"
         version = deriveVersion("aa", r.etag, parsed.versionHint)
       } catch (exc) {
-        console.error(`[opencode-switchman] 能力指数主源 AA 失败（${exc}）${wantOr ? "→转备源 OpenRouter" : "→沿用 last-good/内置默认排名"}`)
+        appendStatusLog(`能力指数主源 AA 失败（${exc}）${wantOr ? "→转备源 OpenRouter" : "→沿用 last-good/内置默认排名"}`)
       }
     }
     if (!parsed && wantOr) {
@@ -291,12 +291,12 @@ export async function refreshCapability(opts: CapabilityOptions): Promise<void> 
         used = "openrouter"
         version = deriveVersion("or", r.etag, parsed.versionHint)
       } catch (exc) {
-        console.error(`[opencode-switchman] 能力指数备源 OpenRouter 失败（${exc}）→沿用 last-good/内置默认排名`)
+        appendStatusLog(`能力指数备源 OpenRouter 失败（${exc}）→沿用 last-good/内置默认排名`)
       }
     }
     if (!parsed || !used || Object.keys(parsed.models).length === 0) {
       // [2026-08-31]-[空解析留痕：静默 return 会让上游误以为刷新成功（冒烟实测踩过）]
-      console.error(`[opencode-switchman] 能力指数解析为空（${used ?? "无源"}）→沿用 last-good/内置默认排名`)
+      appendStatusLog(`能力指数解析为空（${used ?? "无源"}）→沿用 last-good/内置默认排名`)
       return
     }
     const scores = Object.values(parsed.models).map((e) => e.score)
@@ -313,10 +313,10 @@ export async function refreshCapability(opts: CapabilityOptions): Promise<void> 
     }
     mem = { dir: paths().dir, idx }
     writeJsonAtomic(paths().capability, idx)
-    console.log(`[opencode-switchman] 能力指数已刷新：${used} ${scores.length} 模型（version=${version}）`)
+    appendStatusLog(`能力指数已刷新：${used} ${scores.length} 模型（version=${version}）`)
     if (opts.lmarenaCheck) crossCheckLmarena(idx).catch(() => {})
   } catch (exc) {
-    console.error(`[opencode-switchman] 能力指数刷新 fail-open（沿用 last-good/内置默认排名）: ${exc}`)
+    appendStatusLog(`能力指数刷新 fail-open（沿用 last-good/内置默认排名）: ${exc}`)
   }
 }
 
@@ -352,10 +352,10 @@ export async function crossCheckLmarena(idx: CapabilityIndex): Promise<void> {
     }
     const rate = pairs > 0 ? (agree / pairs) * 100 : 0
     if (rate < 70) {
-      console.error(`[opencode-switchman] capability LMArena 校验：档序与 ELO 序一致率仅 ${rate.toFixed(0)}%（${both.length} 模型重叠）——数据源可能异常，建议人工核查`)
+      appendStatusLog(`capability LMArena 校验：档序与 ELO 序一致率仅 ${rate.toFixed(0)}%（${both.length} 模型重叠）——数据源可能异常，建议人工核查`)
     }
   } catch (exc) {
-    console.error(`[opencode-switchman] capability LMArena 校验 fail-open（跳过）: ${exc}`)
+    appendStatusLog(`capability LMArena 校验 fail-open（跳过）: ${exc}`)
   }
 }
 

@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs"
 import { homedir, platform } from "node:os"
 import { dirname, join } from "node:path"
 import { desktopDatPath, parseDesktopModels, parseTuiFavorites, sortUnique, tuiModelPath } from "./activation"
-import { fileMtime, writeJsonAtomic } from "./state"
+import { fileMtime, writeJsonAtomic, appendStatusLog } from "./state"
 import type { ModelKey } from "./types"
 
 const reported = new Set<string>()
@@ -11,7 +11,7 @@ const reported = new Set<string>()
 function reportOnce(reason: string): void {
   if (reported.has(reason)) return
   reported.add(reason)
-  console.error(`[opencode-switchman] 可见模型同步跳过: ${reason}`)
+  appendStatusLog(`可见模型同步跳过: ${reason}`)
 }
 
 function fallbackDesktopDatPath(): string | null {
@@ -112,6 +112,6 @@ export function syncIfDiverged(stateRoot: string, mode: "desktop" | "cli", tuiFa
     if (tM > dM) writeDesktop(desktop, desktopRaw, visible)
     else for (const p of tuiPaths) writeTui(p, p === tui ? tuiRaw : (existsSync(p) ? readJson(p) : {}), visible)
   } catch (exc) {
-    console.error(`[opencode-switchman] 可见模型同步 fail-open: ${exc}`)
+    appendStatusLog(`可见模型同步 fail-open: ${exc}`)
   }
 }

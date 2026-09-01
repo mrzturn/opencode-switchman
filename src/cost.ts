@@ -1,6 +1,6 @@
 // 成本感知（v1.1 新增）：models.dev 计价快照 → costScore（compute_lane 水位同分 tiebreaker）
 // [TTL 24h＋last-good 缓存；拉取失败 fail-open 降级为无成本信号（tiebreaker 自动失效，不影响排序正确性）]
-import { COSTS_TTL, paths, readJson, writeJsonAtomic } from "./state"
+import { COSTS_TTL, paths, readJson, writeJsonAtomic, appendStatusLog } from "./state"
 
 export interface CostIndex {
   scores: Record<string, number> // key=modelId（跨池基本唯一）；值=(input+output)/2，$/1M tokens
@@ -40,7 +40,7 @@ export async function refreshCosts(): Promise<void> {
     cached = { scores, fetched_at: Date.now() / 1000 }
     writeJsonAtomic(paths().costs, cached)
   } catch (exc) {
-    console.error(`[opencode-switchman] 成本快照刷新失败（沿用旧数据）: ${exc}`)
+    appendStatusLog(`成本快照刷新失败（沿用旧数据）: ${exc}`)
   }
 }
 

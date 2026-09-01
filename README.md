@@ -89,6 +89,18 @@ After starting opencode, every system prompt of the primary model carries a live
 
 The log also shows `[opencode-switchman] injected N model shells (agents)` — N varies dynamically with the model surface of credentialed providers. Lane candidates are generated algorithmically from capability score × effort affinity × billing/unknown coefficients, with vision/review structural gates and no vendor-specific seats; runtime health, quota, and cost rules then select the current first candidate.
 
+### Sidebar status panel (TUI plugin, optional)
+
+All non-banner runtime notices (matrix refresh, model retirement, breaker trips, probe results, etc.) that used to spam `stderr` and cover the input box are now written to a 20-entry ring buffer and rendered in a dedicated `switchman` panel at the bottom of the TUI sidebar (polling every 2s, showing the last 4 lines) — the input box stays clean. This is a separate TUI Slot plugin (`src/tui.tsx`, exported at `opencode-switchman/tui`) with its own registration path, independent of the server-side hook plugin above.
+
+Since TUI plugins have no directory auto-discovery, add the same package spec to your **`tui.jsonc`/`tui.json`** `plugin` array (npm install and `opencode plugin <spec>` do this automatically; only needed manually if you hand-edit config or use `mode:local`/`mode:prod` from source):
+
+```json
+{
+  "plugin": ["opencode-switchman"]
+}
+```
+
 ### Options
 
 | Option | Default | Description |
@@ -235,7 +247,7 @@ bun run gen:shells
 
 ```bash
 bun install
-bun test            # 124 behavioral contract fixtures (META / gates / chains / scoring / breaker / quota / update)
+bun test            # 174 behavioral contract fixtures (META / gates / chains / scoring / breaker / quota / update)
 bunx tsc --noEmit   # type check
 bun run build       # regenerate matrix and bundle the single-file build
 ```
@@ -246,6 +258,8 @@ For local plugin development versus the published package, use the idempotent mo
 bun run mode:local  # build + point opencode at this repository
 bun run mode:prod   # use the npm package; refuses if not installed and prints the install command
 ```
+
+Both commands also sync `tui.jsonc`'s `plugin` array to the matching spec (creating the file if missing), so the sidebar status panel switches sources together with the hook plugin — no separate manual edit needed.
 
 ## Documentation
 

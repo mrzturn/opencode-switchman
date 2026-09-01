@@ -13,6 +13,7 @@ import { createHandoverTool, HANDOVER_COMMAND_TEMPLATE, HANDOVER_COMMAND_DESCRIP
 import {
   loadContext, buildRegistry, loadManifest, laneShells, paths,
   cleanExpired, ensureStateDir, stateDir, loadSupersetShells, writeJsonAtomic,
+  appendStatusLog,
 } from "./state"
 import { checkShell, noteUnknownAgent, shellLikeName, denyUninjected } from "./gates"
 import {
@@ -191,7 +192,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     try {
       return readConfigured(stateRoot, mode)
     } catch (exc) {
-      console.error(`[opencode-switchman] 配置面读取 fail-open: ${exc}`)
+      appendStatusLog(`配置面读取 fail-open: ${exc}`)
       return { configStatus: "empty" as const, models: [] as ModelKey[] }
     }
   }
@@ -227,7 +228,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     } catch (exc) {
       // 回退：cfg.provider 键集（仅 providerID，供 restartRequired 基线；模型面由配置面/内置链兜底）
       const keys = Object.keys(cfg.provider ?? {})
-      console.error(`[opencode-switchman] provider.list 不可用（回退 cfg.provider 键集 ${keys.length} 个）: ${exc}`)
+      appendStatusLog(`provider.list 不可用（回退 cfg.provider 键集 ${keys.length} 个）: ${exc}`)
       return { models: [], providers: keys }
     }
   }
@@ -271,7 +272,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       }, 600_000)
       if (typeof timer === "object" && timer !== null && "unref" in timer) (timer as any).unref()
     } catch (exc) {
-      console.error(`[opencode-switchman] warmup fail-open: ${exc}`)
+      appendStatusLog(`warmup fail-open: ${exc}`)
     }
   }
 
@@ -435,7 +436,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       bannerCache = { at: Date.now(), lines: lines2 }
       return lines2
     } catch (exc) {
-      console.error(`[opencode-switchman] banner fail-open: ${exc}`)
+      appendStatusLog(`banner fail-open: ${exc}`)
       return []
     }
   }
@@ -483,7 +484,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         const errors = doctor.diagnostics.filter((d) => d.level === "error").length
         const warns = doctor.diagnostics.filter((d) => d.level === "warn").length
         doctorSummary = errors || warns ? `doctor: ${errors} error / ${warns} warn` : null
-        if (doctorSummary) console.error(`[opencode-switchman] 自检发现 ${errors} error / ${warns} warn；运行 /switchman-doctor 查看`)
+        if (doctorSummary) appendStatusLog(`自检发现 ${errors} error / ${warns} warn；运行 /switchman-doctor 查看`)
         try { writeJsonAtomic(paths().doctorSnapshot, { at: new Date().toISOString(), diagnostics: doctor.diagnostics.map((d) => ({ code: d.code, level: d.level, path: d.path })) }) } catch { /* fail-open */ }
         collectCreds(cfg)
         creds.copilotToken = creds.copilotToken ?? readAuthStore().githubToken
@@ -495,7 +496,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           // legacy：静态 shells.json 路径（行为与 v1.2 逐字节一致）
           const { registry } = currentContext()
           const n = injectShells(cfg, registry)
-          console.log(`[opencode-switchman] 已注入 ${n} 只模型空壳（agent，legacy 静态矩阵）`)
+          appendStatusLog(`已注入 ${n} 只模型空壳（agent，legacy 静态矩阵）`)
           // [2026-08-29]-[配置钩子触发自更新检查]-[检查异步且失败不阻塞启动]
           refreshSelfUpdate().then((state) => { if (state?.outdated) clearBannerCache() }).catch(() => {})
           return
@@ -540,7 +541,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             //  激活组合、不等 TTL；session/startup 源维持仅探新增组合；10min 周期刷新保持不变]-
             const targets = source === "config" ? (manager?.activeMatrixKeys() ?? newTargets) : newTargets
             if (targets.length > 0) probeKeys(targets, probeEndpoints()).catch(() => {})
-            console.error(`[opencode-switchman] 激活矩阵已重算（gen=${state.generation}，激活壳 ${state.activeShells.length}，探针 ${source}×${targets.length}）`)
+            // [2026-08-31]-[改落盘 status-log 供 tui.tsx 侧边栏渲染，不再刷屏 stderr 遮挡输入框]-[高频重算通知]
+            appendStatusLog(`激活矩阵已重算（gen=${state.generation}，激活壳 ${state.activeShells.length}，探针 ${source}×${targets.length}）`)
           },
           // [2026-08-29]-[复审P1-1：被动侧文件变更被 sameActivation 短路时 onRecompute 不触发——
           //  debounce 尾部无条件同步（同集 no-op，无环）；onRecompute 里的 config 源同步保留为变更时的即时路径]-
@@ -548,12 +550,12 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         })
         manager.recompute(configured)
         manager.start()
-        console.log(`[opencode-switchman] 已注入 ${injected.size} 只超集壳（${supersetModels.length} 模型×档位，模式=${runMode}，冲突 ${conflicts.size}；激活门控运行中）`)
+        appendStatusLog(`已注入 ${injected.size} 只超集壳（${supersetModels.length} 模型×档位，模式=${runMode}，冲突 ${conflicts.size}；激活门控运行中）`)
         // [2026-08-29]-[配置钩子触发自更新检查]-[检查异步且失败不阻塞启动]
         refreshSelfUpdate().then((state) => { if (state?.outdated) clearBannerCache() }).catch(() => {})
       } catch (exc) {
         configFailed = true
-        console.error(`[opencode-switchman] config 钩子 fail-open: ${exc}`)
+        appendStatusLog(`config 钩子 fail-open: ${exc}`)
       }
     },
 
@@ -596,7 +598,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           for (const line of bannerLines()) output.system.push(line)
         }
       } catch (exc) {
-        console.error(`[opencode-switchman] 规程/横幅 fail-open: ${exc}`)
+        appendStatusLog(`规程/横幅 fail-open: ${exc}`)
       }
     },
 
@@ -639,7 +641,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             const hint = firstCandidateHint(agent, ctx, gateExtras)
             throw new Error(denyUninjected(agent, activationGate?.restartRequired ?? [], hint))
           }
-          console.error(noteUnknownAgent(agent))
+          appendStatusLog(noteUnknownAgent(agent))
           return
         }
         const r = checkShell(agent, shell, output.args?.prompt, {
@@ -661,14 +663,14 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           glmPeak: gateExtras.glmPeak,
           states: gateExtras.states as any,
         })
-        if (r.note) console.error(r.note)
+        if (r.note) appendStatusLog(r.note)
         if (r.deny) {
           denySkip.add(input.callID)
           throw new Error(r.deny)
         }
       } catch (exc) {
         if (denySkip.has(input.callID)) throw exc // deny 原样上抛（阻断派发）
-        console.error(`[opencode-switchman] 六闸 fail-open（放行）: ${exc}`)
+        appendStatusLog(`六闸 fail-open（放行）: ${exc}`)
       }
     },
 
@@ -725,12 +727,12 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           const shell = registry[agent]
           if (shell && noteModelNotFound(`${shell.provider}/${shell.modelId}`)) {
             clearBannerCache()
-            console.error(`[opencode-switchman] 模型已下线（连续 404），已移出候选：${shell.provider}/${shell.modelId}`)
+            appendStatusLog(`模型已下线（连续 404），已移出候选：${shell.provider}/${shell.modelId}`)
           }
         }
-        if (rec?.tripped) console.error(`[opencode-switchman] ${agent} 已熔断（600s）：${reason.slice(0, 80)}`)
+        if (rec?.tripped) appendStatusLog(`${agent} 已熔断（600s）：${reason.slice(0, 80)}`)
       } catch (exc) {
-        console.error(`[opencode-switchman] 记账 fail-open: ${exc}`)
+        appendStatusLog(`记账 fail-open: ${exc}`)
       }
     },
   }

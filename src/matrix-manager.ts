@@ -3,7 +3,7 @@
 // 首轮注册表为空 → 壳子代理被误注入调度员规程。修=监听 session.created 预注册（agent 名记录）+
 // 分类只按 agent 名：注入壳名集合∪内部代理，不依赖注册表时序]
 import { watch, statSync, type FSWatcher } from "node:fs"
-import { readJson, writeJsonAtomic, paths, nowIso } from "./state"
+import { readJson, writeJsonAtomic, paths, nowIso, appendStatusLog } from "./state"
 import { readConfigured, computeActivation, sameActivation, sortUnique, desktopDatPath, tuiModelPath, watchDirs } from "./activation"
 import type { ActivationState, MatrixRunMode, ModelKey } from "./types"
 import type { ShellDefinition } from "./catalog"
@@ -167,12 +167,12 @@ export class MatrixManager {
       const m = readJson<Record<string, unknown>>(paths().matrix)
       writeJsonAtomic(paths().matrix, { ...(m ?? {}), active_keys: [...activeKeys], target_generation: next.generation })
     } catch (exc) {
-      console.error(`[opencode-switchman] 激活矩阵落盘 fail-open: ${exc}`)
+      appendStatusLog(`激活矩阵落盘 fail-open: ${exc}`)
     }
     try {
       this.opts.onRecompute?.(next, newTargets, source)
     } catch (exc) {
-      console.error(`[opencode-switchman] 激活矩阵回调 fail-open: ${exc}`)
+      appendStatusLog(`激活矩阵回调 fail-open: ${exc}`)
     }
     return next
   }
@@ -200,7 +200,7 @@ export class MatrixManager {
     try {
       return readConfigured(this.opts.stateRoot, this.opts.mode)
     } catch (exc) {
-      console.error(`[opencode-switchman] 配置面读取 fail-open（视为 empty）: ${exc}`)
+      appendStatusLog(`配置面读取 fail-open（视为 empty）: ${exc}`)
       return { configStatus: "empty", models: [] }
     }
   }
@@ -252,12 +252,12 @@ export class MatrixManager {
     if (this.debounceTimer) clearTimeout(this.debounceTimer)
     this.debounceTimer = setTimeout(() => {
       this.debounceTimer = null
-      this.recomputeWithRetry().catch((exc) => console.error(`[opencode-switchman] 重算 fail-open: ${exc}`))
+      this.recomputeWithRetry().catch((exc) => appendStatusLog(`重算 fail-open: ${exc}`))
       this.refreshMtimes()
       try {
         this.opts.onConfigSync?.()
       } catch (exc) {
-        console.error(`[opencode-switchman] 配置面同步 fail-open: ${exc}`)
+        appendStatusLog(`配置面同步 fail-open: ${exc}`)
       }
     }, delay ?? this.opts.debounceMs)
     unref(this.debounceTimer)

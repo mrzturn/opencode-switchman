@@ -1,6 +1,6 @@
 {
   "name": "opencode-switchman",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "OpenCode 编排插件：六档壳矩阵调度（ROUTE_META 硬校验 / 熔断自愈 / 探针 / 三池配额感知 / 成本感知 tiebreaker）",
   "license": "MIT",
   "repository": {
@@ -24,7 +24,8 @@
   "main": "./dist/opencode-switchman.js",
   "exports": {
     ".": "./dist/opencode-switchman.js",
-    "./server": "./dist/opencode-switchman.js"
+    "./server": "./dist/opencode-switchman.js",
+    "./tui": "./dist/opencode-switchman-tui.js"
   },
   "files": [
     "dist"
@@ -34,7 +35,7 @@
     "typecheck": "tsc --noEmit",
     "gen:shells": "bun scripts/gen-shells.ts",
     "gen:capability": "bun scripts/gen-capability-default.ts",
-    "build": "bun run gen:shells && bun scripts/gen-version.ts && bun build src/index.ts --target=node --format=esm --outfile=dist/opencode-switchman.js && bun build src/doctor-cli.ts --target=node --format=esm --outfile=dist/switchman-doctor.js",
+    "build": "bun run gen:shells && bun scripts/gen-version.ts && bun build src/index.ts --target=node --format=esm --outfile=dist/opencode-switchman.js && bun build src/doctor-cli.ts --target=node --format=esm --outfile=dist/switchman-doctor.js && bun build src/tui.tsx --target=node --format=esm --external solid-js --external @opentui/solid --external @opentui/core --outfile=dist/opencode-switchman-tui.js",
     "prepublishOnly": "bun install --frozen-lockfile && bun run build && bun test",
     "pack": "bun run build && npm pack",
     "mode:local": "bun run build && bun scripts/plugin-mode.ts local",
@@ -43,7 +44,18 @@
   },
   "devDependencies": {
     "@opencode-ai/plugin": "latest",
+    "@opentui/core": ">=0.4.5",
+    "@opentui/solid": ">=0.4.5",
     "@types/bun": "latest",
+    "solid-js": "^1.9.15",
     "typescript": "latest"
+  },
+  "peerDependencies": {
+    "@opentui/core": ">=0.4.5",
+    "@opentui/solid": ">=0.4.5"
+  },
+  "peerDependenciesMeta": {
+    "@opentui/core": { "optional": true },
+    "@opentui/solid": { "optional": true }
   }
 }

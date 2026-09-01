@@ -6,7 +6,7 @@
 //  billing 仅由用户 jsonc 显式声明驱动（subscription=1.0/api=0.85），未知组（能力分级
 //  全链未命中的模型）同 tier 排已知之后；costBias 厂商规则已废除，恒 1.0 留作成本数据预留位]
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
-import { paths, withPathLock } from "./state"
+import { paths, withPathLock, appendStatusLog } from "./state"
 import type { Lane, Pool, Routing, ShellRegEntry } from "./types"
 import { baseScoreDynamic } from "./capability"
 import { TIER_RANK, UNKNOWN_PENALTY } from "./model-ranks"
@@ -270,7 +270,7 @@ export function logDecision(records: DecisionRecord[]): Promise<void> {
       const kept = prev.slice(-MAX_DECISION_LINES)
       writeFileSync(p, `${kept.join("\n")}\n`)
     } catch (exc) {
-      console.error(`[opencode-switchman] 决策日志 fail-open: ${exc}`)
+      appendStatusLog(`决策日志 fail-open: ${exc}`)
     }
   })
 }

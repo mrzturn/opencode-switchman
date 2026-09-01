@@ -4,7 +4,7 @@
 // [fail-open 铁律：目录拉取失败→陈旧缓存→内置 shells.json 隐式元数据→单档 off 降级，绝不阻塞注入]
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { paths, readJson, writeJsonAtomic } from "./state"
+import { paths, readJson, writeJsonAtomic, appendStatusLog } from "./state"
 import manifestDefault from "./shells.json"
 import type { ShellManifestEntry } from "./types"
 import { poolForProviderId } from "./provider-config"
@@ -139,7 +139,7 @@ export function loadCatalog(now = Date.now()): Promise<CatalogResult> {
     },
     (exc) => {
       if (cache?.index) return { index: cache.index, status: "stale" as const, etag: cache.etag ?? null }
-      console.error(`[opencode-switchman] models.dev 目录不可用且无缓存（fail-open 降级）: ${exc}`)
+      appendStatusLog(`models.dev 目录不可用且无缓存（fail-open 降级）: ${exc}`)
       return { index: {}, status: "none" as const, etag: null }
     },
   )

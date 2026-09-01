@@ -4,7 +4,7 @@
 import { appendFileSync, statSync, openSync, readSync, closeSync } from "node:fs"
 import {
   FAIL_THRESHOLD, FAIL_WINDOW, DOWN_TTL, ensureStateDir, paths, readJson,
-  writeJsonAtomic, nowIso, loadRouting, cleanExpired,
+  writeJsonAtomic, nowIso, loadRouting, cleanExpired, appendStatusLog,
 } from "./state"
 import type { Routing, ShellRegEntry } from "./types"
 
@@ -158,7 +158,7 @@ export function recordFailure(
     }
     return { key, tripped: false }
   } catch (exc) {
-    console.error(`[opencode-switchman] breaker fail-open: ${exc}`)
+    appendStatusLog(`breaker fail-open: ${exc}`)
     return { key: agent, tripped: false }
   }
 }

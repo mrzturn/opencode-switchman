@@ -4,7 +4,7 @@ import { mkdirSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { homedir } from "node:os"
-import { paths, readJson, withPathLock, writeJsonAtomic } from "./state"
+import { paths, readJson, withPathLock, writeJsonAtomic, appendStatusLog } from "./state"
 import { resolveOpencodeConfigDir } from "./config"
 import { PLUGIN_VERSION } from "./version"
 
@@ -107,7 +107,7 @@ export async function refreshSelfUpdate(): Promise<SelfUpdateState | null> {
       writeJsonAtomic(path, state)
       return state
     } catch (exc) {
-      console.error(`[opencode-switchman] 自更新检查 fail-open: ${exc}`)
+      appendStatusLog(`自更新检查 fail-open: ${exc}`)
       return null
     }
   })
@@ -196,7 +196,7 @@ export function ensureUpdateCommands(mode: LoadMode, baseDir = resolveOpencodeCo
     }
     write("switchman-doctor.md", doctorCommandMd(cliPath ?? join(moduleDir(), "switchman-doctor.js")))
   } catch (exc) {
-    console.error(`[opencode-switchman] 升级命令资产 fail-open: ${exc}`)
+    appendStatusLog(`升级命令资产 fail-open: ${exc}`)
   }
 }
 

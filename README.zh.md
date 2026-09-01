@@ -89,6 +89,18 @@ bun run build   # 生成 dist/opencode-switchman.js
 
 同时日志可见 `[opencode-switchman] 已注入 N 只模型空壳（agent）`——N 随有凭证 provider 的模型面动态变化。六档候选由能力分×档位亲和×计费/未知组系数算法生成，并经 vision/review 结构门过滤，无任何厂商预留席位；运行期再按健康、水位与成本选出当前链首。
 
+### 侧边栏状态面板（TUI 插件，可选）
+
+原先会刷屏挡输入框的 `stderr` 非横幅通知（矩阵刷新、模型下线、熔断、探针结果等）现已改为写入 20 条环形日志，在 TUI 侧边栏底部一个独立的 `switchman` 面板中滚动展示（每 2 秒轮询，只显示最近 4 条）——输入框不再被遮挡。这是一套独立的 TUI Slot 插件（`src/tui.tsx`，导出路径 `opencode-switchman/tui`），有自己的注册路径，与上面的 server 端 hook 插件互相独立。
+
+TUI 插件没有目录自动发现机制，需要在 **`tui.jsonc`/`tui.json`** 的 `plugin` 数组里加入同一个包 spec（npm 安装或 `opencode plugin <spec>` 会自动完成；只有手改配置或从源码用 `mode:local`/`mode:prod` 时才需要手动确认）：
+
+```json
+{
+  "plugin": ["opencode-switchman"]
+}
+```
+
 ### 配置项
 
 | 选项 | 默认 | 说明 |
@@ -235,7 +247,7 @@ bun run gen:shells
 
 ```bash
 bun install
-bun test            # 124 项行为契约 fixture（META/六闸/选链/评分/熔断/配额/更新）
+bun test            # 174 项行为契约 fixture（META/六闸/选链/评分/熔断/配额/更新）
 bunx tsc --noEmit   # 类型检查
 bun run build       # 重新生成矩阵并打包单文件 bundle
 ```
@@ -246,6 +258,8 @@ bun run build       # 重新生成矩阵并打包单文件 bundle
 bun run mode:local  # build + 指向本仓库
 bun run mode:prod   # 使用 npm 包；未安装时拒绝并打印安装命令
 ```
+
+两条命令都会同步把 `tui.jsonc` 的 `plugin` 数组切到对应 spec（文件不存在则自动创建），侧边栏状态面板跟随 hook 插件一起切源，无需再手动改一遍。
 
 ## 文档
 

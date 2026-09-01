@@ -12,6 +12,7 @@ import { rankCandidates } from "./scoring"
 import type { WaterFactor } from "./scoring"
 import { evaluatePeakSchedules } from "./config"
 import { defaultProviderConfig } from "./provider-config"
+import { appendStatusLog } from "./state"
 
 // ---- 计费窗口（可配置）----
 export interface BillingWindowCfg {
@@ -353,7 +354,7 @@ export function computeLane(lane: Lane, base: string[], p: ComputeLaneParams): L
       if (bd) c.score = bd
     }
   } catch (exc) {
-    console.error(`[opencode-switchman] 评分失败回退规则式排序: ${exc}`)
+    appendStatusLog(`评分失败回退规则式排序: ${exc}`)
     legacySort(chain, p, glmPeak, immediate)
   }
 

@@ -33,7 +33,21 @@ export const paths = () => {
     decisions: join(dir, "routing-decisions.jsonl"),
     selfupdate: join(dir, "selfupdate.json"),
     doctorSnapshot: join(dir, "doctor-snapshot.json"),
+    // [2026-08-31]-[TUI 侧边栏实时状态：横幅内容改落盘，供 tui.tsx 轮询渲染而非刷屏 stderr]
+    statusLog: join(dir, "status-log.json"),
   }
+}
+
+// [2026-08-31]-[TUI 侧边栏实时状态环形日志：最多保留 STATUS_LOG_MAX 条，供 tui.tsx 轮询读取]
+export const STATUS_LOG_MAX = 20
+export type StatusLogEntry = { ts: string; text: string }
+export function appendStatusLog(text: string): void {
+  try {
+    const p = paths().statusLog
+    const prev = readJson<StatusLogEntry[]>(p) ?? []
+    const next = [...prev, { ts: nowIso(), text }].slice(-STATUS_LOG_MAX)
+    writeJsonAtomic(p, next)
+  } catch { /* fail-open：状态日志失败不影响主流程 */ }
 }
 
 // ---- 常量 ----
