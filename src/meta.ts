@@ -6,7 +6,8 @@ import type { Meta, MetaErr, MetaKey } from "./types"
 
 export function parseRouteMeta(prompt: unknown): [Meta | null, MetaErr | null] {
   if (typeof prompt !== "string" || !prompt) return [null, "missing"]
-  const m = /^ROUTE_META[ \t]+(.+)$/m.exec(prompt.slice(0, 4000))
+  // [2026-09-01]-[LLM 偶尔会给协议行加 Markdown 外壳；剥离无语义装饰，避免有效元数据被误拦截。]
+  const m = /^[ \t]*(?:>[ \t]*|[-*+][ \t]+)?`?ROUTE_META`?(?:[ \t]*:[ \t]*|[ \t]+)(.+)$/m.exec(prompt.slice(0, 4000))
   if (!m) return [null, "missing"]
   const raw = m[1]!.trim()
   let meta: Record<string, unknown> | null = null

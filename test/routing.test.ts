@@ -84,6 +84,13 @@ describe("META 解析", () => {
     expect(m?.role).toBe("programmer")
     expect(m?.source).toBe("auto")
   })
+  test("2a Markdown 外壳不应使有效 META 被拒绝", () => {
+    for (const prefix of ["  ROUTE_META", "> ROUTE_META", "- ROUTE_META", "`ROUTE_META`", "ROUTE_META:"]) {
+      const [m, err] = parseRouteMeta(`${prefix} {"lane":"mechanical","role":"tester","capability":"rw","source":"auto"}`)
+      expect(err).toBeNull()
+      expect(m).toEqual({ lane: "mechanical", role: "tester", capability: "rw", source: "auto" })
+    }
+  })
   test("3 六键白名单：未知键丢弃、值统一小写", () => {
     const [m, err] = parseRouteMeta('ROUTE_META {"role":"Programmer","capability":"RW","source":"AUTO","bogus":"x"}')
     expect(err).toBeNull()
