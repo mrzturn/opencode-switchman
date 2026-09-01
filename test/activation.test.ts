@@ -92,15 +92,15 @@ describe("mode 判定与空集回退", () => {
     expect(detectMode("tui", "desktop")).toBe("cli") // 强制覆盖客户端判定
     expect(detectMode("legacy", "desktop")).toBe("legacy")
   })
-  test("无可见/favorites（空集）→激活矩阵=仅活跃会话模型", () => {
+  test("无可见/favorites（空集）→未配可见集默认全部超集可调度（不因会话模型收紧）", () => {
     writeTui([]) // cli 模式无 favorites
     const m = managerOf({ mode: "cli" })
     m.noteChatParams("s1", "build", "glm/glm-5.3")
     const st = m.recompute()
     expect(st.configStatus).toBe("empty")
     expect(st.activeModels).toEqual(["glm/glm-5.3"])
-    expect(st.activeShells.length).toBeGreaterThan(0)
-    expect(st.activeShells.every((n) => n.startsWith("glm-mx-53"))).toBe(true)
+    // [2026-09-01]-[未配可见集＝不限制：activeShells 覆盖全部超集，不仅 glm-5.3 那一档]
+    expect(st.activeShells.some((n) => n.startsWith("ds-mx-") || n.startsWith("copilot-mx-"))).toBe(true)
   })
   test("desktop 无可见项（全 hide）→同样回退会话模型", () => {
     writeDesktop([
@@ -315,7 +315,8 @@ describe("会话生命周期与容错", () => {
     expect(m.noteSessionDeleted("s1")).toBe(true)
     const st = m.recompute()
     expect(st.activeModels).toEqual([])
-    expect(st.activeShells).toEqual([])
+    // [2026-09-01]-[空窗期退化：activeModels 为空时 activeShells 退化为全部已注入超集，非空集]
+    expect(st.activeShells.length).toBeGreaterThan(0)
   })
   test("壳子代理与内部代理不计入激活矩阵", () => {
     writeTui([])

@@ -14,6 +14,8 @@ import {
   loadContext, buildRegistry, loadManifest, laneShells, paths,
   cleanExpired, ensureStateDir, stateDir, loadSupersetShells, writeJsonAtomic,
   appendStatusLog,
+  writeRouteSnapshot,
+  loadProviderCache, saveProviderCache, nowIso,
 } from "./state"
 import { checkShell, noteUnknownAgent, shellLikeName, denyUninjected } from "./gates"
 import {
@@ -27,7 +29,7 @@ import { costOf, refreshCosts, costsStale } from "./cost"
 import { baseScoreDynamic, refreshCapability, capabilityStale } from "./capability"
 import { refreshMatrixIfStale, refreshActiveMatrixIfStale, probeKeys } from "./probe"
 import { injectShells, injectShellDefs } from "./shells"
-import { buildBanner } from "./banner"
+import { buildBanner, shortName } from "./banner"
 import { refreshSelfUpdate, updateBannerText, ensureUpdateCommands, detectLoadMode } from "./selfupdate"
 import { billingOfProvider, loadUserConfig, resolveEffectiveOptions, routingPeakActive, routePolicy } from "./config"
 import { poolForProviderId } from "./provider-config"
@@ -166,48 +168,94 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     }
   }
 
-  /** 有凭证 provider 的全部可对话模型（client.provider.list 带超时；失败回退 cfg.provider 键集）
-   *  [2026-08-29]-[修复复审P1-provider.list 响应形状：返回对象非数组（sdk /provider 200 响应）：
-   *  {all: Provider[], default:{}, connected: string[]}——超集须按 connected（有凭证）筛选，restartRequired 才准确] */
+  /** [2026-09-01]-[P3 启动竞态修复：单次 attempt，短超时（不阻塞太久）；失败/未就绪抛错供调用方退避重试]-
+   *  provider.list 单次探测（不含重试逻辑，重试由 collectProviderModels 的退避调度负责） */
+  async function attemptProviderList(
+    input: { client?: { provider?: { list?: () => Promise<unknown> } } },
+    timeoutMs: number,
+  ): Promise<{ models: string[]; providers: string[] }> {
+    const resp = await withTimeout(Promise.resolve(input?.client?.provider?.list?.()), timeoutMs)
+    // 形状归一纯函数见 activation.normalizeProviderListResponse（delta 复审 P1：先解包 .data 包装）
+    const normalized = normalizeProviderListResponse(resp)
+    if (!normalized) throw new Error("provider.list 响应形状不可识别")
+    const providers = normalized.providers
+    const connected = normalized.connected
+    const models: string[] = []
+    const providerIds: string[] = []
+    for (const p of providers) {
+      const pid = String(p?.id ?? "")
+      if (!pid) continue
+      // connected 在场=有凭证筛选（不在该列表的 provider 壳注册后必失败，且污染 restartRequired 基线）
+      if (connected && !connected.has(pid)) continue
+      providerIds.push(pid)
+      for (const mid of Object.keys(p?.models ?? {})) {
+        models.push(`${pid}/${mid}`)
+      }
+    }
+    if (providers.length === 0 && !Array.isArray(resp)) throw new Error("provider.list 响应形状不可识别")
+    return { models, providers: providerIds }
+  }
+
+  // [2026-09-01]-[启动竞态加固：opencode 核心 provider 注册表就绪耗时不固定，原 2 次固定 2.5s/8s 重试
+  //  经常仍撞上未就绪（实测两次均超时）——改自适应退避（更短首次超时+更多次数），命中率显著提升；
+  //  config 钩子内必须等到结果才能 injectShellDefs（cfg.agent 只在钩子内一次性生效，事后追加不生效，
+  //  这是 opencode 插件 API 的硬约束，非本插件可绕过），故此处仍是 await，但退避调度使其"尽快返回"
+  //  而非固定死等，多数情况比旧实现更快拿到真实 provider.list 结果，减少落到 restartRequired 兜底的概率]
+  const PROVIDER_LIST_BACKOFF_MS = [0, 1_500, 3_000, 6_000] // 4 次尝试，累计等待 10.5s + 4×超时预算
+  const PROVIDER_LIST_ATTEMPT_TIMEOUT_MS = 5_000
+
+  /** 有凭证 provider 的全部可对话模型（client.provider.list 带自适应退避重试；失败回退 cfg.provider 键集） */
   async function collectProviderModels(
     input: { client?: { provider?: { list?: () => Promise<unknown> } } },
     cfg: Record<string, any>,
-    attempt = 0,
-  ): Promise<{ models: string[]; providers: string[] }> {
-    try {
-      const resp = await withTimeout(Promise.resolve(input?.client?.provider?.list?.()), 8_000)
-      // 形状归一纯函数见 activation.normalizeProviderListResponse（delta 复审 P1：先解包 .data 包装）
-      const normalized = normalizeProviderListResponse(resp)
-      if (!normalized) throw new Error("provider.list 响应形状不可识别")
-      const providers = normalized.providers
-      const connected = normalized.connected
-      const models: string[] = []
-      const providerIds: string[] = []
-      for (const p of providers) {
-        const pid = String(p?.id ?? "")
-        if (!pid) continue
-        // connected 在场=有凭证筛选（不在该列表的 provider 壳注册后必失败，且污染 restartRequired 基线）
-        if (connected && !connected.has(pid)) continue
-        providerIds.push(pid)
-        for (const mid of Object.keys(p?.models ?? {})) {
-          models.push(`${pid}/${mid}`)
+  ): Promise<{ models: string[]; providers: string[]; fellBack: boolean }> {
+    let lastExc: unknown = null
+    for (let i = 0; i < PROVIDER_LIST_BACKOFF_MS.length; i++) {
+      if (PROVIDER_LIST_BACKOFF_MS[i] > 0) await new Promise((r) => setTimeout(r, PROVIDER_LIST_BACKOFF_MS[i]))
+      try {
+        const result = await attemptProviderList(input, PROVIDER_LIST_ATTEMPT_TIMEOUT_MS)
+        if (i > 0) appendStatusLog(`provider.list 第 ${i + 1} 次尝试成功（此前 ${i} 次未就绪）`)
+        return { ...result, fellBack: false }
+      } catch (exc) {
+        lastExc = exc
+        if (i < PROVIDER_LIST_BACKOFF_MS.length - 1) {
+          appendStatusLog(`provider.list 第 ${i + 1} 次未就绪，退避重试: ${exc}`)
         }
       }
-      if (providers.length === 0 && !Array.isArray(resp)) throw new Error("provider.list 响应形状不可识别")
-      return { models, providers: providerIds }
-    } catch (exc) {
-      // [2026-09-01]-[P3 启动竞态：provider.list 在 opencode 启动早期未就绪（8s 超时）——延迟 2.5s 重试一次，
-      //  仍败才回退 cfg.provider 键集（restartRequired 基线失真的主因）]
-      if (attempt === 0) {
-        appendStatusLog(`provider.list 未就绪，2.5s 后重试: ${exc}`)
-        await new Promise((r) => setTimeout(r, 2_500))
-        return collectProviderModels(input, cfg, 1)
-      }
-      // 回退：cfg.provider 键集（仅 providerID，供 restartRequired 基线；模型面由配置面/内置链兜底）
-      const keys = Object.keys(cfg.provider ?? {})
-      appendStatusLog(`provider.list 不可用（回退 cfg.provider 键集 ${keys.length} 个）: ${exc}`)
-      return { models: [], providers: keys }
     }
+    // 全部尝试失败：回退 cfg.provider 键集（仅 providerID，供 restartRequired 基线；模型面由配置面/内置链兜底）
+    const keys = Object.keys(cfg.provider ?? {})
+    appendStatusLog(`provider.list 不可用（${PROVIDER_LIST_BACKOFF_MS.length} 次尝试后回退 cfg.provider 键集 ${keys.length} 个）: ${lastExc}`)
+    return { models: [], providers: keys, fellBack: true }
+  }
+
+  // [2026-09-01]-[异步兜底：config 钩子内的退避重试若仍全败（起始阶段 opencode 核心异常慢），
+  //  或本次启动直接用了跨重启缓存（未做实时探测）——后台继续以更长间隔探测 provider.list，
+  //  成功即刷新缓存供下次启动秒用；命中新 provider 时只能提示"需重启"而非静默生效——
+  //  cfg.agent 只在 config 钩子内一次性读取（opencode 插件 API 硬约束），事后无法补注册壳 agent；
+  //  此处价值仅在于把"还要不要重启""现在重启能不能生效"从盲猜变成明确、实时的状态提示]
+  function scheduleProviderListWatchdog(
+    input: { client?: { provider?: { list?: () => Promise<unknown> } } },
+    knownProviders: ReadonlySet<string>,
+  ): void {
+    const delays = [15_000, 30_000, 60_000] // 后台 3 次，间隔递增，累计再等 105s；进程退出自然终止，无需显式取消
+    const run = async () => {
+      for (const delay of delays) {
+        await new Promise((r) => setTimeout(r, delay))
+        try {
+          const result = await attemptProviderList(input, 6_000)
+          // [2026-09-01]-[真实探测成功即刷新跨重启缓存：下次启动 config 钩子直接读缓存，免去重新等待]
+          saveProviderCache({ at: nowIso(), models: result.models, providers: result.providers })
+          const fresh = result.providers.filter((p) => !knownProviders.has(p))
+          if (fresh.length > 0) {
+            appendStatusLog(`provider.list 后台探测：发现新 provider（${fresh.join("、")}）已连接——重启 opencode 即可完成壳注册`)
+            clearBannerCache()
+          }
+          return
+        } catch { /* 继续下一轮退避，fail-open */ }
+      }
+    }
+    run().catch(() => {})
   }
 
   function warmup(): void {
@@ -217,34 +265,41 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       ensureStateDir()
       ensureStateAssets()
       creds.copilotToken = creds.copilotToken ?? readAuthStore().githubToken
-      if (costsStale() && options.cost!.enabled) refreshCosts().catch(() => {})
+      const costsP = costsStale() && options.cost!.enabled ? refreshCosts().catch(() => {}) : Promise.resolve()
       // [2026-08-31]-[动态能力分级：与探针同频调度（TTL 24h 内自动跳过实际拉取）]
-      if (capabilityStale() && options.capability!.enabled) refreshCapability(options.capability!).catch(() => {})
-      if (dynamic && manager) refreshActiveMatrixIfStale(probeEndpoints(), manager.activeMatrixKeys()).catch(() => {})
-      else refreshMatrixIfStale(probeEndpoints()).catch(() => {})
+      const capP = capabilityStale() && options.capability!.enabled ? refreshCapability(options.capability!).catch(() => {}) : Promise.resolve()
+      const matrixP = dynamic && manager
+        ? refreshActiveMatrixIfStale(probeEndpoints(), manager.activeMatrixKeys()).catch(() => {})
+        : refreshMatrixIfStale(probeEndpoints()).catch(() => {})
       quotaView(creds as any, { observe: {
         glm: policy.glm.observe,
         deepseek: policy.deepseek.observe,
         copilot: policy.copilot.observe,
       } })
+      // [2026-09-01]-[探针实时联动：待启动探针/矩阵/能力刷新真正落地后再写侧栏快照，避免读到刷新前的旧数据]-[fail-open 不阻塞启动]
+      Promise.allSettled([costsP, capP, matrixP]).then(() => {
+        try { bannerCache = null; bannerLines() } catch { /* fail-open */ }
+      }).catch(() => {})
       // [2026-08-28]-[探针/配额/成本只在启动跑一次，启动竞态（如核心晚回写 token）或高峰限流后永不自愈]-
       // [10min 周期刷新：矩阵 TTL 内自动跳过，配额/成本由各自 TTL 兜底；timer unref 不阻进程退出]
       // [2026-08-29]-[动态矩阵只探激活组合（增量，ro 别名共享 key 去重）；legacy 保持全量]
       const timer = setInterval(() => {
         try {
-          if (dynamic && manager) {
-            refreshActiveMatrixIfStale(probeEndpoints(), manager.activeMatrixKeys()).catch(() => {})
-          } else {
-            refreshMatrixIfStale(probeEndpoints()).catch(() => {})
-          }
+          const matrixP = dynamic && manager
+            ? refreshActiveMatrixIfStale(probeEndpoints(), manager.activeMatrixKeys()).catch(() => {})
+            : refreshMatrixIfStale(probeEndpoints()).catch(() => {})
           quotaView(creds as any, { observe: {
             glm: policy.glm.observe,
             deepseek: policy.deepseek.observe,
             copilot: policy.copilot.observe,
           } })
-          if (costsStale() && options.cost!.enabled) refreshCosts().catch(() => {})
+          const costsP = costsStale() && options.cost!.enabled ? refreshCosts().catch(() => {}) : Promise.resolve()
           // [2026-08-31]-[动态能力分级：10min 周期同频检查，capabilityStale/TTL 24h 门控实际拉取]
-          if (capabilityStale() && options.capability!.enabled) refreshCapability(options.capability!).catch(() => {})
+          const capP = capabilityStale() && options.capability!.enabled ? refreshCapability(options.capability!).catch(() => {}) : Promise.resolve()
+          // [2026-09-01]-[探针实时联动：10min 周期刷新落地后立即使横幅缓存失效并重写侧栏快照，不等下一条聊天消息]
+          Promise.allSettled([matrixP, costsP, capP]).then(() => {
+            try { bannerCache = null; bannerLines() } catch { /* fail-open */ }
+          }).catch(() => {})
         } catch { /* fail-open */ }
       }, 600_000)
       if (typeof timer === "object" && timer !== null && "unref" in timer) (timer as any).unref()
@@ -416,6 +471,18 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         }
         if (records.length > 0) logDecision(records).catch(() => {})
       } catch { /* fail-open */ }
+      // [2026-09-01]-[TUI 侧边栏「最佳模型」面板：与横幅同源的各档链首候选，覆盖写入供 tui.tsx 轮询]
+      try {
+        writeRouteSnapshot(LANE_ORDER.map((lane) => {
+          const r = lanes[lane]
+          const top = r?.chain?.[0]
+          return {
+            lane,
+            best: top ? shortName(top.shell) : null,
+            degraded: r ? r.status.endsWith("*") : false,
+          }
+        }))
+      } catch { /* fail-open */ }
       bannerCache = { at: Date.now(), lines: lines2 }
       return lines2
     } catch (exc) {
@@ -490,7 +557,21 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         // 超集=配置面 ∪ 有凭证 provider 全部可对话模型 ∪ 保底模型；排除 embedding 类
         const stateRoot = resolveOpencodeStateRoot()
         const configured = readConfiguredSafe(stateRoot, runMode)
-        const providerModels = await collectProviderModels(input, cfg)
+        // [2026-09-01]-[跨重启秒开：首次成功探测过 provider.list 后即缓存 providers/models（仅真实成功时写，
+        //  见 scheduleProviderListWatchdog/下方成功分支）；非首次启动直接用缓存建壳，不再每次重启都要
+        //  阻塞等 provider.list 网络竞态（原退避最长 ~30s）——缓存可能滞后于最新连接状态，故仍在后台
+        //  发起一次真实探测：命中新 provider 才提示重启，命中率与旧实现一致，只是不再堵门口]
+        const providerCache = loadProviderCache()
+        let providerModels: { models: string[]; providers: string[]; fellBack: boolean }
+        let usedProviderCache = false
+        if (providerCache) {
+          providerModels = { models: providerCache.models, providers: providerCache.providers, fellBack: false }
+          usedProviderCache = true
+          appendStatusLog(`provider.list 使用跨重启缓存（${providerCache.providers.length} 个 provider，缓存于 ${providerCache.at}），后台校验新增`)
+        } else {
+          providerModels = await collectProviderModels(input, cfg)
+          if (!providerModels.fellBack) saveProviderCache({ at: nowIso(), models: providerModels.models, providers: providerModels.providers })
+        }
         const catalog = await loadCatalog().catch(() => ({ index: {}, status: "none" as const, etag: null }))
         // [2026-09-01]-[保底改源：opencode 自带免费模型（OpenCode Zen，models.dev opencode provider
         //  -free ∪ big-pickle 特例，24h 滚动）优先；目录不可用（无网冷启动）fail-open 回退静态清单]
@@ -522,6 +603,10 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           })
         } catch { /* fail-open */ }
         const knownProviders = new Set<string>([...supersetModels.map((m) => m.slice(0, m.indexOf("/"))), ...providerModels.providers])
+        // [2026-09-01]-[异步兜底：钩子内退避仍全落回 fallback，或本次直接用了跨重启缓存（未做实时探测）时，
+        //  后台继续探测——命中新 provider 只能提示需重启（cfg.agent 一次性生效的硬约束，见
+        //  scheduleProviderListWatchdog 注释），但至少把"现在重启能不能生效"从盲猜变成实时、明确的状态提示]
+        if (providerModels.fellBack || usedProviderCache) scheduleProviderListWatchdog(input, knownProviders)
         manager = new MatrixManager({
           stateRoot, mode: runMode, superset: supersetDefs,
           injectedNames, knownProviders,

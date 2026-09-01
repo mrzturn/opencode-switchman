@@ -114,21 +114,35 @@ export interface ActivationInput {
   knownProviders: ReadonlySet<string>
 }
 
-/** 激活集计算：activeModels=configured∪sessionModels；超集外 provider → restartRequired */
+/** 激活集计算：configured（可见集/收藏）非空时才收紧调度范围；未配置可见集时默认全部已注入超集可调度，
+ *  sessionModels 仅用于叠加（不收紧）与 restartRequired 探测——配了可见集才优先按可见集narrow。
+ *  [2026-09-01]-[口径调整：原「activeModels=configured∪sessionModels」在用户未配可见集但已发过消息时，
+ *  会把候选收紧成只有当前会话用过的那一个模型，体验上等同「全不可用」（其余模型都调不到）；
+ *  用户诉求：没配可见集＝不限制，全部可调；配了可见集才按可见集优先窄化] */
 export function computeActivation(input: ActivationInput): ActivationState {
   const configured = sortUnique(input.configured)
   const sessionModels = sortUnique(input.sessionModels)
   const activeModels = sortUnique([...configured, ...sessionModels])
   const activeShells = new Set<string>()
   const restartRequired = new Set<string>()
+  // restartRequired：无论是否收紧，凡是「非壳会话真用过的模型」不在超集里且 provider 未知，都要提示重启
   for (const mk of activeModels) {
     const slash = mk.indexOf("/")
     const provider = slash > 0 ? mk.slice(0, slash) : ""
     const defs = input.shellsByModel.get(mk)
-    if (defs && defs.length > 0) {
-      for (const d of defs) activeShells.add(d.name)
-    } else if (provider && !input.knownProviders.has(provider)) {
+    if ((!defs || defs.length === 0) && provider && !input.knownProviders.has(provider)) {
       restartRequired.add(provider)
+    }
+  }
+  if (configured.length === 0) {
+    // 未配置可见集：默认全部已注入超集可调度（不因 sessionModels 而收紧）
+    for (const defs of input.shellsByModel.values()) {
+      for (const d of defs) activeShells.add(d.name)
+    }
+  } else {
+    for (const mk of activeModels) {
+      const defs = input.shellsByModel.get(mk)
+      if (defs && defs.length > 0) for (const d of defs) activeShells.add(d.name)
     }
   }
   return {

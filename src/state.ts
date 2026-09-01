@@ -28,6 +28,10 @@ export const paths = () => {
     // [2026-08-29]-[动态矩阵 v1.3 新增状态文件]
     modelCatalog: join(dir, "model-catalog.json"),
     shellSuperset: join(dir, "shell-superset.json"),
+    // [2026-09-01]-[provider.list 结果跨重启缓存：仅在真实探测成功（非回退）时写入，下次启动直接
+    //  用缓存建壳，免去每次重启都要重新等 provider.list 网络竞态——新 provider 由后台探测发现后
+    //  才提示重启，不再"启动即等、进来又提示重启"]
+    providerCache: join(dir, "provider-cache.json"),
     activeMatrix: join(dir, "active-matrix.json"),
     // [2026-08-29]-[评分引擎决策日志（环形截断 200 行，JSONL）]
     decisions: join(dir, "routing-decisions.jsonl"),
@@ -35,6 +39,8 @@ export const paths = () => {
     doctorSnapshot: join(dir, "doctor-snapshot.json"),
     // [2026-08-31]-[TUI 侧边栏实时状态：横幅内容改落盘，供 tui.tsx 轮询渲染而非刷屏 stderr]
     statusLog: join(dir, "status-log.json"),
+    // [2026-09-01]-[TUI 侧边栏新增「各任务档位实时最佳候选」面板：横幅重建时同步落盘，供 tui.tsx 轮询渲染]
+    routeSnapshot: join(dir, "route-snapshot.json"),
   }
 }
 
@@ -49,6 +55,15 @@ export function appendStatusLog(text: string): void {
     writeJsonAtomic(p, next)
   } catch { /* fail-open：状态日志失败不影响主流程 */ }
 }
+
+// [2026-09-01]-[各任务档位（lane）实时最佳候选快照：整体覆盖写入（非环形追加），供侧边栏「最佳模型」面板渲染]
+export type RouteSnapshotEntry = { lane: string; best: string | null; degraded: boolean }
+export function writeRouteSnapshot(entries: RouteSnapshotEntry[]): void {
+  try {
+    writeJsonAtomic(paths().routeSnapshot, { ts: nowIso(), entries })
+  } catch { /* fail-open：快照写入失败不影响主流程 */ }
+}
+
 
 // ---- 常量 ----
 export const FAIL_WINDOW = 600
@@ -220,6 +235,17 @@ export function loadSupersetShells(): { shells: ShellManifestEntry[]; generated_
   const data = readJson<{ shells?: unknown; generated_at?: string }>(paths().shellSuperset)
   if (!data || !Array.isArray(data.shells) || data.shells.length === 0) return null
   return { shells: data.shells as ShellManifestEntry[], generated_at: data.generated_at }
+}
+
+// [2026-09-01]-[跨重启 provider.list 缓存：models/providers 均为纯字符串数组，读坏/缺失=null（调用方回退阻塞探测）]
+export interface ProviderCache { at: string; models: string[]; providers: string[] }
+export function loadProviderCache(): ProviderCache | null {
+  const data = readJson<ProviderCache>(paths().providerCache)
+  if (!data || !Array.isArray(data.providers) || data.providers.length === 0) return null
+  return { at: data.at, models: Array.isArray(data.models) ? data.models : [], providers: data.providers }
+}
+export function saveProviderCache(cache: ProviderCache): void {
+  writeJsonAtomic(paths().providerCache, cache)
 }
 
 export function ensureStateDir(): void {
