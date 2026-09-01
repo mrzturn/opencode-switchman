@@ -309,7 +309,7 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
   .chip{font-size:10.5px;padding:7px 11px}
   .close h2{font-size:clamp(26px,8vw,40px)}
   .close .sub{font-size:16px;line-height:1.65;margin-bottom:24px}
-  /* [2026-08-29]-[安装方式移动端两行：命令一行、plugin 配置独占一行；桌面保持一行] */
+  /* [2026-09-01]-[安装命令改为 curl 一键脚本 + npx 两条等价路径；移动端两行：curl 一行、npx 独占一行，桌面同行] */
   .cmd{font-size:12px;padding:12px 14px;gap:6px 8px;justify-content:flex-start;flex-wrap:wrap}
   .cmd .c1,.cmd .c2{white-space:nowrap}
   .cmd .sep{display:none}
@@ -344,7 +344,7 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
       <span class="chip"><b>174</b> 项行为 fixture</span>
       <span class="chip">全供应商接入 · 三池额度控制</span>
         </div>
-    <div class="cmd rv" data-d="5"><span class="ps">$</span><span class="c1">npm install opencode-switchman</span><span class="sep">·</span><span class="c2">plugin: ["opencode-switchman"]</span></div>
+    <div class="cmd rv" data-d="5"><span class="ps">$</span><span class="c1">curl -fsSL https://raw.githubusercontent.com/mrzturn/opencode-switchman/main/scripts/setup.sh | bash</span><span class="sep">·</span><span class="c2">npx -y opencode-switchman@latest</span></div>
   </div>
 </section>
 
@@ -564,7 +564,7 @@ ROUTE_META <span class="tk-p">{</span>
     <div class="chips rv" data-d="4">
       <span class="chip">六档认知分层</span><span class="chip">加权评分引擎</span><span class="chip">决策可追溯</span><span class="chip">失败隔离</span><span class="chip">自更新命令</span>
     </div>
-    <div class="cmd rv" data-d="5"><span class="ps">$</span><span class="c1">npm install opencode-switchman</span><span class="sep">·</span><span class="c2">plugin: ["opencode-switchman"]</span></div>
+    <div class="cmd rv" data-d="5"><span class="ps">$</span><span class="c1">curl -fsSL https://raw.githubusercontent.com/mrzturn/opencode-switchman/main/scripts/setup.sh | bash</span><span class="sep">·</span><span class="c2">npx -y opencode-switchman@latest</span></div>
   </div>
 </section>
 

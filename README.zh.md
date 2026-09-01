@@ -23,25 +23,25 @@ OpenCode 六档壳矩阵编排插件——让主模型成为调度员，把任�
   - **DeepSeek**：自定义 provider（`deepseek` + apiKey）
 - 凭证零配置：插件从 opencode 鉴权层（auth.json / provider options / 环境变量）**只读**获取，不另存密钥、绝不自行刷新 token
 
-### 一键安装 / 一键更新（推荐）
+### 安装 / 更新（两条一键路径）
+
+两条命令均同时覆盖首次安装与后续更新（幂等，可重复执行）：自动把 opencode 配置与 `tui.jsonc` 的 `plugin` 条目改写为最新精确版本 `opencode-switchman@x.y.z`（JSONC 注释原样保留）、清理旧插件缓存（`~/.cache/opencode/packages/opencode-switchman*`），升级场景在横幅标记「已升级待重启」——**重启 opencode 后生效**。
+
+**一键脚本（推荐）**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mrzturn/opencode-switchman/main/scripts/setup.sh | bash
 ```
 
-同一条命令同时覆盖首次安装与后续更新（幂等，可重复执行）：
-
-- 自动把 opencode 配置与 `tui.jsonc` 的 `plugin` 条目改写为最新精确版本 `opencode-switchman@x.y.z`（JSONC 注释原样保留）
-- 清理 opencode 插件缓存里的旧版本目录（`~/.cache/opencode/packages/opencode-switchman*`）
-- 升级场景会在横幅标记「已升级待重启」；**重启 opencode 后生效**
-
-> **为什么条目是精确版本，而不是裸包名 / `@latest`**：opencode ≤1.18.x 的插件缓存按 spec 名固定目录（如 `~/.cache/opencode/packages/opencode-switchman`），首次装入后不再向 npm 查询新版本——裸名与 `@latest` 会一直复用旧缓存（实测从 0.0.1 钉死不升级）。精确版本号每个版本一个独立缓存目录，所以更新器直接改写版本号。
-
-发布 ≥0.2.1 后也可用 npm/bun 运行同一更新器：
+**npx / bunx**
 
 ```bash
-npx -y opencode-switchman@latest update    # 或 bunx opencode-switchman@latest update
+npx -y opencode-switchman@latest    # 或：bunx opencode-switchman@latest
 ```
+
+> npx 路径自 ≥0.2.1 发布起可用（包内自带 `update` bin 入口）。
+
+> **为什么条目是精确版本，而不是裸包名 / `@latest`**：opencode ≤1.18.x 的插件缓存按 spec 名固定目录（如 `~/.cache/opencode/packages/opencode-switchman`），首次装入后不再向 npm 查询新版本——裸名与 `@latest` 会一直复用旧缓存（实测从 0.0.1 钉死不升级）。精确版本号每个版本一个独立缓存目录，所以更新器直接改写版本号。
 
 插件内升级入口 `/switchman-update` 已改为调用同一更新器（旧版直接 `npm install` 的方式对 opencode 实际加载路径无效）。
 
