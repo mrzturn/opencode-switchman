@@ -1,6 +1,6 @@
 {
   "_note": "opencode-switchman 全量矩阵：权威启用面（模型管理打开的模型，scripts/visible-models.txt）× 全部声明思考档位（models.dev reasoning_options，toggle→off）。scripts/gen-shells.ts 生成，勿手改；模型开关变化后同步 pin 文件并重跑 bun run gen:shells。六档链由能力分×档位亲和×结构门×计费系数计算（api 计费 0.85、未知组 0.75 按系数沉底，无厂商预留席位）。",
-  "generated_at": "2026-09-01T01:55:50.370Z",
+  "generated_at": "2026-09-01T01:58:32.509Z",
   "counts": {
     "shells": 104,
     "visible_models": 13

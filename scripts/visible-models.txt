@@ -1,6 +1,16 @@
-# opencode-switchman 权威启用面：opencode 桌面端「模型管理」中打开（可见）的模型，每行 provider/model-id。
-# 本文件是全量矩阵生成的第一真源（gen-shells.ts 优先读取）；模型管理开关变化后手动同步此文件再重跑 bun run gen:shells。
-# 以 # 开头的行为注释。
+# opencode-switchman 权威启用面：opencode 桌面端「模型管理」中打开（可见）的模型，每行 provider/model-id，以 # 开头为注释。
+#
+# 本文件只影响【发布时烘进包里的静态基线】（src/shells.json），即：
+#   1) 无网冷启动时的档位元数据（bundledModelIndex，避免未知模型降级单档 off）；
+#   2) 免费保底清单的最后回退（正常优先 OpenCode Zen 免费模型，见 src/index.ts 保底逻辑）；
+#   3) matrix.mode=legacy 静态路径的注入清单。
+# 它【不限制】npm 用户的可用模型：运行期超集=用户配置面 ∪ 有凭证 provider 全部可对话模型 ∪ 保底模型，
+# 激活面由用户自己的可见集/favorites 控制；本文件里的模型用户没有则相关壳不注入/不激活，无副作用。
+# 它也【不是】实测清单：gen:shells 不做任何连通性/质量验证；此处仅为维护者日常使用的启用面，
+# 用户侧可用性由运行期探针（10 分钟刷新）动态兜底，down 自动降级/熔断。
+#
+# 注意：清空/全注释会降级自动模式＝在维护者机器上跑 `opencode models` 的个人环境快照，质量更差，不建议。
+# 模型管理开关变化后手动同步此文件再重跑 bun run gen:shells（含在 bun run build / prepublishOnly 中）。
 github-copilot/claude-haiku-4.5
 github-copilot/claude-opus-5
 github-copilot/claude-sonnet-5
