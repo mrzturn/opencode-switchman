@@ -163,7 +163,7 @@ describe("退休闸 checkShell deny", () => {
     expect(r.deny).toContain("已下线")
   })
   test("未命中退休集 → 不拦（fail-open）", () => {
-    const s = shell("p", "alive-gate")
+    const s = shell("p", "glm-5.3-flash")
     const r = checkShell(s.name, s, META, {
       registry: { [s.name]: s },
       matrix: null,

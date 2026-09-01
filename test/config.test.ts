@@ -77,7 +77,7 @@ describe("用户水位配置", () => {
     const policy = routePolicy(validateUserConfig(configOf()).config); expect(Object.values(policy).every((x) => !x.routing)).toBe(true)
     expect(scoreShell({ modelId: "x", effort: "high", lane: "main", pool: "glm", matrixStatus: "ok", latencyMs: null, peakActive: false, immediate: false, water: { glmFiveHourPct: 80, routing: { glm: false } } }).water).toBe(1)
     for (const pool of ["glm", "copilot", "deepseek"] as const) {
-      const shell: any = { name: pool, pool, provider: pool, modelId: "x", family: "x", effort: "high", capability: "rw", vision: false, status: "enabled", matrixKey: pool, comboKey: pool }
+      const shell: any = { name: pool, pool, provider: pool, modelId: "glm-5.3-flash", family: "glm", effort: "high", capability: "rw", vision: false, status: "enabled", matrixKey: pool, comboKey: pool }
       const input: any = { registry: { [pool]: shell }, matrix: { [pool]: { status: "ok", latency_ms: null } }, routing: { down_agents: {}, down_expiry: {} }, quotaExhausted: { [pool]: true }, routePolicy: policy }
       expect(computeLane("main", [pool], input).chain).toHaveLength(1)
       expect(checkShell(pool, shell, 'ROUTE_META {"lane":"main","role":"programmer","producer_family":"gpt","capability":"rw","modality":"text","source":"auto"}', { ...input, lanes: { main: [pool] } }).deny).toBeNull()

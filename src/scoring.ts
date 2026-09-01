@@ -11,7 +11,7 @@ import type { Lane, Pool, Routing, ShellRegEntry } from "./types"
 import { baseScoreDynamic } from "./capability"
 import { TIER_RANK, UNKNOWN_PENALTY } from "./model-ranks"
 import type { Tier } from "./model-ranks"
-import { LANE_SPEC } from "./lane-policy"
+import { LANE_SPEC, isPromotionCandidate, meetsLaneCapability } from "./lane-policy"
 
 /** [2026-08-31]-[去厂商化：api 计费系数（subscription=1.0）；取代按池名写死的链尾/按量惩罚] */
 export const BILLING_API_BOOST = 0.85
@@ -224,10 +224,24 @@ export function rankCandidates<T extends Rankable>(
       billingBoost: shell && ctx.billingBoostOf ? ctx.billingBoostOf(shell.provider) : ctx.billingBoostOf ? BILLING_API_BOOST : 1.0,
     }))
   }
-  // [2026-08-29]-[复审P2-1：末位显式按入参序 tiebreak，不依赖排序实现稳定性]-
+  // [2026-09-01]-[能力分池：本池合格模型 + 相邻低一档按动态综合分选出的前二补位模型；
+  // global 兜底不晋级。补位只在常规候选全部不可用时才会被实际派发。]
+  const eligible = survivors.filter((s) => meetsLaneCapability(ctx.lane, baseScoreDynamic(s.modelId)))
+  const promotionPool = survivors.filter((s) => isPromotionCandidate(ctx.lane, baseScoreDynamic(s.modelId)))
+  const scoreCompare = (a: T, b: T): number => {
+    const ba = breakdowns.get(a.key)!
+    const bb = breakdowns.get(b.key)!
+    return bb.total - ba.total ||
+      (bb.rawCapability ?? -Infinity) - (ba.rawCapability ?? -Infinity) ||
+      (a.latencyMs ?? Number.POSITIVE_INFINITY) - (b.latencyMs ?? Number.POSITIVE_INFINITY)
+  }
+  promotionPool.sort(scoreCompare)
+  survivors.length = 0
+  survivors.push(...eligible, ...promotionPool.slice(0, 2))
   const inputOrder = new Map(survivors.map((s, i) => [s.key, i]))
   if (ctx.immediate) {
     survivors.sort((a, b) =>
+      Number(!meetsLaneCapability(ctx.lane, baseScoreDynamic(a.modelId))) - Number(!meetsLaneCapability(ctx.lane, baseScoreDynamic(b.modelId))) ||
       (a.latencyMs ?? Number.POSITIVE_INFINITY) - (b.latencyMs ?? Number.POSITIVE_INFINITY) ||
       (inputOrder.get(a.key) ?? 0) - (inputOrder.get(b.key) ?? 0))
   } else {
@@ -238,7 +252,10 @@ export function rankCandidates<T extends Rankable>(
       return typeof v === "number" ? v : Number.POSITIVE_INFINITY
     }
     survivors.sort((a, b) => {
-      const ba = breakdowns.get(a.key)!
+        const aPromotion = !meetsLaneCapability(ctx.lane, baseScoreDynamic(a.modelId))
+        const bPromotion = !meetsLaneCapability(ctx.lane, baseScoreDynamic(b.modelId))
+        if (aPromotion !== bPromotion) return Number(aPromotion) - Number(bPromotion)
+        const ba = breakdowns.get(a.key)!
       const bb = breakdowns.get(b.key)!
       return TIER_RANK[ba.tier] - TIER_RANK[bb.tier] ||
         bb.total - ba.total ||

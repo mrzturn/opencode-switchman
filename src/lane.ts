@@ -311,7 +311,7 @@ export function computeLane(lane: Lane, base: string[], p: ComputeLaneParams): L
   const immediate = p.urgency === "immediate"
   // [2026-08-29]-[评分引擎：内部排序改调 rankCandidates（硬门已在循环完成，此处只排序）；
   //  registry/矩阵缺失或评分异常一律 fail-open 回退规则式排序，绝不阻塞委派主流程]
-  try {
+  if (regOk && mcombos) try {
     const matrixStatusOf = (c: ChainCandidate): string => {
       if (!regOk || !mcombos) return "ok"
       const sh = registry![c.shell]
@@ -348,6 +348,8 @@ export function computeLane(lane: Lane, base: string[], p: ComputeLaneParams): L
       peakOf: p.peakOf,
     })
     const order = new Map(ranked.map((r, i) => [r.key, i]))
+    // rankCandidates 同时裁掉非本池模型和未进前二的跨级候补；不得让自定义静态链绕过。
+    chain.splice(0, chain.length, ...chain.filter((candidate) => order.has(candidate.shell)))
     chain.sort((a, b) => (order.get(a.shell) ?? Number.POSITIVE_INFINITY) - (order.get(b.shell) ?? Number.POSITIVE_INFINITY))
     for (const c of chain) {
       const bd = breakdowns.get(c.shell)

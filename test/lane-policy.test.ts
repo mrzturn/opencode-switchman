@@ -40,6 +40,7 @@ describe("候选链算法", () => {
       { name: "c-known", modelId: "c-known", provider: "github-copilot", pool: "copilot", effort: "high", capability: "rw", vision: false },
     ]
     const cap2 = (id: string) => (id === "b-unknown" ? { score: 0.7, tier: "B" as const } : { score: 0.55, tier: "C" as const })
+    // C 已知模型可作为 main 的相邻跨级补位。
     expect(computeLaneChain(tierMix, cap2, "main", { unknownOf: (id) => id === "b-unknown" })).toEqual(["b-unknown", "c-known"])
   })
   test("六 lane 均由能力×亲和×结构门×计费系数生成，api 计费系数沉底（无预留席）", () => {
@@ -72,6 +73,24 @@ describe("候选链算法", () => {
     ]
     expect(computeLaneChain(mix, () => 1, "main", { unknownOf: (id) => id === "mystery" })).toEqual(["known", "mystery"])
     expect(computeLaneChain(mix, () => 1, "main")).toEqual(["known", "mystery"]) // 同分按名称序兜底一致
+  })
+  test("能力分池：mechanical/main/hard 依次要求 C/B/A，低一档前二模型向上补位", () => {
+    const levels = [
+      { name: "c", modelId: "c", pool: "glm", effort: "high", capability: "rw", vision: false },
+      { name: "b", modelId: "b", pool: "glm", effort: "high", capability: "rw", vision: false },
+      { name: "a", modelId: "a", pool: "glm", effort: "high", capability: "ro", vision: false },
+      { name: "s", modelId: "s", pool: "glm", effort: "high", capability: "ro", vision: false },
+    ]
+    const cap = (id: string) => ({ c: { score: 0.55, tier: "C" as const }, b: { score: 0.7, tier: "B" as const }, a: { score: 0.85, tier: "A" as const }, s: { score: 1, tier: "S" as const } }[id]!)
+    expect(computeLaneChain([levels[0]], cap, "mechanical")).toEqual(["c"])
+    expect(computeLaneChain(levels.slice(0, 2), cap, "main")).toEqual(["b", "c"])
+    expect(computeLaneChain(levels.slice(1, 3), cap, "hard")).toEqual(["a", "b"])
+    expect(computeLaneChain(levels.slice(2), cap, "review")).toEqual(["s", "a"])
+  })
+  test("补位不挤占本级冗余：main 保留四个 B 级候选后才附两项 C 级补位", () => {
+    const six = ["b1", "b2", "b3", "b4", "c1", "c2"].map((id) => ({ name: id, modelId: id, pool: "glm", effort: "high", capability: "rw", vision: false }))
+    const cap = (id: string) => id.startsWith("b") ? { score: 0.7, tier: "B" as const } : { score: 0.55, tier: "C" as const }
+    expect(computeLaneChain(six, cap, "main")).toEqual(["b1", "b2", "b3", "b4", "c1", "c2"])
   })
   test("生成清单六链与随包能力快照同源（含计费/未知组系数与 tier 分组），引用壳存在且 review 含 GLM ro 壳", () => {
     const manifest = loadManifest(); const bundled = loadBundledCapability()

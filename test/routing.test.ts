@@ -17,6 +17,8 @@ writeFileSync(
 
 import { parseRouteMeta, metaErrorHint } from "../src/meta"
 import { checkShell } from "../src/gates"
+import { baseScoreDynamic } from "../src/capability"
+import { capabilityLevelFor } from "../src/lane-policy"
 import {
   computeLane, firstCandidate, billingWindow, poolStates, routingAdvice,
   glmExhausted, copilotExhausted, deepseekExhausted, laneOfShell,
@@ -179,6 +181,28 @@ describe("六闸顺序", () => {
     // [2026-08-31]-[SWM 池名规则废除：source=auto 误选按量池的 deny 已删，api 计费由 billingBoost 沉底]
     expect(denyOf("ds-mx-v4p-high", meta(), snap())).toBeNull()
     expect(denyOf("ds-mx-v4p-high", meta("main", "programmer", "glm", "rw", "text", "user"), snap())).toBeNull()
+  })
+  test("19 review A 级仅在 S 级候选均不可用时允许直接派发", () => {
+    const reviewNow = computeLane("review", LANES.review, { registry: fullRegistry(), matrix: matrixOk(), routing: { down_agents: {}, down_expiry: {} } })
+    const a = reviewNow.chain.find((candidate) => capabilityLevelFor(baseScoreDynamic(manifest.shells.find((shell) => shell.name === candidate.shell)!.modelId)) === "L4")!.shell
+    const s = LANES.review.map((name) => manifest.shells.find((shell) => shell.name === name)!)
+      .filter((shell) => capabilityLevelFor(baseScoreDynamic(shell.modelId)) === "L5")
+    expect(s.length).toBeGreaterThan(0)
+    const prompt = meta("review", "reviewer", "gpt", "ro")
+    expect(denyOf(a, prompt, snap())).toContain("跨级补位")
+    const matrix = matrixOk()
+    for (const shell of s) matrix[shell.matrixKey] = { status: "down" }
+    expect(denyOf(a, prompt, snap({ matrix }))).toBeNull()
+  })
+  test("20 未声明 lane 时按 role 推断，不能因 economy 链成员关系绕过能力门", () => {
+    const c = { ...regEntry("glm-mx-53-high"), name: "test-c", modelId: "glm-4.5-air", matrixKey: "test-c", comboKey: "test-c" }
+    const s = snap({ registry: { ...fullRegistry(), [c.name]: c }, matrix: { ...matrixOk(), [c.matrixKey]: { status: "ok" } } })
+    const prompt = 'ROUTE_META {"role":"programmer","capability":"rw","source":"auto"}\n任务正文'
+    expect(checkShell(c.name, c, prompt, { ...s, lanes: { ...LANES, economy: [c.name] } }).deny).toContain("未入选 main")
+  })
+  test("21 lane=vision 与 text modality 的矛盾声明 → deny", () => {
+    const vision = manifest.shells.find((shell) => shell.vision)!.name
+    expect(denyOf(vision, meta("vision", "observer", "glm", "rw", "text"), snap())).toContain("必须声明")
   })
 })
 

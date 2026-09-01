@@ -4,6 +4,8 @@ import { META_LEGAL } from "./types"
 import type { GateSnapshot, Meta, ShellRegEntry } from "./types"
 import { metaErrorHint, parseRouteMeta } from "./meta"
 import { computeLane, firstCandidate, laneOfShell } from "./lane"
+import { baseScoreDynamic } from "./capability"
+import { isPromotionCandidate, meetsLaneCapability } from "./lane-policy"
 
 export interface GateResult { deny: string | null; note: string | null }
 
@@ -14,11 +16,16 @@ function matrixStatus(shell: ShellRegEntry, mcombos: GateSnapshot["matrix"]): [s
   return [status, String(entry?.reason ?? "").slice(0, 80)]
 }
 
+const ROLE_LANE: Partial<Record<string, import("./types").Lane>> = {
+  planner: "hard", reviewer: "review", programmer: "main", uiux: "main", "data-analyst": "main",
+  tester: "mechanical", ops: "mechanical", scouter: "economy", clerk: "economy", observer: "vision",
+  "expert-alpha": "review", "expert-beta": "review", "expert-gamma": "review", generic: "main",
+}
+
 function laneForCheck(shellName: string, meta: Meta | null, lanes: Record<string, string[]>): string {
   const lane = meta?.lane
   if (lane && (META_LEGAL.lane as readonly string[]).includes(lane)) return lane
-  if (meta?.role === "reviewer") return "review"
-  return laneOfShell(shellName, lanes) ?? "main"
+  return ROLE_LANE[meta?.role ?? ""] ?? laneOfShell(shellName, lanes) ?? "main"
 }
 
 export function checkShell(
@@ -169,6 +176,27 @@ export function checkShell(
   }
   if ((meta!.modality === "image" || meta!.modality === "vision") && !shell.vision) {
     return { deny: `${agent} 非视觉壳，不能承接 modality=${meta!.modality} 任务${hint("vision")}`, note: null }
+  }
+  if (lane === "vision" && meta!.modality === "text") {
+    return { deny: `${agent} lane=vision 必须声明 image/vision modality${hint("vision")}`, note: null }
+  }
+  const capability = baseScoreDynamic(shell.modelId)
+  if (!meetsLaneCapability(lane as import("./types").Lane, capability) && !isPromotionCandidate(lane as import("./types").Lane, capability)) {
+    return { deny: `${agent} 能力等级不足，不能承接 ${lane} 任务${hint()}`, note: null }
+  }
+  if (isPromotionCandidate(lane as import("./types").Lane, capability)) {
+    let current
+    try {
+      current = computeLane(lane as import("./types").Lane, snap.lanes[lane] ?? base, buildParams() as any)
+    } catch {
+      return { deny: `${agent} 无法确认 ${lane} 跨级补位资格，为避免错误降级拒绝派发${hint()}`, note: null }
+    }
+    if (!current.chain.some((candidate) => candidate.shell === agent)) {
+      return { deny: `${agent} 未入选 ${lane} 的前二补位候选${hint()}`, note: null }
+    }
+    if (current.chain.some((candidate) => meetsLaneCapability(lane as import("./types").Lane, baseScoreDynamic(snap.registry?.[candidate.shell]?.modelId ?? "")))) {
+      return { deny: `${agent} 为 ${lane} 的跨级补位候选；当前仍有可用本级模型${hint()}`, note: null }
+    }
   }
   // [2026-08-31]-[去厂商化：删 source=auto 误选按量池的硬 deny——api 计费由 billingBoost 乘积系数
   //  软排序兜底（同 tier 排订阅之后），deny 只保留 META 格式与 review 异族/ro/vision 结构门]

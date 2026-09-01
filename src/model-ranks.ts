@@ -2,6 +2,20 @@
 // [2026-08-29]-[校准日期 2026-08-29，参考 LMArena/SWE-bench，手动校准；base 压倒一切软系数]
 // 匹配顺序：精确键 → 最长前缀 → family 中位数 → 全局 0.7；返回 source 供决策日志追溯。
 export type Tier = "S" | "A" | "B" | "C"
+export type CapabilityLevel = "L1" | "L2" | "L3" | "L4" | "L5"
+
+/** 业务能力等级：global 仅为未知模型的排序兜底，不可视为已验证的 B 级能力。 */
+export function capabilityLevelOf(tier: Tier, source?: string): CapabilityLevel {
+  if (source === "global") return "L1"
+  if (tier === "S") return "L5"
+  if (tier === "A") return "L4"
+  if (tier === "B") return "L3"
+  return "L2"
+}
+
+export const CAPABILITY_LEVEL_RANK: Record<CapabilityLevel, number> = {
+  L1: 1, L2: 2, L3: 3, L4: 4, L5: 5,
+}
 
 /** tier 分组序（排序主键；跨模块共用：scoring 与 lane-policy） */
 export const TIER_RANK: Record<Tier, number> = { S: 0, A: 1, B: 2, C: 3 }

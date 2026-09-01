@@ -4,8 +4,8 @@
 //  api 计费与未知组由系数自然沉底；系数经 LaneFactorResolvers 注入（生成期=出厂配置，运行期=用户 jsonc）]
 import type { Lane } from "./types"
 import { LANE_ORDER } from "./types"
-import { TIER_RANK, UNKNOWN_PENALTY } from "./model-ranks"
-import type { Tier } from "./model-ranks"
+import { CAPABILITY_LEVEL_RANK, TIER_RANK, UNKNOWN_PENALTY, capabilityLevelOf } from "./model-ranks"
+import type { CapabilityLevel, Tier } from "./model-ranks"
 
 export interface LaneShellAttr {
   effort: string
@@ -17,7 +17,7 @@ export interface LaneShellAttr {
 }
 
 /** 能力分结果（tier 供分组排序主键；与 capability.DynamicBaseResult 形状同源） */
-export interface CapabilityScore { score: number; tier: Tier | null; rawScore?: number }
+export interface CapabilityScore { score: number; tier: Tier | null; rawScore?: number; source?: string }
 
 export interface LanePolicyInput {
   /** 兼容旧调用形状；候选不再由该静态列表决定。 */
@@ -33,13 +33,38 @@ export interface LanePolicyInput {
 }
 
 // [2026-08-29]-[评分引擎复用：导出 LANE_SPEC 序位供 scoring.effortFit 计算档位亲和度]
-export const LANE_SPEC: Record<Lane, { efforts: string[]; vision: boolean; ro: boolean }> = {
-  economy: { efforts: ["low", "minimal", "off", "medium"], vision: false, ro: false },
-  mechanical: { efforts: ["medium", "high", "low"], vision: false, ro: false },
-  main: { efforts: ["high", "medium", "low"], vision: false, ro: false },
-  hard: { efforts: ["xhigh", "max", "high", "medium"], vision: false, ro: false },
-  vision: { efforts: ["high", "medium", "low"], vision: true, ro: false },
-  review: { efforts: ["high", "max", "xhigh", "medium"], vision: false, ro: true },
+export const LANE_SPEC: Record<Lane, { efforts: string[]; vision: boolean; ro: boolean; minimumLevel: CapabilityLevel | null }> = {
+  economy: { efforts: ["low", "minimal", "off", "medium"], vision: false, ro: false, minimumLevel: "L1" },
+  mechanical: { efforts: ["medium", "high", "low"], vision: false, ro: false, minimumLevel: "L2" },
+  main: { efforts: ["high", "medium", "low"], vision: false, ro: false, minimumLevel: "L3" },
+  hard: { efforts: ["xhigh", "max", "high", "medium"], vision: false, ro: false, minimumLevel: "L4" },
+  vision: { efforts: ["high", "medium", "low"], vision: true, ro: false, minimumLevel: null },
+  // Review 首选 S(L5)；A(L4) 仅能作为前二补位候选，仍须通过 ro 与异族硬门。
+  review: { efforts: ["high", "max", "xhigh", "medium"], vision: false, ro: true, minimumLevel: "L5" },
+}
+
+export function capabilityLevelFor(capability: number | CapabilityScore): CapabilityLevel {
+  // 数字回调是旧测试/外部调用的兼容形态，未携带来源与 tier 时保持原有不筛除语义。
+  if (typeof capability === "number" || !capability.tier) return "L5"
+  return capabilityLevelOf(capability.tier, capability.source)
+}
+
+export function meetsLaneCapability(lane: Lane, capability: number | CapabilityScore): boolean {
+  const minimum = LANE_SPEC[lane]?.minimumLevel
+  return minimum === null || CAPABILITY_LEVEL_RANK[capabilityLevelFor(capability)] >= CAPABILITY_LEVEL_RANK[minimum]
+}
+
+/** 每个非 S 级已知等级的前二模型可向上补一个文本任务池，未知 global 兜底不可晋级。 */
+export function isPromotionCandidate(lane: Lane, capability: number | CapabilityScore): boolean {
+  if (typeof capability === "number" || !capability.tier || capability.source === "global") return false
+  const level = capabilityLevelFor(capability)
+  return (lane === "main" && level === "L2") ||
+    (lane === "hard" && level === "L3") ||
+    (lane === "review" && level === "L4")
+}
+
+export function laneCandidateLimit(lane: Lane): number {
+  return lane === "main" || lane === "hard" || lane === "review" ? 6 : 4
 }
 
 export interface LaneAlgorithmShell extends LaneShellAttr { name: string; modelId: string; provider?: string }
@@ -60,7 +85,6 @@ export interface LaneFactorResolvers {
 export function computeLaneChain(shells: readonly LaneAlgorithmShell[], capabilityOf: (modelId: string) => number | CapabilityScore, lane: Lane, resolvers: LaneFactorResolvers = {}): string[] {
   const spec = LANE_SPEC[lane] ?? LANE_SPEC.main
   const ranked = shells
-    .filter((shell) => !spec.vision || shell.vision)
     .map((shell) => {
       const effort = spec.efforts.indexOf(shell.effort)
       const effortPenalty = effort < 0 ? spec.efforts.length : effort
@@ -70,13 +94,16 @@ export function computeLaneChain(shells: readonly LaneAlgorithmShell[], capabili
       const cap = capabilityOf(shell.modelId)
       const capScore = typeof cap === "number" ? cap : cap.score
       const tierRank = typeof cap === "number" ? 0 : (cap.tier ? TIER_RANK[cap.tier] : 0)
-       return {
-         shell,
+        return {
+          shell,
+          capability: cap,
+          level: capabilityLevelFor(cap),
          score: capScore / (1 + effortPenalty) / (1 + visionPenalty) * billingBoost * unknownPenalty,
          tierRank,
          rawScore: typeof cap === "number" ? undefined : cap.rawScore,
        }
     })
+    .filter(({ shell }) => !spec.vision || shell.vision)
   // 每模型只留一个档位/面：普通 lane 优先 rw，review 优先 ro；无优先面时才允许另一面兜底。
   const preferred = spec.ro ? "ro" : "rw"
   ranked.sort((a, b) => Number(a.shell.capability !== preferred) - Number(b.shell.capability !== preferred) || b.score - a.score || (typeof a.shell.cost === "number" ? a.shell.cost : Infinity) - (typeof b.shell.cost === "number" ? b.shell.cost : Infinity) || a.shell.name.localeCompare(b.shell.name))
@@ -92,8 +119,11 @@ export function computeLaneChain(shells: readonly LaneAlgorithmShell[], capabili
       const bc = typeof b.shell.cost === "number" ? b.shell.cost : Number.POSITIVE_INFINITY
       return ac - bc || a.shell.name.localeCompare(b.shell.name)
     })
-  // [2026-08-31]-[去厂商化：删 DS 尾席预留——api/未知组已按系数同 tier 沉底，无预留席，纯分截断]
-  return ordered.slice(0, 4).map(({ shell }) => shell.name)
+  // [2026-09-01]-[能力分池：C/B/A 每级前二可依次向 main/hard/review 补位；保留四席本级候选，
+  // 后接两席补位，防止本级前两项失效时跳过其余健康本级模型。]
+  const primary = ordered.filter(({ capability }) => meetsLaneCapability(lane, capability))
+  const promotions = ordered.filter(({ capability }) => isPromotionCandidate(lane, capability)).slice(0, 2)
+  return [...primary.slice(0, 4), ...promotions].map(({ shell }) => shell.name)
 }
 
 /** 激活面候选链：忽略过时 static lanes，直接对当前壳全集重跑同一算法。 */
@@ -105,7 +135,7 @@ export function laneBaseChain(lane: Lane, input: LanePolicyInput): string[] {
     candidates.push({ name, ...attr, modelId: attr.modelId ?? name })
   }
   const resolvers: LaneFactorResolvers = { billingBoostOf: input.billingBoostOf, unknownOf: input.unknownOf }
-  return computeLaneChain(candidates, input.capabilityOf ?? (() => 1), lane, resolvers).slice(0, input.maxLen ?? 4)
+  return computeLaneChain(candidates, input.capabilityOf ?? (() => 1), lane, resolvers).slice(0, input.maxLen ?? laneCandidateLimit(lane))
 }
 
 /** 全六档基础链（banner 一次性装配） */

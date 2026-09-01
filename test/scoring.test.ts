@@ -153,14 +153,13 @@ describe("rankCandidates", () => {
       resetCapabilityCache()
     }
   })
-  test("tier 分组不可逆：C 档完美系数不越 A 档最差系数", () => {
+  test("能力分池：C 档可作为 main 的前二补位，但排在 B 之后", () => {
     const shells = [
       rankable({ key: "a", modelId: "glm-5.3", effort: "off", matrixStatus: "strained", latencyMs: 999 }),
       rankable({ key: "c", modelId: "glm-4.5-air", effort: "high", pool: "copilot", matrixStatus: "ok", latencyMs: 1 }),
     ]
     const r = rankCandidates(shells, ctx({ glmPeak: true, water: { glmFiveHourPct: 89 } }))
-    // c 的乘积分 > a，但 tier 分组使 A 恒在 C 前
-    expect(r.breakdowns.get("c")!.total).toBeGreaterThan(r.breakdowns.get("a")!.total)
+    expect(r.breakdowns.has("c")).toBe(true)
     expect(r.ranked.map((s) => s.key)).toEqual(["a", "c"])
   })
   test("immediate 只按 latency 升序，忽略软系数（B 档快于 S 档慢）", () => {
@@ -216,15 +215,23 @@ describe("rankCandidates", () => {
     expect(r.breakdowns.get("ds-s")!.tier).toBe("S")
     expect(r.breakdowns.get("ds-s")!.billingBoost).toBe(0.85)
   })
-  test("未知组排序：同 tier 已知模型排未知模型之后（unknownPenalty 沉底）", () => {
+  test("未知 global 兜底模型固定 L1，不可作为 main 的跨级补位", () => {
     const shells = [
       rankable({ key: "unknown-b", modelId: "totally-new-model", pool: "zen", family: "totally" }),
       rankable({ key: "known-b", modelId: "glm-5.3-flash", latencyMs: 50 }),
     ]
     const r = rankCandidates(shells, ctx())
-    expect(r.ranked.map((s) => s.key)).toEqual(["known-b", "unknown-b"])
+    expect(r.ranked.map((s) => s.key)).toEqual(["known-b"])
     expect(r.breakdowns.get("unknown-b")!.unknownPenalty).toBe(0.75)
-    expect(r.breakdowns.get("unknown-b")!.total).toBeLessThan(r.breakdowns.get("known-b")!.total)
+  })
+  test("review 的 A 前二补位仅在 S 均被硬门剔除后成为首选", () => {
+    const shells = [
+      rankable({ key: "s-down", modelId: "gpt-5.6", pool: "copilot", family: "gpt", matrixStatus: "down", capability: "ro" }),
+      rankable({ key: "a", modelId: "glm-5.3", family: "glm", capability: "ro" }),
+      rankable({ key: "b", modelId: "glm-5.3-flash", family: "glm", capability: "ro" }),
+    ]
+    const r = rankCandidates(shells, ctx({ lane: "review" }))
+    expect(r.ranked.map((s) => s.key)).toEqual(["a"])
   })
 })
 
