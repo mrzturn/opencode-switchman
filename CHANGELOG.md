@@ -4,6 +4,13 @@
 
 This project follows [Semantic Versioning](https://semver.org/). Release notes describe user-visible behavior; implementation details remain in the technical specification and commit history.
 
+## [Unreleased]
+
+### Changed
+
+- **ro/rw pool partition**: lanes are now strictly partitioned by shell capability face before any preference ranking — the review lane draws only from `ro` shells, every other lane draws only from `rw` shells, and a lane falls back to the opposite face only when its own pool is empty (fail-open; the dispatch gate still denies `rw` tasks on `ro` shells). Fixes `rw` variants of the same model being cut from the injection face by name-order tiebreaks while only their `ro` alias survived via the review lane, which made non-review lanes (e.g. hard) banner an `ro` shell as their best candidate. Also adds a rawScore tiebreak to the cross-level fallback slots so stronger models no longer lose their slot to name ordering.
+- Effort-preference routing layer: each lane now carries an explicit thinking-effort preference order — hard/review prefer `high→xhigh→max`, main/mechanical/vision prefer `medium→high→xhigh→max`, economy prefers `low→medium→high` (the first level the model supports is the default). `off`-effort shells no longer appear in any lane preference list; they are demoted to a lane-level fallback partition and only fill chain slots after every thinking-level candidate (e.g. models that only support on/off, or when all thinking shells are unavailable). Capability-tier ordering is preserved within each partition, at both chain generation and runtime ranking — including immediate mode, where latency now orders within the thinking partition before off shells. This stops off-effort shells (e.g. `glm-47-off`) from heading thinking lanes such as hard/main while thinking-capable candidates exist.
+
 ## [0.2.2] - 2026-09-02
 
 ### Fixed

@@ -224,9 +224,13 @@ export function rankCandidates<T extends Rankable>(
       billingBoost: shell && ctx.billingBoostOf ? ctx.billingBoostOf(shell.provider) : ctx.billingBoostOf ? BILLING_API_BOOST : 1.0,
     }))
   }
-  // [2026-09-01]-[同级优先：同级幸存者存在时绝不让跨级项参与排序；只有本级全被硬门淘汰才回退。]
-  const primary = survivors.filter((s) => isPrimaryCandidate(ctx.lane, baseScoreDynamic(s.modelId)))
-  const fallbackPool = survivors.filter((s) => isFallbackCandidate(ctx.lane, baseScoreDynamic(s.modelId)))
+  // [2026-09-01]-[同级优先：同级幸存者存在时绝不让跨级项参与排序；只有本级全被硬门淘汰才回退。]-
+  // [2026-09-02]-[思考档分区：off 壳＝lane 级兜底。幸存者先按 effort 是否 off 分区，思考档区整体
+  //  领先、off 区殿后（各自独立跑同级优先/跨级回退）——同 lane 存在思考档候选时 off 壳不再占首，
+  //  immediate 亦然（延迟只在同区内定序；「思考 vs 不思考」是质量底线不是软系数）]
+  const offClassOf = (s: T): number => ((s.effort ?? "off") === "off" ? 1 : 0)
+  const thinking = survivors.filter((s) => offClassOf(s) === 0)
+  const offPool = survivors.filter((s) => offClassOf(s) === 1)
   const scoreCompare = (a: T, b: T): number => {
     const ba = breakdowns.get(a.key)!
     const bb = breakdowns.get(b.key)!
@@ -235,17 +239,29 @@ export function rankCandidates<T extends Rankable>(
       (a.latencyMs ?? Number.POSITIVE_INFINITY) - (b.latencyMs ?? Number.POSITIVE_INFINITY)
   }
   const targetLevel = LANE_SPEC[ctx.lane].minimumLevel
-  fallbackPool.sort((a, b) => {
-    if (targetLevel === null) return scoreCompare(a, b)
-    const levelOf = (s: T) => capabilityLevelOf(baseScoreDynamic(s.modelId).tier, baseScoreDynamic(s.modelId).source)
-    const distance = (s: T) => Math.abs(CAPABILITY_LEVEL_RANK[levelOf(s)] - CAPABILITY_LEVEL_RANK[targetLevel])
-    return distance(a) - distance(b) || scoreCompare(a, b)
-  })
+  const levelDistance = (s: T): number | null => {
+    if (targetLevel === null) return null
+    return Math.abs(CAPABILITY_LEVEL_RANK[capabilityLevelOf(baseScoreDynamic(s.modelId).tier, baseScoreDynamic(s.modelId).source)] - CAPABILITY_LEVEL_RANK[targetLevel])
+  }
+  // 分区内同级优先：本级幸存者优先；本级全灭才按最近等级取前二回退。
+  const selectGroup = (pool: T[]): T[] => {
+    const primary = pool.filter((s) => isPrimaryCandidate(ctx.lane, baseScoreDynamic(s.modelId)))
+    if (primary.length > 0) return primary
+    const fallbackPool = pool.filter((s) => isFallbackCandidate(ctx.lane, baseScoreDynamic(s.modelId)))
+    fallbackPool.sort((a, b) => {
+      const da = levelDistance(a)
+      const db = levelDistance(b)
+      if (da !== null && db !== null && da !== db) return da - db
+      return scoreCompare(a, b)
+    })
+    return fallbackPool.slice(0, 2)
+  }
   survivors.length = 0
-  survivors.push(...(primary.length > 0 ? primary : fallbackPool.slice(0, 2)))
+  survivors.push(...selectGroup(thinking), ...selectGroup(offPool))
   const inputOrder = new Map(survivors.map((s, i) => [s.key, i]))
   if (ctx.immediate) {
     survivors.sort((a, b) =>
+      offClassOf(a) - offClassOf(b) ||
       (a.latencyMs ?? Number.POSITIVE_INFINITY) - (b.latencyMs ?? Number.POSITIVE_INFINITY) ||
       (inputOrder.get(a.key) ?? 0) - (inputOrder.get(b.key) ?? 0))
   } else {
@@ -256,11 +272,12 @@ export function rankCandidates<T extends Rankable>(
       return typeof v === "number" ? v : Number.POSITIVE_INFINITY
     }
     survivors.sort((a, b) => {
-        // 同级已耗尽时，回退必须从相邻等级开始，不能被通用 S/A/B/C 排序重新越级。
+        // off 区整体殿后；区内排序维持原口径。
+        const offDiff = offClassOf(a) - offClassOf(b)
+        if (offDiff !== 0) return offDiff
+        // 同区已耗尽时，回退必须从相邻等级开始，不能被通用 S/A/B/C 排序重新越级。
         if (targetLevel !== null) {
-          const levelOf = (s: T) => capabilityLevelOf(baseScoreDynamic(s.modelId).tier, baseScoreDynamic(s.modelId).source)
-          const distance = (s: T) => Math.abs(CAPABILITY_LEVEL_RANK[levelOf(s)] - CAPABILITY_LEVEL_RANK[targetLevel])
-          const distanceDiff = distance(a) - distance(b)
+          const distanceDiff = levelDistance(a)! - levelDistance(b)!
           if (distanceDiff !== 0) return distanceDiff
         }
         const ba = breakdowns.get(a.key)!

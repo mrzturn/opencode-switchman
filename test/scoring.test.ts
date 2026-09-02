@@ -89,10 +89,11 @@ describe("baseScore", () => {
 
 // ================= 2. scoreShell 软系数 =================
 describe("scoreShell", () => {
-  test("strained 健康系数 0.6（其余系数不变）", () => {
+  test("strained 健康系数 0.6（其余系数不变；main 默认 medium 后 high 序位 effortFit=0.9）", () => {
     const b = scoreShell(scoreInput({ matrixStatus: "strained" }))
     expect(b.health).toBe(0.6)
-    expect(b.total).toBeCloseTo(0.85 * 1.0 * 0.6 * 1.0 * 1.0 * 1.0 * 1.0 * 1.0)
+    expect(b.effortFit).toBe(0.9)
+    expect(b.total).toBeCloseTo(0.85 * 0.9 * 0.6 * 1.0 * 1.0 * 1.0 * 1.0 * 1.0)
     expect(scoreShell(scoreInput()).health).toBe(1.0)
   })
   test("peakActive 泛化：任意 provider 计费高峰 0.93（不再限 glm 池）", () => {
@@ -153,14 +154,24 @@ describe("rankCandidates", () => {
       resetCapabilityCache()
     }
   })
-  test("能力分池：C 档可作为 main 的前二补位，但排在 B 之后", () => {
+  test("思考档分区：思考档候选领先，off 壳同距下殿后（off＝lane 级兜底）", () => {
     const shells = [
       rankable({ key: "a", modelId: "glm-5.3", effort: "off", matrixStatus: "strained", latencyMs: 999 }),
       rankable({ key: "c", modelId: "glm-4.5-air", effort: "high", pool: "copilot", matrixStatus: "ok", latencyMs: 1 }),
     ]
     const r = rankCandidates(shells, ctx({ glmPeak: true, water: { glmFiveHourPct: 89 } }))
     expect(r.breakdowns.has("c")).toBe(true)
-    expect(r.ranked.map((s) => s.key)).toEqual(["a", "c"])
+    expect(r.ranked.map((s) => s.key)).toEqual(["c", "a"])
+  })
+  test("思考档分区：off 壳整体殿后，immediate 亦然（延迟只在同区内定序）", () => {
+    const shells = [
+      rankable({ key: "s-off", modelId: "gpt-5.6", pool: "copilot", family: "gpt", effort: "off", latencyMs: 5 }),
+      rankable({ key: "a-high", modelId: "glm-5.3", effort: "high", latencyMs: 100 }),
+    ]
+    const normal = rankCandidates(shells, ctx({ lane: "hard" }))
+    expect(normal.ranked.map((s) => s.key)).toEqual(["a-high", "s-off"])
+    const immediate = rankCandidates(shells, ctx({ lane: "hard", immediate: true }))
+    expect(immediate.ranked.map((s) => s.key)).toEqual(["a-high", "s-off"])
   })
   test("immediate 在同级模型中只按 latency 升序，忽略软系数", () => {
     const shells = [

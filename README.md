@@ -196,12 +196,14 @@ opencode-switchman splits orchestration into three layers:
 
 | Lane | Typical roles | Uses |
 |---|---|---|
-| economy | clerk / scouter scanning | cheapest lightweight model, low effort |
-| mechanical | tester / ops regression & scripts | lightweight model, high effort |
-| main | programmer / uiux / data-analyst | workhorse model, normal effort |
-| hard | planner, core architecture | strongest model, max effort |
-| vision | observer image reading | vision-capable models |
-| review | reviewer / expert panel | **forced hetero-family** (against same-family blind spots) |
+| economy | clerk / scouter scanning | cheapest lightweight model, low→medium→high effort |
+| mechanical | tester / ops regression & scripts | lightweight model, medium→high→xhigh→max effort |
+| main | programmer / uiux / data-analyst | workhorse model, medium→high→xhigh→max effort |
+| hard | planner, core architecture | strongest model, high→xhigh→max effort |
+| vision | observer image reading | vision-capable models, medium→high→xhigh→max effort |
+| review | reviewer / expert panel | **forced hetero-family** (against same-family blind spots), high→xhigh→max effort |
+
+Effort preference is a routing layer of its own: each lane prefers the thinking levels listed above (first supported level is the default), and `off`-effort shells serve only as lane-level fallback — they enter a chain only when no thinking-level candidate is available (e.g. models that only support on/off), never ahead of one. Shells are likewise partitioned by capability face before ranking: the review lane draws only from `ro` (read-only) shells, all other lanes only from `rw` shells, with cross-face fallback only when a lane's own pool is empty.
 
 Water levels only affect ordering (use it, don't waste it); the only hard block is "this call cannot possibly succeed" (quota definitively exhausted or hard gate hit). Pay-as-you-go (`billing: "api"`) providers are never denied for auto routing — they sink within their capability tier via the 0.85 coefficient, and unknown-provider models sink via the 0.75 penalty, so no vendor-specific tail-seat or deny rule is needed.
 

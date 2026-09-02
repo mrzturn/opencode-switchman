@@ -196,12 +196,14 @@ opencode-switchman 把编排拆成三层，各司其职：
 
 | 档位 | 典型角色 | 用什么 |
 |---|---|---|
-| economy | clerk / scouter 扫描清点 | 最便宜的轻量模型低档 |
-| mechanical | tester / ops 回归与脚本 | 轻量模型高档 |
-| main | programmer / uiux / data-analyst | 主力模型常规档 |
-| hard | planner 架构核心 | 最强模型最高档 |
-| vision | observer 看图 | 视觉模型 |
-| review | reviewer / 专家席 审案 | **强制异模型族**（防同族盲区） |
+| economy | clerk / scouter 扫描清点 | 最便宜的轻量模型，low→medium→high 档 |
+| mechanical | tester / ops 回归与脚本 | 轻量模型，medium→high→xhigh→max 档 |
+| main | programmer / uiux / data-analyst | 主力模型，medium→high→xhigh→max 档 |
+| hard | planner 架构核心 | 最强模型，high→xhigh→max 档 |
+| vision | observer 看图 | 视觉模型，medium→high→xhigh→max 档 |
+| review | reviewer / 专家席 审案 | **强制异模型族**（防同族盲区），high→xhigh→max 档 |
+
+思考档位偏好是独立的一层路由算法：每档按上表偏好序选思考档（首个被支持的档位即默认档）；`off` 档只作 lane 级兜底——仅当该档没有思考档候选可用时（如只支持开/关的模型）才进链，绝不排到思考档候选之前。壳在排序前还按能力面划池：review 只从 `ro`（只读）壳池选，其余 lane 只从 `rw` 壳池选，仅当本池为空才跨池兜底。
 
 水位只影响排序（用满不浪费），唯一硬拦是「调用必失败」（额度确定耗尽或硬门命中）；按量计费（`billing: "api"`）provider 在自动路由中不会被 deny——它们经 0.85 系数在同能力档内沉底，未知 provider 模型经 0.75 惩罚沉底，无需任何厂商专属的链尾席位或 deny 规则。
 

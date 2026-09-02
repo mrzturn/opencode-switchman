@@ -47,7 +47,8 @@ describe("候选链算法", () => {
     // economy/mechanical/main：同分订阅壳挤掉 api 计费 ds——D3 尾席预留已废除，纯系数沉底
     expect(computeLaneChain(shells, capability, "economy", resolvers)).toEqual(["cp-medium", "glm-high", "cp-high", "review-cp-rw"])
     expect(computeLaneChain(shells, capability, "mechanical", resolvers)).toEqual(["cp-medium", "glm-high", "cp-high", "review-cp-rw"])
-    expect(computeLaneChain(shells, capability, "main", resolvers)).toEqual(["glm-high", "cp-high", "review-cp-rw", "review-glm-rw"])
+    // main 默认 medium 档（2026-09-02 思考档偏好层）：同能力下 medium 序位先于 high
+    expect(computeLaneChain(shells, capability, "main", resolvers)).toEqual(["cp-medium", "glm-high", "cp-high", "review-cp-rw"])
     expect(computeLaneChain(shells, capability, "hard", resolvers)).toEqual(["glm-high", "cp-high", "review-cp-rw", "review-glm-rw"])
     expect(computeLaneChain(shells, capability, "vision", resolvers)).toEqual(["vision-high"])
     expect(computeLaneChain(shells, capability, "review", resolvers)).toEqual(["glm-high-ro", "cp-high-ro", "review-cp-ro", "review-glm-ro"])
@@ -84,11 +85,21 @@ describe("候选链算法", () => {
     const cap = (id: string) => ({ c: { score: 0.55, tier: "C" as const }, b: { score: 0.7, tier: "B" as const }, a: { score: 0.85, tier: "A" as const }, s: { score: 1, tier: "S" as const } }[id]!)
     expect(computeLaneChain([levels[0]], cap, "mechanical")).toEqual(["c"])
     expect(computeLaneChain(levels.slice(0, 2), cap, "main")).toEqual(["b", "c"])
-    expect(computeLaneChain(levels.slice(1, 3), cap, "hard")).toEqual(["a", "b"])
+    // [2026-09-02]-[ro/rw 划池：hard 只从 rw 池选（b；同夹具里的 a/s 是 ro，本池非空不跨池）；review 锁 ro 池]
+    expect(computeLaneChain(levels.slice(1, 3), cap, "hard")).toEqual(["b"])
     expect(computeLaneChain(levels.slice(2), cap, "review")).toEqual(["s", "a"])
   })
-  test("同级优先：economy 有 L1 时不把更强模型放入候选链", () => {
-    const levels = ["l1", "l2", "l5"].map((id) => ({ name: id, modelId: id, pool: "glm", effort: "low", capability: "rw", vision: false }))
+  test("ro/rw 划池：review 锁 ro 面、非 review 锁 rw 面；本池为空才跨池兜底", () => {
+    const mrw = { name: "mrw", modelId: "m", pool: "glm", effort: "high", capability: "rw", vision: false }
+    const mro = { name: "mro", modelId: "m", pool: "glm", effort: "high", capability: "ro", vision: false }
+    const nro = { name: "nro", modelId: "n", pool: "glm", effort: "high", capability: "ro", vision: false }
+    const cap = () => ({ score: 1, tier: "S" as const })
+    expect(computeLaneChain([mrw, mro, nro], cap, "hard")).toEqual(["mrw"])
+    expect(computeLaneChain([mro, nro], cap, "hard")).toEqual(["mro", "nro"])
+    expect(computeLaneChain([mrw], cap, "review")).toEqual(["mrw"])
+    expect(computeLaneChain([mrw, mro, nro], cap, "review")).toEqual(["mro", "nro"])
+  })
+  test("同级优先：economy 有 L1 时不把更强模型放入候选链", () => {    const levels = ["l1", "l2", "l5"].map((id) => ({ name: id, modelId: id, pool: "glm", effort: "low", capability: "rw", vision: false }))
     const cap = (id: string) => ({
       l1: { score: 0.55, tier: "C" as const, source: "global" },
       l2: { score: 0.55, tier: "C" as const, source: "exact" },
@@ -109,6 +120,29 @@ describe("候选链算法", () => {
     const six = ["b1", "b2", "b3", "b4", "c1", "c2"].map((id) => ({ name: id, modelId: id, pool: "glm", effort: "high", capability: "rw", vision: false }))
     const cap = (id: string) => id.startsWith("b") ? { score: 0.7, tier: "B" as const } : { score: 0.55, tier: "C" as const }
     expect(computeLaneChain(six, cap, "main")).toEqual(["b1", "b2", "b3", "b4", "c1", "c2"])
+  })
+  test("思考档分区：off 壳＝lane 级兜底，同 lane 有思考档候选时 off 不占链首", () => {
+    // hard：S 级模型仅 off、A 级模型 high——思考档整体领先，off 区独立跑同级/回退并殿后
+    const mix = [
+      { name: "s-off", modelId: "s-off", pool: "glm", effort: "off", capability: "rw", vision: false },
+      { name: "a-high", modelId: "a-high", pool: "glm", effort: "high", capability: "rw", vision: false },
+      { name: "a-off", modelId: "a-off", pool: "glm", effort: "off", capability: "rw", vision: false },
+    ]
+    const cap = (id: string) => ({ "s-off": { score: 1, tier: "S" as const }, "a-high": { score: 0.85, tier: "A" as const }, "a-off": { score: 0.85, tier: "A" as const } }[id]!)
+    expect(computeLaneChain(mix, cap, "hard")).toEqual(["a-high", "a-off", "s-off"])
+  })
+  test("思考档分区：全部候选仅 off 时照常成链（仅支持开/关的模型兜底不空转）", () => {
+    const offs = ["o1", "o2"].map((id) => ({ name: id, modelId: id, pool: "glm", effort: "off", capability: "rw", vision: false }))
+    const cap = (id: string) => ({ o1: { score: 0.7, tier: "B" as const }, o2: { score: 0.55, tier: "C" as const } }[id]!)
+    expect(computeLaneChain(offs, cap, "mechanical")).toEqual(["o2", "o1"])
+  })
+  test("思考档分区：每模型多档时思考档壳代表模型入场（off 不再顶替同模型的思考档）", () => {
+    const mix = [
+      { name: "m-off", modelId: "m", pool: "glm", effort: "off", capability: "rw", vision: false },
+      { name: "m-medium", modelId: "m", pool: "glm", effort: "medium", capability: "rw", vision: false },
+      { name: "m-off-ro", modelId: "m", pool: "glm", effort: "off", capability: "ro", vision: false },
+    ]
+    expect(computeLaneChain(mix, () => ({ score: 0.7, tier: "B" as const }), "main")).toEqual(["m-medium"])
   })
   test("生成清单六链与随包能力快照同源（含计费/未知组系数与 tier 分组），引用壳存在且 review 含 GLM ro 壳", () => {
     const manifest = loadManifest(); const bundled = loadBundledCapability()

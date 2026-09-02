@@ -493,16 +493,17 @@ describe("闸1 三层语义（未注入/同名冲突/未激活）", () => {
     expect(r.deny).toContain("同名 agent 冲突")
   })
   test("未激活层：注册壳不在激活集 → deny 附激活指引（可见/favorites/切模话术）", () => {
-    const activeOnly = new Set(["glm-mx-53-high"]) // 仅一个壳激活
+    // [2026-09-02]-[main 默认 medium 档：glm-5.3 链内代表壳=medium（high 不再入链），激活壳放行断言随之换壳]
+    const activeOnly = new Set(["glm-mx-53-medium"]) // 仅一个壳激活
     const s1 = snapOf({ activation: { enabled: true, activeShells: activeOnly, conflicts: new Set(), restartRequired: [] } })
     const shell = s1.registry!["copilot-mx-terra-high"]!
     const r = checkShell("copilot-mx-terra-high", shell, metaOf("main"), s1)
     expect(r.deny).toContain("未激活")
     expect(r.deny).toContain("模型管理")
-    // 同档候选以动态能力指数排序；当前内置索引中 glm-5.3 高于 deepseek-v4-pro。
-    expect(r.deny).toContain("请改派 glm-mx-53-high")
+    // [2026-09-02]-[main 默认 medium 档：terra 由 medium 壳代表入场，改派建议随之指向链内候选]
+    expect(r.deny).toContain("请改派 copilot-mx-terra-medium")
     // 激活壳放行
-    expect(checkShell("glm-mx-53-high", s1.registry!["glm-mx-53-high"]!, metaOf("main"), s1).deny).toBeNull()
+    expect(checkShell("glm-mx-53-medium", s1.registry!["glm-mx-53-medium"]!, metaOf("main"), s1).deny).toBeNull()
   })
   test("restartRequired 提示随未激活 deny 透出", () => {
     const s2 = snapOf({ activation: { enabled: true, activeShells: new Set(["glm-mx-53-high"]), conflicts: new Set(), restartRequired: ["newprov"] } })
@@ -512,7 +513,8 @@ describe("闸1 三层语义（未注入/同名冲突/未激活）", () => {
   })
   test("activation 缺省（legacy）→ 不做激活门控，注册壳照常走后续闸", () => {
     const s3 = snapOf()
-    expect(checkShell("copilot-mx-terra-high", s3.registry!["copilot-mx-terra-high"]!, metaOf("main"), s3).deny).toBeNull()
+    // [2026-09-02]-[main 默认 medium 档：terra 链内代表壳=medium（high 不再入链）]
+    expect(checkShell("copilot-mx-terra-medium", s3.registry!["copilot-mx-terra-medium"]!, metaOf("main"), s3).deny).toBeNull()
   })
 })
 

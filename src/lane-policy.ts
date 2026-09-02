@@ -33,15 +33,19 @@ export interface LanePolicyInput {
   unknownOf?: (modelId: string) => boolean
 }
 
-// [2026-08-29]-[评分引擎复用：导出 LANE_SPEC 序位供 scoring.effortFit 计算档位亲和度]
+// [2026-08-29]-[评分引擎复用：导出 LANE_SPEC 序位供 scoring.effortFit 计算档位亲和度]-
+// [2026-09-02]-[思考档位偏好层：efforts 只保留思考档偏好序（hard/review 默认 high→xhigh→max，
+//  main/mechanical/vision 默认 medium→high→xhigh→max，economy 默认 low→medium→high）；
+//  off 不再进入任何 lane 偏好序——off 壳一律 lane 级兜底（同 lane 存在思考档候选时排在全部
+//  思考档之后，见 computeLaneChain 思考档分区），只服务仅支持开/关的模型或其他档位不可用场景]
 export const LANE_SPEC: Record<Lane, { efforts: string[]; vision: boolean; ro: boolean; minimumLevel: CapabilityLevel | null }> = {
-  economy: { efforts: ["low", "minimal", "off", "medium"], vision: false, ro: false, minimumLevel: "L1" },
-  mechanical: { efforts: ["medium", "high", "low"], vision: false, ro: false, minimumLevel: "L2" },
-  main: { efforts: ["high", "medium", "low"], vision: false, ro: false, minimumLevel: "L3" },
-  hard: { efforts: ["xhigh", "max", "high", "medium"], vision: false, ro: false, minimumLevel: "L4" },
-  vision: { efforts: ["high", "medium", "low"], vision: true, ro: false, minimumLevel: null },
+  economy: { efforts: ["low", "minimal", "medium", "high"], vision: false, ro: false, minimumLevel: "L1" },
+  mechanical: { efforts: ["medium", "high", "xhigh", "max"], vision: false, ro: false, minimumLevel: "L2" },
+  main: { efforts: ["medium", "high", "xhigh", "max"], vision: false, ro: false, minimumLevel: "L3" },
+  hard: { efforts: ["high", "xhigh", "max", "medium"], vision: false, ro: false, minimumLevel: "L4" },
+  vision: { efforts: ["medium", "high", "xhigh", "max"], vision: true, ro: false, minimumLevel: null },
   // Review 首选 S(L5)；A(L4) 仅能作为前二补位候选，仍须通过 ro 与异族硬门。
-  review: { efforts: ["high", "max", "xhigh", "medium"], vision: false, ro: true, minimumLevel: "L5" },
+  review: { efforts: ["high", "xhigh", "max", "medium"], vision: false, ro: true, minimumLevel: "L5" },
 }
 
 export function capabilityLevelFor(capability: number | CapabilityScore): CapabilityLevel {
@@ -106,12 +110,22 @@ export interface LaneFactorResolvers {
  * [2026-08-31]-[终审P0-1：tier 分组主键与 rankCandidates 同源——api 计费 S 档（0.85）不得被
  *  A 档订阅（0.85）按成本/名称反超；unknownPenalty 只在同 tier 内沉底，不跨 tier 挤出候选]
  * effort/视觉惩罚沿用旧补齐器的「每级 +1」口径，以 1/(1+penalty) 转为乘积分。
+ * [2026-09-02]-[思考档分区：off 壳＝lane 级兜底。候选先按 effort 是否 off 分区，各自独立跑
+ *  同级优先/跨级回退算法，链＝思考档区在前、off 区殿后（off 只吸收剩余席位）——同 lane 有
+ *  思考档候选时 off 壳不再占据链首（「思考和不思考效果差异很大，off 只做兜底」）]
  */
 export function computeLaneChain(shells: readonly LaneAlgorithmShell[], capabilityOf: (modelId: string) => number | CapabilityScore, lane: Lane, resolvers: LaneFactorResolvers = {}): string[] {
   const spec = LANE_SPEC[lane] ?? LANE_SPEC.main
-  const ranked = shells
+  // [2026-09-02]-[ro/rw 划池：review 只从 ro 池选、其余 lane 只从 rw 池选（先划池再池内优选）；
+  //  本池为空才跨池兜底（fail-open，rw 任务落 ro 壳仍被闸拦截）。此前同模型 ro/rw 混池参与排序，
+  //  且回退席无 rawScore 决胜，5.3-high(rw) 因字典序 52<53 被 slice 切出 hard 链→注入面丢 rw 变体，
+  //  hard 横幅只能落 ro 壳]-[影响：非 review 链不再出现 ro 壳；同模型双面按 lane 需求分别入面]
+  const facePool = shells.filter((s) => (spec.ro ? s.capability === "ro" : s.capability !== "ro"))
+  const pool = facePool.length > 0 ? facePool : shells.filter((s) => (spec.ro ? s.capability !== "ro" : s.capability === "ro"))
+  const ranked = pool
     .map((shell) => {
       const effort = spec.efforts.indexOf(shell.effort)
+      const offFallback = shell.effort === "off" ? 1 : 0
       const effortPenalty = effort < 0 ? spec.efforts.length : effort
       const visionPenalty = !spec.vision && shell.vision ? 1 : 0
       const billingBoost = resolvers.billingBoostOf && shell.provider !== undefined ? resolvers.billingBoostOf(shell.provider) : 1.0
@@ -123,15 +137,16 @@ export function computeLaneChain(shells: readonly LaneAlgorithmShell[], capabili
           shell,
           capability: cap,
           level: capabilityLevelFor(cap),
-         score: capScore / (1 + effortPenalty) / (1 + visionPenalty) * billingBoost * unknownPenalty,
-         tierRank,
-         rawScore: typeof cap === "number" ? undefined : cap.rawScore,
-       }
+          offFallback,
+          score: capScore / (1 + effortPenalty) / (1 + visionPenalty) * billingBoost * unknownPenalty,
+          tierRank,
+          rawScore: typeof cap === "number" ? undefined : cap.rawScore,
+        }
     })
     .filter(({ shell }) => !spec.vision || shell.vision)
-  // 每模型只留一个档位/面：普通 lane 优先 rw，review 优先 ro；无优先面时才允许另一面兜底。
+  // 每模型只留一个档位/面：普通 lane 优先 rw，review 优先 ro；off 让位思考档；无优先面时才允许另一面兜底。
   const preferred = spec.ro ? "ro" : "rw"
-  ranked.sort((a, b) => Number(a.shell.capability !== preferred) - Number(b.shell.capability !== preferred) || b.score - a.score || (typeof a.shell.cost === "number" ? a.shell.cost : Infinity) - (typeof b.shell.cost === "number" ? b.shell.cost : Infinity) || a.shell.name.localeCompare(b.shell.name))
+  ranked.sort((a, b) => Number(a.shell.capability !== preferred) - Number(b.shell.capability !== preferred) || a.offFallback - b.offFallback || b.score - a.score || (typeof a.shell.cost === "number" ? a.shell.cost : Infinity) - (typeof b.shell.cost === "number" ? b.shell.cost : Infinity) || a.shell.name.localeCompare(b.shell.name))
   const onePerModel = new Map<string, typeof ranked[number]>()
   for (const candidate of ranked) if (!onePerModel.has(candidate.shell.modelId)) onePerModel.set(candidate.shell.modelId, candidate)
   const ordered = [...onePerModel.values()]
@@ -144,16 +159,25 @@ export function computeLaneChain(shells: readonly LaneAlgorithmShell[], capabili
       const bc = typeof b.shell.cost === "number" ? b.shell.cost : Number.POSITIVE_INFINITY
       return ac - bc || a.shell.name.localeCompare(b.shell.name)
     })
-  // [2026-09-01]-[同级优先：本级候选与回退候选分开保留；运行期先耗尽本级，才启用跨级项。]
-  const primary = ordered.filter(({ capability }) => isPrimaryCandidate(lane, capability))
-  // 回退从最近等级开始，避免 L1 缺席时 S 级模型越过 L2/L3 直接占用 economy。
-  const targetRank = spec.minimumLevel === null ? 0 : CAPABILITY_LEVEL_RANK[spec.minimumLevel]
-  const fallbacks = ordered
-    .filter(({ capability }) => isFallbackCandidate(lane, capability))
-    .sort((a, b) =>
-      Math.abs(CAPABILITY_LEVEL_RANK[a.level] - targetRank) - Math.abs(CAPABILITY_LEVEL_RANK[b.level] - targetRank) ||
-      a.tierRank - b.tierRank || b.score - a.score || a.shell.name.localeCompare(b.shell.name))
-  return [...primary.slice(0, 4), ...fallbacks.slice(0, 2)].map(({ shell }) => shell.name)
+  // [2026-09-01]-[同级优先：本级候选与回退候选分开保留；运行期先耗尽本级，才启用跨级项。]-
+  // [2026-09-02]-[思考档分区：off 区独立跑同一套同级/回退算法并整体垫底，只吸收链内剩余席位。]
+  const buildPartition = (pool: typeof ordered) => {
+    // 回退从最近等级开始，避免 L1 缺席时 S 级模型越过 L2/L3 直接占用 economy。
+    const targetRank = spec.minimumLevel === null ? 0 : CAPABILITY_LEVEL_RANK[spec.minimumLevel]
+    const primary = pool.filter(({ capability }) => isPrimaryCandidate(lane, capability))
+    const fallbacks = pool
+      .filter(({ capability }) => isFallbackCandidate(lane, capability))
+      .sort((a, b) =>
+        Math.abs(CAPABILITY_LEVEL_RANK[a.level] - targetRank) - Math.abs(CAPABILITY_LEVEL_RANK[b.level] - targetRank) ||
+        a.tierRank - b.tierRank || b.score - a.score ||
+        // [2026-09-02]-[回退席补 rawScore 决胜：score 已在同级内退化为 1.0 常数，无此键时字典序
+        //  会把更强模型（53>52）切出前二回退席]-[影响：跨级回退优先真实能力指数，与 ordered 主排序同源]
+        (b.rawScore ?? -Infinity) - (a.rawScore ?? -Infinity) || a.shell.name.localeCompare(b.shell.name))
+    return [...primary.slice(0, 4), ...fallbacks.slice(0, 2)]
+  }
+  const thinking = ordered.filter(({ shell }) => shell.effort !== "off")
+  const offOnly = ordered.filter(({ shell }) => shell.effort === "off")
+  return [...buildPartition(thinking), ...buildPartition(offOnly)].map(({ shell }) => shell.name)
 }
 
 /** 激活面候选链：忽略过时 static lanes，直接对当前壳全集重跑同一算法。 */
