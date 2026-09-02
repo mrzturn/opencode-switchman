@@ -94,33 +94,39 @@ describe("parseAaModels / parseOpenRouterModels", () => {
     expect(r.models["claude-opus-4.8"]!.score).toBe(58)
     expect(r.versionHint).toBe("2026-08-01")
   })
-  test("OpenRouter：id 去 provider 前缀、versionHint=最大 created", () => {
+  test("OpenRouter：id 去 provider 前缀、versionHint=最大 created；顶层字段与 benchmarks.artificial_analysis 双兼容", () => {
     const r = parseOpenRouterModels({
       data: [
         { id: "openai/gpt-5.6", intelligence: 71, created: 1700000001 },
         { id: "anthropic/claude-opus-4.8", coding: 57, created: 1700000000 },
-        { id: "x/no-index", created: 1700000002 },
+        { id: "z-ai/glm-5.3", benchmarks: { artificial_analysis: { intelligence_index: 59.5, coding_index: 74.8, agentic_index: 59.1 } }, created: 1700000002 },
+        { id: "x/no-index", created: 1700000003 },
       ],
     })
     expect(r.scoreKind).toBe("index")
-    expect(Object.keys(r.models).sort()).toEqual(["claude-opus-4.8", "gpt-5.6"])
+    expect(Object.keys(r.models).sort()).toEqual(["claude-opus-4.8", "glm-5.3", "gpt-5.6"])
     expect(r.models["gpt-5.6"]!.score).toBe(71)
-    expect(r.versionHint).toBe("1700000002") // 全目录最大 created（含无指数条目；版本=目录新鲜度）
+    expect(r.models["glm-5.3"]!.score).toBe(59.5)
+    expect(r.models["glm-5.3"]!.coding).toBe(74.8)
+    expect(r.versionHint).toBe("1700000003") // 全目录最大 created（含无指数条目；版本=目录新鲜度）
   })
-  test("OpenRouter 无指数字段（公开源实测形状）：序位派生百分位分（rank）", () => {
+  test("OpenRouter 无指数字段（公开源实测形状）：序位派生百分位分（rank）仅限有 benchmarks 数据的模型；无数据模型剔除（回退内置分档，未知≠最弱）", () => {
     const r = parseOpenRouterModels({
       data: [
-        { id: "anthropic/claude-opus-5", created: 1784912544 },
-        { id: "openai/gpt-5.6", created: 1784912543 },
-        { id: "zhipu/glm-5.3", created: 1784912542 },
-        { id: "deepseek/deepseek-chat", created: 1784912541 },
+        { id: "anthropic/claude-opus-5", created: 1784912544, benchmarks: { design_arena: [{ elo: 1300 }] } },
+        { id: "openai/gpt-5.6", created: 1784912543, benchmarks: { design_arena: [] } },
+        { id: "zhipu/glm-5.3", created: 1784912542, benchmarks: { design_arena: [{ elo: 1200 }] } },
+        { id: "deepseek/deepseek-chat", created: 1784912541, benchmarks: { design_arena: [{ elo: 1100 }] } },
+        { id: "z-ai/glm-5-turbo", created: 1784912540 }, // 无 benchmarks＝无评测数据 → 剔除，不按列表尾部垫底
       ],
     })
     expect(r.scoreKind).toBe("rank")
+    expect(Object.keys(r.models).sort()).toEqual(["claude-opus-5", "deepseek-chat", "glm-5.3", "gpt-5.6"])
     expect(r.models["claude-opus-5"]!.score).toBe(100)
     expect(r.models["gpt-5.6"]!.score).toBeCloseTo(66.7)
     expect(r.models["glm-5.3"]!.score).toBeCloseTo(33.3)
     expect(r.models["deepseek-chat"]!.score).toBe(0)
+    expect(r.models["glm-5-turbo"]).toBeUndefined()
   })
 })
 
@@ -222,9 +228,10 @@ describe("refreshCapability", () => {
     expect(called).toContain("openrouter.ai")
     expect(loadCapability()!.source).toBe("openrouter")
   })
-  test("rank 序位分（无指数字段）：未显式配置阈值时强制 quantile，top20% 为 S", async () => {
+  test("rank 序位分（无指数字段）：未显式配置阈值时强制 quantile，top20% 为 S；无 benchmarks 模型不入表", async () => {
     // 20 模型 coding 序（高→低）：派生分 100..0，quantile p80/p60/p40 → 第 0-3 名 S、4-7 名 A、8-11 名 B、其余 C
-    const data = Array.from({ length: 20 }, (_, i) => ({ id: `v/m${i}`, created: 1700000000 + i }))
+    const data: any[] = Array.from({ length: 20 }, (_, i) => ({ id: `v/m${i}`, created: 1700000000 + i, benchmarks: { design_arena: [] } }))
+    data.push({ id: "v/no-data", created: 1700000020 }) // 无评测数据 → 剔除（未知≠最弱）
     globalThis.fetch = (async () => new Response(JSON.stringify({ data }), { status: 200 })) as any
     await refreshCapability({ source: "openrouter" })
     const idx = loadCapability()!
@@ -234,6 +241,7 @@ describe("refreshCapability", () => {
     expect(tierOfScore(idx.models["m5"]!.score, idx.thresholds)).toBe("A")
     expect(tierOfScore(idx.models["m10"]!.score, idx.thresholds)).toBe("B")
     expect(tierOfScore(idx.models["m19"]!.score, idx.thresholds)).toBe("C")
+    expect(idx.models["no-data"]).toBeUndefined()
   })
 })
 

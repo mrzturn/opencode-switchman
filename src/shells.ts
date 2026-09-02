@@ -101,6 +101,12 @@ export function injectShellDefs(
 export interface InjectableSelectOpts {
   /** 用户自定义 lane 覆盖（baseChainFor 直返其数组）；引用壳名强制保留进注入面 */
   customLanes?: Record<string, readonly string[]> | null
+  /** [2026-09-02]-[可用模型强制保留（provider/modelId 键）：注入面=可用全集∪六档链精选∪自定义 lane。
+   *  调用方传当前全部可用模型（provider 已连接且可对话）时＝不做能力竞争裁剪——favorites/点名模型
+   *  永不因链竞争落选；瘦身的唯一语义变为「未注入=真的不可用」，消除 favorites 误报与视觉壳缺失] */
+  keepModels?: ReadonlySet<string>
+  /** [2026-09-02]-[favorites 优先（modelId 口径）：链算法同 tier 内收藏模型排前，透传 computeLaneChain] */
+  preferredModels?: ReadonlySet<string>
   capabilityOf: (modelId: string) => number | CapabilityScore
   billingBoostOf?: (provider: string) => number
   unknownOf?: (modelId: string) => boolean
@@ -111,7 +117,10 @@ export interface InjectableSelectOpts {
  *  全量超集 260 壳≈6-10k token/会话。精选=六档 laneBaseChain 候选∪自定义 lane 引用壳（与运行期
  *  baseChainFor 同算法同解析器）；cfg.agent 运行期不可变，故必须在注入前裁剪——运行期对注入集
  *  重跑同算法，链/横幅/闸天然⊆注入集；候选为空 fail-open 回退全量]-[影响：注入面 260→~30-40；
- *  未入选壳派发走 denyUninjected 附改派候选，点名超集外模型需先入选或改派] */
+ *  未入选壳派发走 denyUninjected 附改派候选，点名超集外模型需先入选或改派]-
+ *  [2026-09-02 修复]-[链竞争裁剪曾把 favorites/视觉壳（如 glm-5.3-flash）裁出注入面，导致 favorites
+ *  被误报「无效模型」、vision 链空转。语义改为：注入面=可用全集（keepModels）∪链精选∪自定义 lane；
+ *  调用方传全部可用模型时裁剪只剔除「provider 未连接/不可对话」的真不可用模型，favorites 链内同档优先] */
 export function selectInjectableDefs(
   defs: readonly ShellDefinition[],
   opts: InjectableSelectOpts,
@@ -138,8 +147,15 @@ export function selectInjectableDefs(
         capabilityOf: opts.capabilityOf,
         billingBoostOf: opts.billingBoostOf,
         unknownOf: opts.unknownOf,
+        preferredModels: opts.preferredModels,
       })
     for (const name of chain) if (byName.has(name)) keep.add(name)
+  }
+  // [2026-09-02]-[可用模型强制保留：链竞争落选的可用模型（favorites/点名目标/视觉壳）不裁]-
+  if (opts.keepModels) {
+    for (const d of defs) {
+      if (opts.keepModels.has(`${d.provider}/${d.modelId}`)) keep.add(d.name)
+    }
   }
   if (keep.size === 0) return [...defs]
   return defs.filter((d) => keep.has(d.name))

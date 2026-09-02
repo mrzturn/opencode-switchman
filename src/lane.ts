@@ -243,6 +243,8 @@ export interface ComputeLaneParams {
   billingBoostOf?: (provider: string) => number
   /** [2026-08-31]-[去厂商化：provider→计费高峰活跃（任意 provider 的 peak 配置求值）] */
   peakOf?: (provider: string) => boolean
+  /** [2026-09-02]-[favorites 优先：收藏模型（modelId 口径）运行期同 tier 排前（透传 rankCandidates）] */
+  preferredModels?: ReadonlySet<string>
 }
 
 /** agentDown 引用（避免循环依赖放此处实现：纯读传入 routing） */
@@ -346,6 +348,7 @@ export function computeLane(lane: Lane, base: string[], p: ComputeLaneParams): L
       costs: p.costs,
       billingBoostOf: p.billingBoostOf,
       peakOf: p.peakOf,
+      preferredModels: p.preferredModels,
     })
     const order = new Map(ranked.map((r, i) => [r.key, i]))
     // rankCandidates 同时裁掉非本池模型和未进前二的跨级候补；不得让自定义静态链绕过。

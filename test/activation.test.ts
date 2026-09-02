@@ -493,17 +493,19 @@ describe("闸1 三层语义（未注入/同名冲突/未激活）", () => {
     expect(r.deny).toContain("同名 agent 冲突")
   })
   test("未激活层：注册壳不在激活集 → deny 附激活指引（可见/favorites/切模话术）", () => {
-    // [2026-09-02]-[main 默认 medium 档：glm-5.3 链内代表壳=medium（high 不再入链），激活壳放行断言随之换壳]
-    const activeOnly = new Set(["glm-mx-53-medium"]) // 仅一个壳激活
+    // [2026-09-02 官方指数重标定]-[main 链唯一成员=ds-mx-v4p-high（B=L3 主槽）；激活集=链内成员，
+    //  同一快照里同时覆盖「链外壳 deny 未激活」与「链内壳放行」两面]
+    const activeOnly = new Set(["ds-mx-v4p-high"])
     const s1 = snapOf({ activation: { enabled: true, activeShells: activeOnly, conflicts: new Set(), restartRequired: [] } })
     const shell = s1.registry!["copilot-mx-terra-high"]!
     const r = checkShell("copilot-mx-terra-high", shell, metaOf("main"), s1)
     expect(r.deny).toContain("未激活")
     expect(r.deny).toContain("模型管理")
-    // [2026-09-02]-[main 默认 medium 档：terra 由 medium 壳代表入场，改派建议随之指向链内候选]
-    expect(r.deny).toContain("请改派 copilot-mx-terra-medium")
-    // 激活壳放行
-    expect(checkShell("glm-mx-53-medium", s1.registry!["glm-mx-53-medium"]!, metaOf("main"), s1).deny).toBeNull()
+    // [2026-09-02 官方指数重标定]-[terra=A 级回退壳，同级优先下 B 级主槽 ds-v4p 在链时被切出；
+    //  链首=ds-v4p，改派建议随之指向链首]
+    expect(r.deny).toContain("请改派 ds-mx-v4p-high")
+    // 激活壳放行（[2026-09-02 官方指数重标定] ds-v4p=B=L3 主槽在链；同级优先下 A 级回退壳不入链）
+    expect(checkShell("ds-mx-v4p-high", s1.registry!["ds-mx-v4p-high"]!, metaOf("main"), s1).deny).toBeNull()
   })
   test("restartRequired 提示随未激活 deny 透出", () => {
     const s2 = snapOf({ activation: { enabled: true, activeShells: new Set(["glm-mx-53-high"]), conflicts: new Set(), restartRequired: ["newprov"] } })
@@ -513,8 +515,8 @@ describe("闸1 三层语义（未注入/同名冲突/未激活）", () => {
   })
   test("activation 缺省（legacy）→ 不做激活门控，注册壳照常走后续闸", () => {
     const s3 = snapOf()
-    // [2026-09-02]-[main 默认 medium 档：terra 链内代表壳=medium（high 不再入链）]
-    expect(checkShell("copilot-mx-terra-medium", s3.registry!["copilot-mx-terra-medium"]!, metaOf("main"), s3).deny).toBeNull()
+    // [2026-09-02 官方指数重标定]-[链内放行断言改用主槽成员 ds-mx-v4p-high（同级优先下 A 级壳不入 main 链）]
+    expect(checkShell("ds-mx-v4p-high", s3.registry!["ds-mx-v4p-high"]!, metaOf("main"), s3).deny).toBeNull()
   })
 })
 

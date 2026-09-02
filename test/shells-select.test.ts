@@ -47,3 +47,17 @@ describe("selectInjectableDefs（注入面精选）", () => {
     expect(selectInjectableDefs([], opts)).toEqual([])
   })
 })
+
+describe("selectInjectableDefs（可用模型强制保留）", () => {
+  test("[2026-09-02 修复] keepModels=可用全集：链竞争落选面/落选模型全部保留（注入面=可用全集语义）", () => {
+    const all = new Set(defs.map((d) => `github-copilot/${d.modelId}`))
+    expect(selectInjectableDefs(defs, { ...opts, keepModels: all }).map((d) => d.name).sort())
+      .toEqual(defs.map((d) => d.name).sort())
+  })
+  test("keepModels 子集：只保留该模型全部面（含链外 ro 面），其余仍按链精选", () => {
+    const kept = selectInjectableDefs(defs, { ...opts, keepModels: new Set(["github-copilot/m2"]) }).map((d) => d.name).sort()
+    expect(kept).toContain("cp-mx-m2-high")
+    expect(kept).toContain("cp-mx-m2-high-ro")
+    expect(kept).not.toContain("cp-mx-m3-high-ro")
+  })
+})

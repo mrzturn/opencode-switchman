@@ -154,6 +154,41 @@ describe("rankCandidates", () => {
       resetCapabilityCache()
     }
   })
+  test("favorites 优先：同 tier 内收藏模型压过更高原始指数；跨 tier 不逆序；immediate 不生效", () => {
+    try {
+      writeFileSync(join(process.env.SWITCHMAN_STATE!, "capability.json"), JSON.stringify({
+        source: "artificial-analysis", version: "preferred", fetched_at: Date.now() / 1000,
+        thresholds: { S: 80, A: 60, B: 40 },
+        models: { "gpt-5.6-luna": { score: 98.0 }, "gpt-5.6-terra": { score: 90.0 }, "glm-5.3": { score: 70.0 } },
+      }))
+      resetCapabilityCache()
+      const shells = [
+        rankable({ key: "luna", modelId: "gpt-5.6-luna", pool: "copilot", family: "gpt" }),
+        rankable({ key: "terra", modelId: "gpt-5.6-terra", pool: "copilot", family: "gpt" }),
+      ]
+      // 无偏好：luna 原始指数高居前；收藏 terra 后同 tier 反超
+      expect(rankCandidates(shells, ctx()).ranked.map((s) => s.key)).toEqual(["luna", "terra"])
+      expect(rankCandidates(shells, ctx({ preferredModels: new Set(["gpt-5.6-terra"]) })).ranked.map((s) => s.key)).toEqual(["terra", "luna"])
+      // 收藏不越级：等级距离是硬键（回退必须相邻等级），收藏仅在同距内生效——更近等级的非收藏仍领先
+      const mixed = [
+        rankable({ key: "luna", modelId: "gpt-5.6-luna", pool: "copilot", family: "gpt" }),
+        rankable({ key: "glm-a", modelId: "glm-5.3" }),
+      ]
+      expect(rankCandidates(mixed, ctx({ preferredModels: new Set(["glm-5.3"]) })).ranked.map((s) => s.key)).toEqual(["glm-a", "luna"])
+      // immediate 只按延迟，favorites 不生效
+      const slow = [
+        rankable({ key: "luna", modelId: "gpt-5.6-luna", pool: "copilot", family: "gpt", latencyMs: 900 }),
+        rankable({ key: "terra", modelId: "gpt-5.6-terra", pool: "copilot", family: "gpt", latencyMs: 10 }),
+      ]
+      expect(rankCandidates(slow, ctx({ immediate: true, preferredModels: new Set(["gpt-5.6-luna"]) })).ranked.map((s) => s.key)).toEqual(["terra", "luna"])
+    } finally {
+      writeFileSync(join(process.env.SWITCHMAN_STATE!, "capability.json"), JSON.stringify({
+        source: "artificial-analysis", version: "fixed-empty", fetched_at: Date.now() / 1000,
+        thresholds: { S: 62, A: 55, B: 45 }, models: {},
+      }))
+      resetCapabilityCache()
+    }
+  })
   test("思考档分区：思考档候选领先，off 壳同距下殿后（off＝lane 级兜底）", () => {
     const shells = [
       rankable({ key: "a", modelId: "glm-5.3", effort: "off", matrixStatus: "strained", latencyMs: 999 }),

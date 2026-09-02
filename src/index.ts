@@ -358,6 +358,15 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     return null
   }
 
+  /** favorites 模型集（modelId 口径）：链内同档优先；读激活快照的配置面，fail-open 空集 */
+  function preferredModelIds(): Set<string> {
+    try {
+      return new Set((manager?.snapshot().configured ?? []).map((k) => k.slice(k.indexOf("/") + 1)))
+    } catch {
+      return new Set()
+    }
+  }
+
   /** 六档 base 链：用户 lanes 选项优先；动态对激活壳全集运行算法；legacy 使用生成期同源链。 */
   function baseChainFor(lane: Lane): string[] {
     const custom = (options.lanes as any)?.[lane]
@@ -375,6 +384,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       shells: attrs, capabilityOf: (modelId) => baseScoreDynamic(modelId),
       // [2026-08-31]-[去厂商化：链生成乘 billingBoost×unknownPenalty（用户配置/能力分级驱动）]
       billingBoostOf, unknownOf: unknownOfModel,
+      // [2026-09-02]-[favorites 优先：收藏模型链内同档排前]
+      preferredModels: preferredModelIds(),
     })
   }
 
@@ -420,6 +431,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
              registry, matrix: ctx.matrix?.combos ?? null, routing: routingWithRealFailures(ctx.routing),
               quotaExhausted: quotaEx, routePolicy: policy, states, glmPeak: peak.glmPeak, costs, water,
               billingBoostOf, peakOf: peakOfProvider,
+              // [2026-09-02]-[favorites 优先：运行期同 tier 排前与 base 链同源]
+              preferredModels: preferredModelIds(),
            })
          } catch { /* 单档失败不影响其余档 */ }
        }
@@ -613,12 +626,15 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         supersetDefs = buildShells(supersetModels, metaIndex, {
           roAliases: true, degradedFamilyByProvider: true, markDegraded: true,
         })
-        // [2026-09-02]-[上下文瘦身：task 工具描述逐壳枚举全部注入壳（≈6-10k token/会话），先按六档链
-        //  精选∪自定义 lane 裁剪注入面（与运行期 baseChainFor 同算法同解析器，路由/横幅/闸自动一致；
-        //  空候选 fail-open 回退全量）]-[影响：degradedModelCount/落盘 superset 反映精选后有效注入面]
+        // [2026-09-02]-[上下文瘦身修正：注入面=可用全集（provider 已连接且可对话的 supersetModels）
+        //  ∪六档链精选∪自定义 lane——链竞争不再裁掉可用模型（此前 glm-5.3-flash 等被裁导致 favorites
+        //  误报「无效模型」、vision 链空转）；favorites 链内同档优先（用户显式意图压过乘积分）]-
+        //  [token 影响回归 ~6-10k/会话，由维护者显式取舍：正确性（favorites/视觉/点名可达）优先]
         const fullSupersetCount = supersetDefs.length
         supersetDefs = selectInjectableDefs(supersetDefs, {
           customLanes: (options.lanes as Record<string, readonly string[]> | null) ?? null,
+          keepModels: new Set(supersetModels),
+          preferredModels: new Set(validConfiguredModels.map((m) => m.slice(m.indexOf("/") + 1))),
           capabilityOf: (modelId) => baseScoreDynamic(modelId),
           billingBoostOf, unknownOf: unknownOfModel,
           costOf: (modelId) => costOf(modelId),
@@ -663,7 +679,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         })
         manager.recompute(configured)
         manager.start()
-        appendStatusLog(`已注入 ${injected.size} 只超集壳（全量 ${fullSupersetCount}→六档链精选，${supersetModels.length} 模型×档位，模式=${runMode}，冲突 ${conflicts.size}；激活门控运行中）`)
+        appendStatusLog(`已注入 ${injected.size} 只超集壳（可用面 ${fullSupersetCount}→精选∪全量保留，${supersetModels.length} 模型×档位，模式=${runMode}，冲突 ${conflicts.size}；激活门控运行中）`)
         // [2026-08-29]-[配置钩子触发自更新检查]-[检查异步且失败不阻塞启动]
         refreshSelfUpdate().then((state) => { if (state?.outdated) clearBannerCache() }).catch(() => {})
       } catch (exc) {

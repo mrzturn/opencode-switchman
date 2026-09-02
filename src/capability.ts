@@ -147,9 +147,14 @@ export function parseAaModels(json: unknown): ParsedSource {
 
 /**
  * OpenRouter /models 响应解析（data[]；id="vendor/model" 去 provider）。
- * [2026-08-31]-[公开源实测无 intelligence/coding/agentic 字段：有则用真实指数（scoreKind=index）；
+ * [2026-08-31]-[公开源实测无顶层 intelligence/coding/agentic 字段：有则用真实指数（scoreKind=index）；
  *  无则按 sort=coding-high-to-low 序位派生百分位分（首名 100 线性降至末名 0，scoreKind=rank，
  *  阈值层强制 quantile 分位映射——序即 coding 序，规格允许的分位数映射路径）]
+ * [2026-09-02 修复]-[官方指数实藏在 benchmarks.artificial_analysis（AA 转载 intelligence/coding/agentic_index，
+ *  实测 179/421 模型有数据）：此前只读顶层字段误判「无指数」→ 全表落入 rank 模式；rank 模式把
+ *  「无评测数据」的模型（OpenRouter 排序列表尾部，如 glm-5-turbo #419/421）线性映射成 0.x 分＝
+ *  「没测过」被当成「最弱」。现 index 优先读 benchmarks；rank 模式剔除无 benchmarks 数据的模型
+ *  （不入映射表 → 查找层自然回退内置快照/策展分档，未知≠最弱）]
  */
 export function parseOpenRouterModels(json: unknown): ParsedSource {
   const arr = Array.isArray((json as any)?.data) ? (json as any).data : Array.isArray(json) ? json : []
@@ -159,9 +164,10 @@ export function parseOpenRouterModels(json: unknown): ParsedSource {
   arr.forEach((m: any, i: number) => {
     const rawName = String(m?.id ?? m?.name ?? "")
     const key = normalizeModelKey(rawName)
-    const intelligence = num(m?.intelligence)
-    const coding = num(m?.coding)
-    const agentic = num(m?.agentic)
+    const aa = m?.benchmarks && typeof m.benchmarks === "object" ? m.benchmarks.artificial_analysis : undefined
+    const intelligence = firstIndex(num(m?.intelligence), num(aa?.intelligence_index))
+    const coding = firstIndex(num(m?.coding), num(aa?.coding_index))
+    const agentic = firstIndex(num(m?.agentic), num(aa?.agentic_index))
     const score = firstIndex(intelligence, coding, agentic)
     const created = num(m?.created)
     if (created !== null && (maxCreated === null || created > maxCreated)) maxCreated = created
@@ -175,8 +181,11 @@ export function parseOpenRouterModels(json: unknown): ParsedSource {
     }
     return { models, versionHint: maxCreated !== null ? String(maxCreated) : null, scoreKind: "index" }
   }
-  const n = arr.length
-  arr.forEach((m: any, i: number) => {
+  // 序位百分位分只给「确有评测数据」的模型：benchmarks 缺失/为空＝无任何评测信号，其列表尾部
+  // 序位是数据缺口而非实力序——剔除（回退内置分档），避免 glm-5-turbo 式 0.x 伪影。
+  const rankable = arr.filter((m: any) => m?.benchmarks != null && typeof m.benchmarks === "object" && Object.keys(m.benchmarks).length > 0)
+  const n = rankable.length
+  rankable.forEach((m: any, i: number) => {
     const key = normalizeModelKey(String(m?.id ?? m?.name ?? ""))
     if (!key || key in models) return
     // 序位百分位分：首名 100 → 末名 0 线性（与 quantile 阈值 p80/p60/p40 配套＝top20% S / 次20% A / 次20% B / 其余 C）

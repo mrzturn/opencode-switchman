@@ -177,6 +177,9 @@ export interface RankContext {
   billingBoostOf?: (provider: string) => number
   /** [2026-08-31]-[去厂商化：provider→计费高峰活跃（任意 provider 的 peak 配置求值）] */
   peakOf?: (provider: string) => boolean
+  /** [2026-09-02]-[favorites 优先：收藏模型（modelId 口径）在同 tier 内排前；跨 tier 不逆序；
+   *  immediate 不生效（只按延迟）] */
+  preferredModels?: ReadonlySet<string> | null
 }
 
 /** 硬门：矩阵 down（strained 非 down）/ 熔断 / 耗尽 / 退休 / 实调隔离 / 语义闸（与 computeLane 同源） */
@@ -283,6 +286,8 @@ export function rankCandidates<T extends Rankable>(
         const ba = breakdowns.get(a.key)!
       const bb = breakdowns.get(b.key)!
       return TIER_RANK[ba.tier] - TIER_RANK[bb.tier] ||
+        // [2026-09-02]-[favorites 优先：同 tier 内收藏模型排前（用户显式意图压过乘积分；immediate 不生效）]
+        Number(ctx.preferredModels?.has(b.modelId) ?? false) - Number(ctx.preferredModels?.has(a.modelId) ?? false) ||
         bb.total - ba.total ||
         // tier 是跨档硬门；同档总分持平时再用真实能力指数，不能因统一映射到 TIER_SCORE 而平分。
         (bb.rawCapability ?? -Infinity) - (ba.rawCapability ?? -Infinity) ||

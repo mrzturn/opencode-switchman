@@ -40,7 +40,10 @@ export interface MatrixManagerOptions {
 export type RecomputeSource = "config" | "session" | "startup"
 
 export const WATCH_DEBOUNCE_MS = 500
-export const WATCH_POLL_MS = 30_000
+// [2026-09-02]-[30s→2s：实测 fs.watch 事件在 opencode 宿主进程内不投递（独立 Bun 脚本同目录正常，
+// 插件内真实 favorites 变更 22s 后才被 30s 轮询兜住），mtime 轮询是实际生效路径；statSync×2/2s 成本
+// 可忽略，2s 轮询+500ms debounce ≈ favorites 变更 2.5s 内生效]-[favorites/可见集变更即时可见]
+export const WATCH_POLL_MS = 2_000
 const PARSE_RETRY_MS = 150
 const PARSE_RETRIES = 2
 
@@ -57,6 +60,9 @@ export class MatrixManager {
   private lastMtimes: [number, number] = [0, 0]
   private stopped = false
   private pendingSource: RecomputeSource = "startup"
+  // [2026-09-02]-[config 源净零反馈节流：favorites 增删复原/仅 recent 变更时 mtime 变化会触发重算，
+  // 但激活集无变化＝完全静默，用户以为监听失效；10s 节流防连续开关刷屏]
+  private lastConfigNoopNoticeMs = 0
 
   constructor(options: MatrixManagerOptions) {
     this.opts = { watchEnabled: true, debounceMs: WATCH_DEBOUNCE_MS, pollMs: WATCH_POLL_MS, ...options }
@@ -152,7 +158,16 @@ export class MatrixManager {
       shellsByModel: this.shellsByModel,
       knownProviders: this.opts.knownProviders,
     })
-    if (sameActivation(this.current_, next)) return this.current_
+    if (sameActivation(this.current_, next)) {
+      // [2026-09-02]-[配置面净零变更反馈：mtime 变了但 favorites/可见集内容与激活集无变化时，
+      // 此前无 gen bump/无通知/无侧栏重写＝用户视角的"没反应"；config 源时给一条节流状态日志，
+      // 任何收藏区操作都有可感知回执；session/startup 源属内部调度保持静默]
+      if (source === "config" && Date.now() - this.lastConfigNoopNoticeMs > 10_000) {
+        this.lastConfigNoopNoticeMs = Date.now()
+        appendStatusLog(`favorites/可见集已扫描：激活集无变化（gen=${this.current_.generation}，未重算未重探）`)
+      }
+      return this.current_
+    }
     if (next.invalidConfigured.length > 0) {
       // [2026-09-01]-[加固：favorites/可见集里存在 provider 已知但 modelId 查无壳的脏数据（如手滑收藏
       // "provider/not-a-model"），此前静默丢弃无处诊断；sameActivation 已短路去重，此处只在真变化时记一次，不刷屏]
@@ -223,9 +238,15 @@ export class MatrixManager {
           if (!filename) return this.scheduleRecompute()
           if (WATCH_FILENAMES.has(String(filename))) this.scheduleRecompute()
         })
-        w.on("error", () => { /* fail-open：轮询兜底 */ })
+        // [2026-09-02]-[运行异常落日志：此前纯静默吞掉，宿主内 fs.watch 不投递时无从诊断]-[可观测性]
+        w.on("error", (exc) => appendStatusLog(`fs.watch(${dir}) 异常，mtime 轮询兜底: ${exc}`))
         this.watchers.push(w)
-      } catch { /* 目录缺失（另一端形态天然无此文件）→跳过不报错，轮询兜底 */ }
+      } catch (exc) {
+        // 目录缺失（另一端形态天然无此文件）→静默跳过轮询兜底；目录存在却启动失败（如 fd 耗尽）→落日志
+        try {
+          if (statSync(dir).isDirectory()) appendStatusLog(`fs.watch(${dir}) 启动失败，mtime 轮询兜底: ${exc}`)
+        } catch { /* 目录缺失：预期内静默 */ }
+      }
     }
     this.refreshMtimes()
     this.pollTimer = setInterval(() => {

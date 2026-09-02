@@ -6,7 +6,15 @@ This project follows [Semantic Versioning](https://semver.org/). Release notes d
 
 ## [Unreleased]
 
+### Fixed
+
+- Capability scores no longer punish unbenchmarked models as "weakest": the OpenRouter fallback source actually ships the official Artificial Analysis indices in `benchmarks.artificial_analysis` (179/421 models) — the parser now reads them (real absolute scores, `score_kind=index`) instead of missing them and falling into rank-position mode, which mapped models with **no** eval data (listed at the sort tail, e.g. `glm-5-turbo` #419/421) to ~0-point C-tier scores. Rank mode now also excludes models without any benchmark payload, letting them fall back to the bundled snapshot / curated tiers ("no data" ≠ "weakest"). The bundled `capability-default.json` was regenerated from the official indices (GLM family: glm-5.3 A 59.5 / coding 74.8, glm-5.3-flash A 57.5; glm-5-turbo correctly falls to its curated B tier).
+
+- Context-diet injection no longer drops usable models: the injected superset is now the union of the six lane chains **plus every configured/usable model face** (`keepModels`), so models that merely lose chain competition (e.g. `glm-5.3-flash`, `glm-5-turbo`) stay injected instead of being flagged as "invalid favorites" in the banner. User favorites (and active session models) additionally get a same-tier preference boost in lane chains and runtime ranking — explicit user intent now beats score/name tiebreaks within a tier, while tier and level-distance invariants still dominate across tiers, and immediate (latency-only) ranking ignores it entirely. `off` fallback partitions remain last as before. Denied-shell messages now read "provider not connected / no credentials / non-chat model" instead of the misleading "not selected by any lane".
+
 ### Changed
+
+- Vision-capable models are no longer score-penalized (÷2) in text lanes. The capability score already measures text/coding ability; vision is an orthogonal modality flag whose only job is to keep non-vision models out of the vision lane (unchanged: vision-lane filter + image-modality hard gate). Text-lane chains now rank vision-capable shells by the same capability × effort-affinity × billing factors as everyone else — same-tier vision shells (e.g. copilot gpt-5.6 family variants) reclaim their natural positions. The bundled manifest lanes were regenerated accordingly.
 
 - **ro/rw pool partition**: lanes are now strictly partitioned by shell capability face before any preference ranking — the review lane draws only from `ro` shells, every other lane draws only from `rw` shells, and a lane falls back to the opposite face only when its own pool is empty (fail-open; the dispatch gate still denies `rw` tasks on `ro` shells). Fixes `rw` variants of the same model being cut from the injection face by name-order tiebreaks while only their `ro` alias survived via the review lane, which made non-review lanes (e.g. hard) banner an `ro` shell as their best candidate. Also adds a rawScore tiebreak to the cross-level fallback slots so stronger models no longer lose their slot to name ordering.
 - Effort-preference routing layer: each lane now carries an explicit thinking-effort preference order — hard/review prefer `high→xhigh→max`, main/mechanical/vision prefer `medium→high→xhigh→max`, economy prefers `low→medium→high` (the first level the model supports is the default). `off`-effort shells no longer appear in any lane preference list; they are demoted to a lane-level fallback partition and only fill chain slots after every thinking-level candidate (e.g. models that only support on/off, or when all thinking shells are unavailable). Capability-tier ordering is preserved within each partition, at both chain generation and runtime ranking — including immediate mode, where latency now orders within the thinking partition before off shells. This stops off-effort shells (e.g. `glm-47-off`) from heading thinking lanes such as hard/main while thinking-capable candidates exist.
@@ -73,6 +81,18 @@ The release documentation uses these repository assets:
 [English](#changelog)
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。此处记录面向使用者的行为变化；实现细节见技术方案与提交历史。
+
+## [Unreleased]
+
+### 修复
+
+- 能力分不再把「没测过」当「最弱」：OpenRouter 备源其实随 `benchmarks.artificial_analysis` 字段带了官方 Artificial Analysis 真实指数（179/421 模型）——解析器现优先读取（绝对指数，`score_kind=index`），不再因漏读而落入 rank 序位模式、把无评测数据的模型（排在列表尾部，如 glm-5-turbo #419/421）线性映射成 0.x 的 C 档分。rank 模式也改为剔除无 benchmarks 数据的模型（回退内置快照/策展分档，未知≠最弱）。随包 `capability-default.json` 已按官方指数重生成（GLM 家族：glm-5.3 A 59.5/coding 74.8、glm-5.3-flash A 57.5；glm-5-turbo 正确落回策展 B 档）。
+
+- 上下文瘦身不再裁掉可用模型：注入超集现为六档链并集**外加全部已配置/可用模型面**（`keepModels`），链竞争落选的模型（如 `glm-5.3-flash`、`glm-5-turbo`）保持注入，不再被横幅误报「收藏含无效模型」。用户 favorites（与活跃会话模型）额外获得同级优先加权：lane 链与运行时排序中，同级内显式用户意图压过分数/名称平决；跨级仍由能力档与等级距离硬键主导，immediate（仅延迟）排序完全不受影响。`off` 兜底分区照旧殿后。拒派文案由误导性的「未入选任一 lane」改为「provider 未连接/无凭证/非对话模型」。
+
+### 变更
+
+- 删除文本 lane 对视觉模型的 ÷2 评分惩罚：能力分（coding/intelligence 指数）已完整度量文本能力，视觉是正交模态属性，其唯一职责是把非视觉模型挡在 vision 池之外（vision 池过滤与 image modality 硬门不变）。文本 lane 中视觉壳改用与其他壳相同的能力×亲和×计费因子排序——同档视觉系壳（如 copilot gpt-5.6 家族变体）回归自然位次。随包 manifest 六链已同步重生成。
 
 ## [0.2.2] - 2026-09-02
 

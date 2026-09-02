@@ -144,6 +144,32 @@ describe("候选链算法", () => {
     ]
     expect(computeLaneChain(mix, () => ({ score: 0.7, tier: "B" as const }), "main")).toEqual(["m-medium"])
   })
+  test("favorites 优先：同 tier 内收藏模型排前（压过乘积分/字典序；跨 tier 不逆序）", () => {
+    const sameTier = [
+      { name: "x-high", modelId: "x", provider: "github-copilot", pool: "copilot", effort: "high", capability: "rw", vision: false, cost: 1 },
+      { name: "y-high", modelId: "y", provider: "github-copilot", pool: "copilot", effort: "high", capability: "rw", vision: false, cost: 1 },
+    ]
+    const cap = () => ({ score: 1, tier: "S" as const })
+    // 无偏好：同分同亲和按名称序兜底
+    expect(computeLaneChain(sameTier, cap, "main", resolvers)).toEqual(["x-high", "y-high"])
+    // 收藏 y：同 tier 内反超（用户显式意图）
+    expect(computeLaneChain(sameTier, cap, "main", resolvers, new Set(["y"]))).toEqual(["y-high", "x-high"])
+    // [2026-09-02 删视觉惩罚]-视觉模型在文本 lane 与纯文本壳同分平决（视觉只做 vision 池过滤）：
+    //  同分同亲和按名称序兜底；收藏视觉模型时反超（用户显式意图）
+    const visionMix = [
+      { name: "plain-high", modelId: "plain", provider: "zhipuai-coding-plan", pool: "glm", effort: "high", capability: "rw", vision: false, cost: 1 },
+      { name: "vis-high", modelId: "vis", provider: "zhipuai-coding-plan", pool: "glm", effort: "high", capability: "rw", vision: true, cost: 1 },
+    ]
+    expect(computeLaneChain(visionMix, cap, "main", resolvers)).toEqual(["plain-high", "vis-high"])
+    expect(computeLaneChain(visionMix, cap, "main", resolvers, new Set(["vis"]))).toEqual(["vis-high", "plain-high"])
+    // 跨级不逆序：hard 同级(A)候选优先于收藏的跨级 S 回退候选（favorites 只在同级/同距内生效）
+    const tiers = [
+      { name: "s-high", modelId: "s", provider: "github-copilot", pool: "copilot", effort: "high", capability: "rw", vision: false, cost: 1 },
+      { name: "a-high", modelId: "a", provider: "github-copilot", pool: "copilot", effort: "high", capability: "rw", vision: false, cost: 1 },
+    ]
+    const cap2 = (id: string) => (id === "s" ? { score: 1, tier: "S" as const } : { score: 0.85, tier: "A" as const })
+    expect(computeLaneChain(tiers, cap2, "hard", resolvers, new Set(["s"]))).toEqual(["a-high", "s-high"])
+  })
   test("生成清单六链与随包能力快照同源（含计费/未知组系数与 tier 分组），引用壳存在且 review 含 GLM ro 壳", () => {
     const manifest = loadManifest(); const bundled = loadBundledCapability()
     // 与 gen-shells 同源解析器：capabilityOf 返回 {score,tier}（tier 分组主键同源）
