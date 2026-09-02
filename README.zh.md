@@ -292,11 +292,17 @@ bun run build       # 重新生成矩阵并打包单文件 bundle
 本地调试与正式包可用幂等脚本一键切换，切换后重启 opencode 生效：
 
 ```bash
-bun run mode:local  # build + 指向本仓库
-bun run mode:prod   # 使用 npm 包；未安装时拒绝并打印安装命令
+bun run mode:local              # build + 三处配置切到 file:// 本仓库（仓库根自动推导）
+bun run mode:prod               # 拉 npm 最新版，切到精确版本条目 + 清旧插件缓存 + 升级横幅
+bun run mode:prod --version 0.2.0  # 指定版本回切（免联网）
 ```
 
-两条命令都会同步把 `tui.jsonc` 的 `plugin` 数组切到对应 spec（文件不存在则自动创建），侧边栏状态面板跟随 hook 插件一起切源，无需再手动改一遍。
+两条命令都会同步三处配置（行级手术保留注释与第三方插件，幂等可重复执行）：
+
+- `opencode.jsonc`/`opencode.json` 与 `tui.jsonc`/`tui.json` 的 `plugin` 数组（tui 缺失自动补建，侧边栏状态面板跟随 hook 插件一起切源）
+- 主配置 `opencode-switchman.jsonc` 的 `$schema`（local 指向仓库内 schema，prod 指向 GitHub main）
+
+`prod` 与一键安装器共用同一套改写/缓存清理逻辑（`scripts/update-cli.mjs`）；从源码切换后若要长期使用正式版，仍推荐 `npx -y opencode-switchman@latest`。
 
 ## 文档
 

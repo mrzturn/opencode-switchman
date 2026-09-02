@@ -292,11 +292,17 @@ bun run build       # regenerate matrix and bundle the single-file build
 For local plugin development versus the published package, use the idempotent mode switchers and restart opencode after switching:
 
 ```bash
-bun run mode:local  # build + point opencode at this repository
-bun run mode:prod   # use the npm package; refuses if not installed and prints the install command
+bun run mode:local                 # build + switch all three configs to file:// this repo (root auto-detected)
+bun run mode:prod                  # fetch npm latest, switch to a pinned version entry + prune old caches + upgrade banner
+bun run mode:prod --version 0.2.0  # pin a specific version (no network needed)
 ```
 
-Both commands also sync `tui.jsonc`'s `plugin` array to the matching spec (creating the file if missing), so the sidebar status panel switches sources together with the hook plugin — no separate manual edit needed.
+Both commands sync three configs (line-level surgery that preserves comments and third-party plugins; idempotent):
+
+- the `plugin` arrays in `opencode.jsonc`/`opencode.json` and `tui.jsonc`/`tui.json` (tui is created if missing, so the sidebar status panel switches sources together with the hook plugin)
+- the `$schema` in the main config `opencode-switchman.jsonc` (local points at the in-repo schema, prod at GitHub main)
+
+`prod` shares the rewrite/cache-prune logic with the one-shot installer (`scripts/update-cli.mjs`); for long-term production use prefer `npx -y opencode-switchman@latest`.
 
 ## Documentation
 

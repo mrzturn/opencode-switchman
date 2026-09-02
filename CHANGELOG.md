@@ -6,6 +6,10 @@ This project follows [Semantic Versioning](https://semver.org/). Release notes d
 
 ## [Unreleased]
 
+### Fixed
+
+- `bun run mode:local` / `mode:prod` were blind to the pinned-version plugin entries introduced by the updater (`opencode-switchman@x.y.z`): switching to local left both entries active (double-loading the plugin) and broke JSONC commas; switching back to prod could not reach the npm latest. The switcher now rewrites the whole `plugin` array block (comment/activate/insert with comma and indent normalization), fetches npm latest on `prod` (or `--version x.y.z`), prunes stale caches, and keeps the main config's `$schema` pointing at the in-repo schema on `local` and GitHub main on `prod`. The repo root is auto-detected instead of a hard-coded home path.
+
 ### Changed
 
 - Context diet: the shell superset injected as dispatchable agents is now pruned to the union of the six lane chains (same algorithm and resolvers as runtime routing) plus user-defined custom lane entries — in real setups ~260 shells shrink to ~30, cutting the per-session task-tool description from ~6-10k tokens to well under 1k. Shells not selected are no longer injected; dispatching to them is denied with the usual best-candidate hint. Lane unions that come out empty fail open to the full superset.
