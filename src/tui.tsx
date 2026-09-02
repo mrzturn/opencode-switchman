@@ -7,8 +7,12 @@
 // [2026-08-31]-[新增 TUI Slot 插件；需用户在 tui.json 的 plugin 数组里显式加入本包，TUI 插件无目录自动发现]
 // [2026-09-01]-[通知区收窄为仅显示最后一条；新增最佳候选面板，与通知区上下分栏展示]
 import type { TuiPlugin, TuiPluginModule, TuiPluginApi } from "@opencode-ai/plugin/tui"
+// [2026-09-02]-[solid-js 必须裸导入：宿主 runtime-plugin 仅对精确 specifier（"solid-js"/"@opentui/solid"）
+// 做运行时重写（opentui:runtime-module:* → 宿主实例）；深路径 "solid-js/dist/solid.js" 不匹配重写规则，
+// 会加载第二份 solid 实例→两份图谱互不订阅→面板挂载后全冻结。构建期 server.js 误解析由
+// @opentui/solid/bun-plugin 的 onLoad 重定向（server.js→solid.js 客户端构建）解决]-[影响 TUI 面板实时刷新]
 import { createSignal, createMemo, onCleanup, For } from "solid-js"
-import { readFileSync } from "node:fs"
+import { readFileSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { join, relative, isAbsolute, sep } from "node:path"
 
@@ -139,29 +143,72 @@ function abbreviateHome(input: string, home: string): string {
   return "~" + sep + rel
 }
 
+// [2026-09-02]-[分支实时刷新：api.state.vcs.branch 依赖 opencode 服务端 .git/HEAD watcher→vcs.branch.updated
+//  事件链，实测切换分支后长期滞留旧值；改为插件侧直读目标目录 .git/HEAD 自证当前分支（含 worktree 的
+//  .git 文件 gitdir 指针），detached HEAD 与非 git 目录返回 undefined 与内置 footer 语义一致]
+function gitBranch(dir: string): string | undefined {
+  try {
+    const dotGit = join(dir, ".git")
+    let headPath: string
+    if (statSync(dotGit).isDirectory()) {
+      headPath = join(dotGit, "HEAD")
+    } else {
+      const pointer = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGit, "utf8"))?.[1]?.trim()
+      if (!pointer) return undefined
+      headPath = join(pointer, "HEAD")
+    }
+    const head = readFileSync(headPath, "utf8").trim()
+    if (!head.startsWith("ref:")) return undefined
+    const ref = head.slice(4).trim()
+    return ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : ref
+  } catch {
+    return undefined
+  }
+}
+
 function View(props: { api: TuiPluginApi; sessionID: string }) {
+  return ViewInner(props)
+}
+
+function ViewInner(props: { api: TuiPluginApi; sessionID: string }) {
   const [entries, setEntries] = createSignal<StatusLogEntry[]>(readStatusLog())
   const [routes, setRoutes] = createSignal<RouteSnapshotEntry[]>(readRouteSnapshot())
   const [quotaBrief, setQuotaBrief] = createSignal<QuotaBriefEntry[]>(readQuotaBrief())
   const [restartRequired, setRestartRequired] = createSignal<string[]>(readRestartRequired())
   const [tick, setTick] = createSignal(0)
+  // [2026-09-02]-[分支信号：每轮轮询直读 .git/HEAD（session 目录优先回退 TUI 目录）；另订阅
+  //  vcs.branch.updated 事件在事件链正常时即时刷新，事件丢失由轮询兜底；直读失败回退 api.state.vcs]
+  const [gitDirBranch, setGitDirBranch] = createSignal<string | undefined>(gitBranch(props.api.state.path.directory))
+  const refreshBranch = () => {
+    const session = props.api.state.session.get(props.sessionID)
+    const dir = session?.directory || props.api.state.path.directory
+    setGitDirBranch(gitBranch(dir))
+  }
   const timer = setInterval(() => {
     setEntries(readStatusLog())
     setRoutes(readRouteSnapshot())
     setQuotaBrief(readQuotaBrief())
     setRestartRequired(readRestartRequired())
+    refreshBranch()
   }, POLL_MS)
   // [2026-09-02]-[标题彩虹走马灯需要比数据轮询快得多的独立心跳，二者职责/频率不同，不共用一个 timer]
   const marqueeTimer = setInterval(() => setTick((t) => (t + 1) % 360), MARQUEE_MS)
-  onCleanup(() => { clearInterval(timer); clearInterval(marqueeTimer) })
+  onCleanup(() => {
+    clearInterval(timer)
+    clearInterval(marqueeTimer)
+  })
+  onCleanup(props.api.event.on("vcs.branch.updated", refreshBranch))
   const theme = () => props.api.theme.current
   const recent = () => entries().slice(-SHOW_LAST)
-  // 与内置 sidebar-footer 同款取值：会话目录优先回退 TUI 目录；vcs.branch 只在会话目录=TUI cwd 时可信
+  // 与内置 sidebar-footer 同款取值：会话目录优先回退 TUI 目录；分支优先取插件侧直读值（实时），
+  // 直读失败回退 api.state.vcs（仅会话目录=TUI cwd 时可信）
   const location = createMemo(() => {
     const session = props.api.state.session.get(props.sessionID)
     const dir = session?.directory || props.api.state.path.directory
     const out = abbreviateHome(dir, homedir())
-    const branch = session?.directory === props.api.state.path.directory ? props.api.state.vcs?.branch : undefined
+    const branch =
+      gitDirBranch() ??
+      (session?.directory === props.api.state.path.directory ? props.api.state.vcs?.branch : undefined)
     const list = out.split("/")
     return { parent: list.slice(0, -1).join("/"), name: list.at(-1) ?? "", branch }
   })
@@ -196,7 +243,7 @@ function View(props: { api: TuiPluginApi; sessionID: string }) {
             )}
           </text>
           <For each={routes()}>
-            {(r) => (
+            {(r: RouteSnapshotEntry) => (
               <text fg={theme().textMuted}>
                 <span style={{ fg: LANE_COLOR }}>{r.lane.padEnd(10)} </span>
                 <span style={{ fg: MODEL_COLOR }}>{r.best ?? "全不可用"}</span>
@@ -212,11 +259,11 @@ function View(props: { api: TuiPluginApi; sessionID: string }) {
             <b>notice</b>
           </text>
           <For each={recent()}>
-            {(item) => (
+            {(item: StatusLogEntry) => (
               <text fg={theme().textMuted}>
                 <span style={{ fg: theme().textMuted }}>{item.ts.slice(11, 19)} </span>
                 <For each={noticeSegments(item.text)}>
-                  {(seg) => <span style={{ fg: seg.alert ? theme().error : theme().text }}><b>{seg.text}</b></span>}
+                  {(seg: { text: string; alert: boolean }) => <span style={{ fg: seg.alert ? theme().error : theme().text }}><b>{seg.text}</b></span>}
                 </For>
               </text>
             )}
