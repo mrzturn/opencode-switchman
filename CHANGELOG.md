@@ -8,6 +8,8 @@ This project follows [Semantic Versioning](https://semver.org/). Release notes d
 
 ### Fixed
 
+- Sidebar candidate chains now update immediately when favorites change. The recompute is fully synchronous (new activation set lands before the callback), but the sidebar snapshot rewrite was chained after the forced full probe (`probeP.then`) — during the probe window (seconds to tens of seconds) the sidebar kept showing the old chains while the status notification already reported the recompute. The snapshot is now rewritten immediately on recompute (new chains computed with the new favorites preference, health/latency carried over from the previous probe round) and refreshed once more after the probe converges latency ordering.
+
 - Capability scores no longer punish unbenchmarked models as "weakest": the OpenRouter fallback source actually ships the official Artificial Analysis indices in `benchmarks.artificial_analysis` (179/421 models) — the parser now reads them (real absolute scores, `score_kind=index`) instead of missing them and falling into rank-position mode, which mapped models with **no** eval data (listed at the sort tail, e.g. `glm-5-turbo` #419/421) to ~0-point C-tier scores. Rank mode now also excludes models without any benchmark payload, letting them fall back to the bundled snapshot / curated tiers ("no data" ≠ "weakest"). The bundled `capability-default.json` was regenerated from the official indices (GLM family: glm-5.3 A 59.5 / coding 74.8, glm-5.3-flash A 57.5; glm-5-turbo correctly falls to its curated B tier).
 
 - Context-diet injection no longer drops usable models: the injected superset is now the union of the six lane chains **plus every configured/usable model face** (`keepModels`), so models that merely lose chain competition (e.g. `glm-5.3-flash`, `glm-5-turbo`) stay injected instead of being flagged as "invalid favorites" in the banner. User favorites (and active session models) additionally get a same-tier preference boost in lane chains and runtime ranking — explicit user intent now beats score/name tiebreaks within a tier, while tier and level-distance invariants still dominate across tiers, and immediate (latency-only) ranking ignores it entirely. `off` fallback partitions remain last as before. Denied-shell messages now read "provider not connected / no credentials / non-chat model" instead of the misleading "not selected by any lane".
@@ -85,6 +87,8 @@ The release documentation uses these repository assets:
 ## [Unreleased]
 
 ### 修复
+
+- favorites 变更后侧栏候选链立即更新。重算本为全同步（新激活集在回调前已落盘），但侧栏快照重写挂在强制全量探针之后（`probeP.then`）——探针窗口（秒级~数十秒）内状态通知已报重算、侧栏却停留旧链。现改为重算完成即立即重写快照（新链按新收藏偏好计算，健康/延迟沿用上轮探针），探针完成后再刷新一次收敛延迟排序。
 
 - 能力分不再把「没测过」当「最弱」：OpenRouter 备源其实随 `benchmarks.artificial_analysis` 字段带了官方 Artificial Analysis 真实指数（179/421 模型）——解析器现优先读取（绝对指数，`score_kind=index`），不再因漏读而落入 rank 序位模式、把无评测数据的模型（排在列表尾部，如 glm-5-turbo #419/421）线性映射成 0.x 的 C 档分。rank 模式也改为剔除无 benchmarks 数据的模型（回退内置快照/策展分档，未知≠最弱）。随包 `capability-default.json` 已按官方指数重生成（GLM 家族：glm-5.3 A 59.5/coding 74.8、glm-5.3-flash A 57.5；glm-5-turbo 正确落回策展 B 档）。
 

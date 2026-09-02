@@ -672,6 +672,11 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             const probeP = targets.length > 0
               ? probeKeys(targets, probeEndpoints()).catch(() => {})
               : Promise.resolve()
+            // [2026-09-02]-[favorites 变更即时显示：recompute 全同步（新链在回调前已落盘），先立即重写
+            //  侧栏快照——新链按收藏偏好此刻已可计算，健康/延迟沿用上轮探针；探针完成后再刷新一次
+            //  收敛延迟排序。此前只在 probeP.then 重写＝探针窗口（秒级~数十秒）内侧栏停留旧链]-
+            // [配置改动即时可见：通知与侧栏候选同步变化]
+            refreshSidebarState()
             probeP.then(refreshSidebarState).catch(() => {})
             // [2026-08-31]-[改落盘 status-log 供 tui.tsx 侧边栏渲染，不再刷屏 stderr 遮挡输入框]-[高频重算通知]
             appendStatusLog(`激活矩阵已重算（gen=${state.generation}，激活壳 ${state.activeShells.length}，探针 ${source}×${targets.length}）`)
