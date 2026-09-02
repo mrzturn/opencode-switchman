@@ -4,7 +4,7 @@
 
 This project follows [Semantic Versioning](https://semver.org/). Release notes describe user-visible behavior; implementation details remain in the technical specification and commit history.
 
-## [Unreleased]
+## [0.2.2] - 2026-09-02
 
 ### Fixed
 
@@ -66,6 +66,18 @@ The release documentation uses these repository assets:
 [English](#changelog)
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。此处记录面向使用者的行为变化；实现细节见技术方案与提交历史。
+
+## [0.2.2] - 2026-09-02
+
+### 修复
+
+- `bun run mode:local` / `mode:prod` 此前不识别更新器写入的精确版本 plugin 条目（`opencode-switchman@x.y.z`）：切 local 会留下双份条目（插件重复加载）并破坏 JSONC 逗号；切回 prod 又找不到 npm latest。切换器现在整体重写 `plugin` 数组块（注释/激活/插入并规范逗号与缩进），`prod`（或 `--version x.y.z`）时拉取 npm latest、清理旧缓存，并让主配置 `$schema` 在 local 指向仓库内 schema、prod 指向 GitHub main；仓库根目录改为自动探测，不再硬编码家目录路径。
+
+### 变更
+
+- 会话上下文瘦身：注入为可委派 agent 的壳超集现裁剪为六档链的并集（与运行时路由同一算法与解析器）外加用户自定义 lane 条目——真实环境约 260 个壳缩到约 30 个，每会话 task 工具描述从 ~6-10k token 降到 1k 以内。未选中的壳不再注入；向其委派会被拒绝并附常见最优候选提示。lane 并集为空时兜底放行全量超集。
+- 壳 agent 描述去掉逐壳样板句（语义已在子代理正文里）；描述现在只有矩阵标签，agent 列表再缩 ~70%。
+- 组装系统提示里已含内置调度守则时不再重复注入（如在本仓库内开发、项目 `AGENTS.md` 携带同一文本）——这类环境每会话再省 ~2.2k token；其他环境不变。
 
 ## [0.2.1] - 2026-09-01
 
