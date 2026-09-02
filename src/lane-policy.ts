@@ -20,7 +20,8 @@ export interface LaneShellAttr {
 export interface CapabilityScore { score: number; tier: Tier | null; rawScore?: number; source?: string }
 
 export interface LanePolicyInput {
-  /** 兼容旧调用形状；候选不再由该静态列表决定。 */
+  /** [已废弃·算法不读] 兼容旧调用形状；候选不再由该静态列表决定（computeLaneChain/laneBaseChain 均不引用）。
+   *  [2026-09-02]-[复审 P1：selectInjectableDefs 传 []——若未来算法恢复读取 builtin，此处会静默丢静态 lanes] */
   builtin: readonly string[]
   activeShells: ReadonlySet<string>
   shells: ReadonlyMap<string, LaneShellAttr>

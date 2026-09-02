@@ -29,7 +29,7 @@ import { quotaView, readAuthStore, markCopilotGatewayExhausted } from "./quota"
 import { costOf, refreshCosts, costsStale } from "./cost"
 import { baseScoreDynamic, refreshCapability, capabilityStale } from "./capability"
 import { refreshMatrixIfStale, refreshActiveMatrixIfStale, probeKeys } from "./probe"
-import { injectShells, injectShellDefs } from "./shells"
+import { injectShells, injectShellDefs, selectInjectableDefs } from "./shells"
 import { buildBanner, shortName, providerStatusEntries } from "./banner"
 import { refreshSelfUpdate, updateBannerText, ensureUpdateCommands, detectLoadMode } from "./selfupdate"
 import { billingOfProvider, loadUserConfig, resolveEffectiveOptions, routingPeakActive, routePolicy } from "./config"
@@ -613,6 +613,16 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         supersetDefs = buildShells(supersetModels, metaIndex, {
           roAliases: true, degradedFamilyByProvider: true, markDegraded: true,
         })
+        // [2026-09-02]-[上下文瘦身：task 工具描述逐壳枚举全部注入壳（≈6-10k token/会话），先按六档链
+        //  精选∪自定义 lane 裁剪注入面（与运行期 baseChainFor 同算法同解析器，路由/横幅/闸自动一致；
+        //  空候选 fail-open 回退全量）]-[影响：degradedModelCount/落盘 superset 反映精选后有效注入面]
+        const fullSupersetCount = supersetDefs.length
+        supersetDefs = selectInjectableDefs(supersetDefs, {
+          customLanes: (options.lanes as Record<string, readonly string[]> | null) ?? null,
+          capabilityOf: (modelId) => baseScoreDynamic(modelId),
+          billingBoostOf, unknownOf: unknownOfModel,
+          costOf: (modelId) => costOf(modelId),
+        })
         degradedModelCount = new Set(supersetDefs.filter((d) => d.degraded).map((d) => `${d.provider}/${d.modelId}`)).size
         const { injected, conflicts } = injectShellDefs(cfg, supersetDefs)
         injectedNames.clear()
@@ -622,7 +632,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         try {
           writeJsonAtomic(paths().shellSuperset, {
             generated_at: new Date().toISOString(),
-            counts: { superset_models: supersetModels.length, shells: supersetDefs.length, degraded: degradedModelCount },
+            counts: { superset_models: supersetModels.length, shells: supersetDefs.length, full_shells: fullSupersetCount, degraded: degradedModelCount },
             mode: runMode,
             shells: supersetDefs.map(toManifestEntry),
           })
@@ -653,7 +663,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         })
         manager.recompute(configured)
         manager.start()
-        appendStatusLog(`已注入 ${injected.size} 只超集壳（${supersetModels.length} 模型×档位，模式=${runMode}，冲突 ${conflicts.size}；激活门控运行中）`)
+        appendStatusLog(`已注入 ${injected.size} 只超集壳（全量 ${fullSupersetCount}→六档链精选，${supersetModels.length} 模型×档位，模式=${runMode}，冲突 ${conflicts.size}；激活门控运行中）`)
         // [2026-08-29]-[配置钩子触发自更新检查]-[检查异步且失败不阻塞启动]
         refreshSelfUpdate().then((state) => { if (state?.outdated) clearBannerCache() }).catch(() => {})
       } catch (exc) {
@@ -696,7 +706,13 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         }
         // [v1.2] 调度员规程随包内置：系统提示每轮注入（内存态、不可被本地文件改动丢失，
         // 与用户自己的全局/项目 AGENTS.md 拼接共存，互不覆盖）
-        if (options.rules!.enabled) output.system.push(AGENTS_MD.trimEnd())
+        // [2026-09-02]-[去重：项目/全局 AGENTS.md 已含同文时跳过重复注入（如本插件仓库自身开发场景，
+        //  省 ~2.2k token/会话）。opencode 在 transform 触发前已把装配好的系统段拼接进 system[0]
+        //  （session/llm/request.ts prepare），AGENTS.md 内容可检出；未装配则检测不命中、照常注入（fail-safe）]-
+        const rulesMarker = "# 全局规程（主调度员守则"
+        const rulesAlreadyPresent = Array.isArray(output.system)
+          && output.system.some((p) => typeof p === "string" && p.includes(rulesMarker))
+        if (options.rules!.enabled && !rulesAlreadyPresent) output.system.push(AGENTS_MD.trimEnd())
         if (options.banner!.enabled) {
           for (const line of bannerLines()) output.system.push(line)
         }

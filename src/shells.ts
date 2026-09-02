@@ -1,8 +1,11 @@
 // 壳注入（v1.1）：shells.json 清单 × 注册表视图 → cfg.agent 运行时注入（无文件生成）
 // [2026-08-28]-[tools 字段已 @deprecated→permission；thoughtLevel 无此字段→agent options 按 family 映射]-
 // [兜底两轨：config 注入若实测不生效，切换 writeShellFiles 落 ~/.config/opencode/agent/*.md]
-import type { ShellRegEntry } from "./types"
+import type { ShellRegEntry, Lane } from "./types"
+import { LANE_ORDER } from "./types"
 import type { ShellDefinition } from "./catalog"
+import type { CapabilityScore, LaneShellAttr } from "./lane-policy"
+import { laneBaseChain } from "./lane-policy"
 import { loadCachedThinkingShapes, deriveThinkingParam } from "./copilot-thinking"
 
 // [2026-09-01]-[对齐核心 packages/opencode/src/plugin/github-copilot/models.ts：github-copilot 池全部
@@ -33,7 +36,9 @@ export function effortOptions(
 }
 
 export function shellDescription(s: ShellRegEntry): string {
-  return `模型空壳〔池=${s.pool}·${s.modelId}·档=${s.effort}·${s.capability}〕。只绑定模型与档位，角色由委派 prompt 动态赋予。`
+  // [2026-09-02]-[上下文瘦身：模板句「只绑定模型与档位…」曾逐壳重复注入 task 工具描述（260 壳≈2-3k token）；
+  //  该语义已由 SHELL_BODY 第 1/2 条在子代理上下文陈述，描述只留矩阵标识]-[影响：agent 清单每行 -70% 体积]
+  return `模型空壳〔池=${s.pool}·${s.modelId}·档=${s.effort}·${s.capability}〕`
 }
 
 export const SHELL_BODY = [
@@ -91,4 +96,51 @@ export function injectShellDefs(
     injected.add(d.name)
   }
   return { injected, conflicts }
+}
+
+export interface InjectableSelectOpts {
+  /** 用户自定义 lane 覆盖（baseChainFor 直返其数组）；引用壳名强制保留进注入面 */
+  customLanes?: Record<string, readonly string[]> | null
+  capabilityOf: (modelId: string) => number | CapabilityScore
+  billingBoostOf?: (provider: string) => number
+  unknownOf?: (modelId: string) => boolean
+  costOf?: (modelId: string) => number | null
+}
+
+/** [2026-09-02]-[上下文瘦身：opencode 把全部注入壳逐条枚举进 task 工具描述（registry.describeTask），
+ *  全量超集 260 壳≈6-10k token/会话。精选=六档 laneBaseChain 候选∪自定义 lane 引用壳（与运行期
+ *  baseChainFor 同算法同解析器）；cfg.agent 运行期不可变，故必须在注入前裁剪——运行期对注入集
+ *  重跑同算法，链/横幅/闸天然⊆注入集；候选为空 fail-open 回退全量]-[影响：注入面 260→~30-40；
+ *  未入选壳派发走 denyUninjected 附改派候选，点名超集外模型需先入选或改派] */
+export function selectInjectableDefs(
+  defs: readonly ShellDefinition[],
+  opts: InjectableSelectOpts,
+): ShellDefinition[] {
+  if (defs.length === 0) return []
+  const byName = new Map(defs.map((d) => [d.name, d]))
+  const attrs = new Map<string, LaneShellAttr & { name: string; modelId: string; provider: string }>()
+  for (const d of defs) {
+    attrs.set(d.name, {
+      name: d.name, effort: d.effort, capability: d.capability, vision: d.vision,
+      pool: d.pool, modelId: d.modelId, provider: d.provider,
+      cost: opts.costOf ? opts.costOf(d.modelId) : null,
+    })
+  }
+  const keep = new Set<string>()
+  for (const lane of LANE_ORDER as readonly Lane[]) {
+    const custom = opts.customLanes?.[lane]
+    const chain = Array.isArray(custom) && custom.length > 0
+      ? custom
+      : laneBaseChain(lane, {
+        builtin: [],
+        activeShells: new Set(attrs.keys()),
+        shells: attrs,
+        capabilityOf: opts.capabilityOf,
+        billingBoostOf: opts.billingBoostOf,
+        unknownOf: opts.unknownOf,
+      })
+    for (const name of chain) if (byName.has(name)) keep.add(name)
+  }
+  if (keep.size === 0) return [...defs]
+  return defs.filter((d) => keep.has(d.name))
 }

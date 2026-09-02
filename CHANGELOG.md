@@ -4,6 +4,14 @@
 
 This project follows [Semantic Versioning](https://semver.org/). Release notes describe user-visible behavior; implementation details remain in the technical specification and commit history.
 
+## [Unreleased]
+
+### Changed
+
+- Context diet: the shell superset injected as dispatchable agents is now pruned to the union of the six lane chains (same algorithm and resolvers as runtime routing) plus user-defined custom lane entries — in real setups ~260 shells shrink to ~30, cutting the per-session task-tool description from ~6-10k tokens to well under 1k. Shells not selected are no longer injected; dispatching to them is denied with the usual best-candidate hint. Lane unions that come out empty fail open to the full superset.
+- Shell agent descriptions drop the per-shell boilerplate sentence (the semantics already live in the subagent body prompt); each description is now just the matrix tag, shrinking the agent list by a further ~70%.
+- The built-in dispatcher rulebook is no longer injected when the assembled system prompt already contains it (e.g. developing inside this repo, where the project `AGENTS.md` carries the same text) — saves ~2.2k tokens per session for those setups; unchanged for everyone else.
+
 ## [0.2.1] - 2026-09-01
 
 ### Added

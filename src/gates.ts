@@ -213,10 +213,11 @@ export function shellLikeName(agent: string): boolean {
   return /^[a-z][a-z0-9]*-mx-[a-z0-9]+-[a-z]+(-ro)?$/.test(agent)
 }
 
-/** [2026-08-29]-[动态矩阵闸1 第一层：壳名形态但未注入超集 → deny（模型未开/无凭证/新增 provider 需重启）] */
+/** [2026-08-29]-[动态矩阵闸1 第一层：壳名形态但未注入超集 → deny（模型未开/无凭证/新增 provider 需重启）]
+ *  [2026-09-02]-[注入面改为六档链精选（selectInjectableDefs），文案补「未入选精选」情形避免误导排查方向] */
 export function denyUninjected(agent: string, restartRequired: string[], hint: string | null): string {
   const restart = restartRequired.length > 0
     ? `检测到超集外 provider（${restartRequired.join("、")}）：新增 provider 的壳注册需重启 opencode`
     : "若为新增 provider，壳注册需重启 opencode"
-  return `${agent} 未注入壳超集（模型未开/无凭证，或为超集外新壳）${restart}${hint ? `，${hint}` : ""}`
+  return `${agent} 未注入壳超集（模型未开/无凭证、超集外新壳，或未入选六档链精选注入面）${restart}${hint ? `，${hint}` : ""}`
 }
