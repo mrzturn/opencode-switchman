@@ -7,10 +7,10 @@
 // [2026-08-31]-[新增 TUI Slot 插件；需用户在 tui.json 的 plugin 数组里显式加入本包，TUI 插件无目录自动发现]
 // [2026-09-01]-[通知区收窄为仅显示最后一条；新增最佳候选面板，与通知区上下分栏展示]
 import type { TuiPlugin, TuiPluginModule, TuiPluginApi } from "@opencode-ai/plugin/tui"
-import { createSignal, onCleanup, For } from "solid-js"
+import { createSignal, createMemo, onCleanup, For } from "solid-js"
 import { readFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { join, relative, isAbsolute, sep } from "node:path"
 
 type StatusLogEntry = { ts: string; text: string }
 type RouteSnapshotEntry = { lane: string; best: string | null; degraded: boolean }
@@ -127,7 +127,19 @@ function noticeSegments(text: string): { text: string; alert: boolean }[] {
   return segments
 }
 
-function View(props: { api: TuiPluginApi }) {
+// [2026-09-02]-[补回被本面板 single_winner 覆盖的内置 footer 内容：项目路径+git 分支+版本行。
+//  本插件 order 缺省 0 < 内置 internal:sidebar-footer 的 100，sidebar_footer 槽 single_winner 只渲染
+//  链首条目，内置的 path:branch/version 行整体消失；此处按内置同款逻辑（session.directory 优先、
+//  目录与 TUI cwd 一致才显示 vcs.branch、abbreviateHome 缩写）在面板底部补渲染]
+function abbreviateHome(input: string, home: string): string {
+  if (!home) return input
+  const rel = relative(home, input)
+  if (rel === "") return "~"
+  if (rel === ".." || rel.startsWith(".." + sep) || isAbsolute(rel)) return input
+  return "~" + sep + rel
+}
+
+function View(props: { api: TuiPluginApi; sessionID: string }) {
   const [entries, setEntries] = createSignal<StatusLogEntry[]>(readStatusLog())
   const [routes, setRoutes] = createSignal<RouteSnapshotEntry[]>(readRouteSnapshot())
   const [quotaBrief, setQuotaBrief] = createSignal<QuotaBriefEntry[]>(readQuotaBrief())
@@ -144,6 +156,15 @@ function View(props: { api: TuiPluginApi }) {
   onCleanup(() => { clearInterval(timer); clearInterval(marqueeTimer) })
   const theme = () => props.api.theme.current
   const recent = () => entries().slice(-SHOW_LAST)
+  // 与内置 sidebar-footer 同款取值：会话目录优先回退 TUI 目录；vcs.branch 只在会话目录=TUI cwd 时可信
+  const location = createMemo(() => {
+    const session = props.api.state.session.get(props.sessionID)
+    const dir = session?.directory || props.api.state.path.directory
+    const out = abbreviateHome(dir, homedir())
+    const branch = session?.directory === props.api.state.path.directory ? props.api.state.vcs?.branch : undefined
+    const list = out.split("/")
+    return { parent: list.slice(0, -1).join("/"), name: list.at(-1) ?? "", branch }
+  })
 
   return (
     <box flexDirection="column" gap={0}>
@@ -202,6 +223,22 @@ function View(props: { api: TuiPluginApi }) {
           </For>
         </box>
       )}
+      {/* [2026-09-02]-[与通知区间留一行空隙区分两块；分支名用绿色与推荐模型色统一] */}
+      <box flexShrink={0} paddingTop={1} flexDirection="column" gap={0}>
+        <text>
+          <span style={{ fg: theme().textMuted }}>{location().parent}/</span>
+          <span style={{ fg: theme().text }}>{location().name}</span>
+          {location().branch && <span style={{ fg: MODEL_COLOR }}>:{location().branch}</span>}
+        </text>
+        <text fg={theme().textMuted}>
+          <span style={{ fg: theme().success }}>• </span>
+          <b>Open</b>
+          <span style={{ fg: theme().text }}>
+            <b>Code</b>
+          </span>{" "}
+          {props.api.app.version}
+        </text>
+      </box>
     </box>
   )
 }
@@ -209,8 +246,8 @@ function View(props: { api: TuiPluginApi }) {
 const tui: TuiPlugin = async (api) => {
   api.slots.register({
     slots: {
-      sidebar_footer(_ctx, _props) {
-        return <View api={api} />
+      sidebar_footer(_ctx, props) {
+        return <View api={api} sessionID={props.session_id} />
       },
     },
   })
