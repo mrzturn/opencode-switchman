@@ -25,7 +25,7 @@ import {
 } from "../src/lane"
 import { recordFailure, agentDown, isNotFound } from "../src/breaker"
 import { loadRouting, cleanExpired, loadManifest, buildRegistry, paths } from "../src/state"
-import { buildBanner, shortName } from "../src/banner"
+import { buildBanner, shortName, providerStatusEntries } from "../src/banner"
 import type { GateSnapshot, ShellRegEntry, Matrix, MatrixEntry, Routing, Lane } from "../src/types"
 
 // ---- 沙箱装配 ----
@@ -338,6 +338,32 @@ describe("端到端与配额判定", () => {
     expect(lines[2].startsWith("[限制] ")).toBe(true)
     expect(lines[2]).toContain("down: 无")
     expect(lines[3].startsWith("[更新] ")).toBe(true)
+  })
+  test("28b 侧边栏水位条目：GLM 单块 5h/周/MCP 子行、Copilot 积分/刷新子行，进度条与重置时间齐备", () => {
+    const entries = providerStatusEntries({
+      quota: {
+        glm: { status: "ok", fetched_at: Date.now() / 1000, stale: true, five_hour: { used_pct: 62, reset_at: Date.now() / 1000 + 3600 }, weekly: { used_pct: 86, reset_at: Date.now() / 1000 + 86400 }, mcp_monthly: { used_pct: 23, reset_at: Date.now() / 1000 + 30 * 86400 } },
+        copilot: { status: "ok", fetched_at: Date.now() / 1000, reset_date: "2026-10-01", premium: { quota_id: "p", entitlement: 19000, used: 4459, remaining: 14541, percent_remaining: 76.5, unlimited: false, overage_permitted: false, has_quota: true, timestamp_utc: null } },
+        deepseek: null,
+      },
+    })
+    expect(entries.map((e) => e.pool)).toEqual(["glm", "copilot", "deepseek"]) // 一 provider 一块
+    const glm = entries[0]!
+    expect(glm.rows.map((r) => r.label)).toEqual(["5h", "周", "MCP"])
+    expect(glm.rows[0]!.text).toMatch(/█+░* 62%$/)
+    expect(glm.rows[0]!.tail).toMatch(/^→\d{2}:\d{2}$/) // 5h 窗重置在 5h 内 → 只显 HH:mm
+    expect(glm.rows[1]!.tail).toMatch(/^→\d{2}-\d{2} \d{2}:\d{2}$/)
+    expect(glm.rows[2]!.tail).toMatch(/^→\d{2}-\d{2}$/)
+    expect(glm.stale).toBe(true)
+    const cp = entries[1]!
+    expect(cp.rows.map((r) => r.label)).toEqual(["积分", "刷新"])
+    expect(cp.rows[0]!.text).toContain("剩76.5%")
+    expect(cp.rows[0]!.text).toContain("4459/19000")
+    expect(cp.rows[1]!.text).toBe("2026-10-01")
+    expect(entries[2]!.rows[0]!.text).toBe("查询中/暂无数据")
+    // 仅 5h 窗在场 → 单子行不缺块
+    const one = providerStatusEntries({ quota: { glm: { status: "ok", fetched_at: 0, five_hour: { used_pct: 5 } }, copilot: null, deepseek: null } })
+    expect(one[0]!.rows.map((r) => r.label)).toEqual(["5h"])
   })
   test("29 状态文件损坏 fail-open（loadRouting/registry 容错）", () => {
     writeFileSync(join(process.env.SWITCHMAN_STATE!, "routing.json"), "{broken json")

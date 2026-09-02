@@ -19,7 +19,9 @@ import { join, relative, isAbsolute, sep } from "node:path"
 type StatusLogEntry = { ts: string; text: string }
 type RouteSnapshotEntry = { lane: string; best: string | null; degraded: boolean }
 type RouteSnapshot = { ts: string; entries: RouteSnapshotEntry[] }
-type QuotaBriefEntry = { pool: string; label: string; text: string; observeOnly: boolean; peakActive: boolean; usedPct: number | null }
+// [2026-09-02]-[v2：一 provider 一条目块＋rows 子行（进度条/重置时间），与 banner.ts providerStatusEntries 同构]
+type QuotaBriefRow = { label: string; text: string; usedPct: number | null; tail?: string }
+type QuotaBriefEntry = { pool: string; label: string; rows: QuotaBriefRow[]; observeOnly: boolean; peakActive: boolean; stale: boolean }
 type QuotaBrief = { ts: string; entries: QuotaBriefEntry[] }
 
 function statusLogPath(): string {
@@ -94,6 +96,16 @@ function waterColor(pct: number | null): string | null {
   const lerp = (a: number, b: number) => Math.round(a + (b - a) * t)
   const hex = (n: number) => n.toString(16).padStart(2, "0")
   return `#${hex(lerp(lo[1][0], hi[1][0]))}${hex(lerp(lo[1][1], hi[1][1]))}${hex(lerp(lo[1][2], hi[1][2]))}`
+}
+
+// [2026-09-02]-[子行标签显宽对齐：CJK 按 2 列计（padEnd 按码元数会把「周」与「5h」错开一列）]
+function dispWidth(s: string): number {
+  let w = 0
+  for (const ch of s) w += (ch.codePointAt(0) ?? 0) > 0xff ? 2 : 1
+  return w
+}
+function padEndW(s: string, width: number): string {
+  return s + " ".repeat(Math.max(0, width - dispWidth(s)))
 }
 
 // [2026-09-02]-[彩虹走马灯：HSV→hex，色相随时间偏移滚动，饱和度/明度固定出高识别度亮色]
@@ -215,17 +227,30 @@ function ViewInner(props: { api: TuiPluginApi; sessionID: string }) {
 
   return (
     <box flexDirection="column" gap={0}>
+      {/* [2026-09-02]-[v2 块状布局：头部行=✓+provider 名+高峰/滞后/仅观察标注；子行缩进，进度条+百分比
+          按 waterColor 绿→红渐变一眼读状态，重置/刷新时间弱化色尾随] */}
       {quotaBrief().length > 0 && (
         <box flexDirection="column" gap={0}>
           <For each={quotaBrief()}>
             {(q) => (
-              <text fg={theme().textMuted}>
-                {!q.observeOnly && <span style={{ fg: MODEL_COLOR }}>✓ </span>}
-                <span style={{ fg: theme().textMuted }}>{q.label.padEnd(8)} </span>
-                <span style={{ fg: waterColor(q.usedPct) ?? theme().textMuted }}>{q.text}</span>
-                {q.peakActive && <span style={{ fg: theme().warning }}> ·高峰</span>}
-                {q.observeOnly && <span style={{ fg: theme().textMuted }}> ·仅观察</span>}
-              </text>
+              <box flexDirection="column" gap={0}>
+                <text>
+                  {!q.observeOnly && <span style={{ fg: MODEL_COLOR }}>✓ </span>}
+                  <b><span style={{ fg: theme().text }}>{q.label}</span></b>
+                  {q.peakActive && <span style={{ fg: theme().warning }}> ·高峰</span>}
+                  {q.stale && <span style={{ fg: theme().warning }}> ·滞后</span>}
+                  {q.observeOnly && <span style={{ fg: theme().textMuted }}> ·仅观察</span>}
+                </text>
+                <For each={q.rows}>
+                  {(r) => (
+                    <text>
+                      <span style={{ fg: theme().textMuted }}>{r.label ? `  ${padEndW(r.label, 4)}` : "  "}</span>
+                      <span style={{ fg: waterColor(r.usedPct) ?? theme().textMuted }}>{r.text}</span>
+                      {r.tail && <span style={{ fg: theme().textMuted }}>{r.tail}</span>}
+                    </text>
+                  )}
+                </For>
+              </box>
             )}
           </For>
         </box>

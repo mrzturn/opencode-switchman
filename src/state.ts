@@ -71,8 +71,10 @@ export function writeRouteSnapshot(entries: RouteSnapshotEntry[]): void {
 }
 
 // [2026-09-01]-[provider 水位/峰值快照：整体覆盖写入，供侧边栏「水位」面板渲染；结构与 banner.ts
-//  providerStatusEntries 同源（observe=false 的 provider 已在调用方过滤，不出现在此文件里）]
-export type QuotaBriefEntry = { pool: string; label: string; text: string; observeOnly: boolean; peakActive: boolean; usedPct: number | null }
+//  providerStatusEntries 同源（observe=false 的 provider 已在调用方过滤，不出现在此文件里）。
+//  [2026-09-02]-[v2：一 provider 一条目块＋rows 子行（进度条/重置时间），替代单行 text]]
+export type QuotaBriefRow = { label: string; text: string; usedPct: number | null; tail?: string }
+export type QuotaBriefEntry = { pool: string; label: string; rows: QuotaBriefRow[]; observeOnly: boolean; peakActive: boolean; stale: boolean }
 export function writeQuotaBrief(entries: QuotaBriefEntry[]): void {
   try {
     writeJsonAtomic(paths().quotaBrief, { ts: nowIso(), entries })

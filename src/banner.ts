@@ -45,16 +45,18 @@ function routeLine(lanes: Record<string, LaneResult> | null): string {
   return `[路由] ${segs.join(" | ")}`
 }
 
+/** GLM 重置时间（秒级 epoch → MM-DD HH:mm；缺失=稍后），横幅与侧边栏同款格式 */
+function fmtResetMdHm(reset: number | null | undefined): string {
+  const p = resetParts(reset)
+  return p ? `${p.md} ${p.hm}` : "稍后"
+}
+
 function glmBrief(data: GlmQuota | null): string | null {
   if (!data || data.status !== "ok") return null
   const parts = ["GLM"]
   if (data.five_hour && typeof data.five_hour.used_pct === "number") parts.push(`5h窗 ${data.five_hour.used_pct}%`)
   if (data.weekly && typeof data.weekly.used_pct === "number") {
-    const reset = data.weekly.reset_at
-    const hint = typeof reset === "number"
-      ? (() => { const d = new Date(reset * 1000); return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}` })()
-      : "稍后"
-    parts.push(`周 ${data.weekly.used_pct}%(${hint}刷新)`)
+    parts.push(`周 ${data.weekly.used_pct}%(${fmtResetMdHm(data.weekly.reset_at)}刷新)`)
   }
   if (data.stale) parts.push("数据滞后")
   return parts.length > 1 ? parts.join(" ") : null
@@ -108,19 +110,30 @@ function dsBrief(data: DeepseekQuota | null, lowWarnCny?: number): string | null
   return null // 按量正常不打扰
 }
 
-// [2026-09-01]-[侧边栏「水位/峰值」面板：与 [水位] 横幅同源但常态可见（非仅告警态），
-//  三家 provider 各自独立一行；observe=false 直接不产出该 provider 条目（由调用方落盘供 TUI 轮询）]
+// [2026-09-02]-[侧边栏「水位/峰值」面板数据结构 v2：一个 provider 一个条目块，明细拆 rows 子行
+//  （GLM=5h/周/MCP，Copilot=积分/刷新，DeepSeek=余额）——头部行渲染 label+状态标注，子行缩进带进度条，
+//  修复此前 GLM 拆两块、标注逐行重复、窄边栏换行错乱的显示问题；observe=false 不产出该条目]
+export interface ProviderStatusRow {
+  /** 行首短标签（5h/周/MCP/积分/刷新/余额；空=占位整行文本） */
+  label: string
+  /** 主体文本（进度条+百分比/数值），TUI 按 usedPct 渐变着色 */
+  text: string
+  /** 0-100 用于绿→红渐变；null=中性色 */
+  usedPct: number | null
+  /** 行尾弱化补充（重置/刷新时间、预警） */
+  tail?: string
+}
+
 export interface ProviderStatusEntry {
   pool: "glm" | "copilot" | "deepseek"
   label: string
-  /** 配额/余额摘要；查询关闭或数据未就绪时给出占位文案，不留空 */
-  text: string
+  rows: ProviderStatusRow[]
   /** 仅观察（routing=false，不参与派发排序） */
   observeOnly: boolean
   /** 该 provider 计费高峰是否活跃 */
   peakActive: boolean
-  /** [2026-09-02]-[侧边栏绿→红渐变色：0=充裕(绿) 100=耗尽(红)；数据未就绪/不可算=null（沿用中性色）] */
-  usedPct: number | null
+  /** 配额快照滞后（缓存超 TTL 进入 stale_ok 宽限），头部行一次性标注 */
+  stale: boolean
 }
 
 const POOL_LABEL: Record<"glm" | "copilot" | "deepseek", string> = { glm: "GLM", copilot: "Copilot", deepseek: "DeepSeek" }
@@ -128,46 +141,71 @@ const POOL_PROVIDER_ID: Record<"glm" | "copilot" | "deepseek", string> = {
   glm: "zhipuai-coding-plan", copilot: "github-copilot", deepseek: "deepseek",
 }
 
-function glmFull(data: GlmQuota | null): { text: string; usedPct: number | null } {
-  if (!data || data.status !== "ok") return { text: "查询中/暂无数据", usedPct: null }
-  const brief = glmBrief(data)
-  if (!brief) return { text: "无配额数据", usedPct: null }
-  // 取 5h 窗与周窗口两者较高值代表当前压力（任一逼近上限都该变色告警）
-  const pcts = [data.five_hour?.used_pct, data.weekly?.used_pct].filter((v): v is number => typeof v === "number")
-  return { text: brief, usedPct: pcts.length > 0 ? Math.max(...pcts) : null }
+/** 8 格进度条（█ 已用 + ░ 余量），pct=null 返回空串（该行无数值概念时不画条） */
+function bar8(pct: number | null | undefined): string {
+  if (typeof pct !== "number" || Number.isNaN(pct)) return ""
+  const p = Math.max(0, Math.min(100, pct))
+  const filled = Math.round((p / 100) * 8)
+  return "█".repeat(filled) + "░".repeat(8 - filled)
 }
 
-function copilotFull(data: CopilotQuota | null): { text: string; usedPct: number | null } {
-  if (!data || data.status !== "ok") return { text: "查询中/暂无数据", usedPct: null }
+function resetParts(reset: number | null | undefined): { md: string; hm: string } | null {
+  if (typeof reset !== "number") return null
+  const d = new Date(reset * 1000)
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return { md: `${pad(d.getMonth() + 1)}-${pad(d.getDate())}`, hm: `${pad(d.getHours())}:${pad(d.getMinutes())}` }
+}
+
+// ---- 侧边栏 rows 产出（[水位] 横幅 glmBrief/copilotBrief/dsBrief 紧凑单行口径不变）----
+
+const NO_DATA_ROW: ProviderStatusRow[] = [{ label: "", text: "查询中/暂无数据", usedPct: null }]
+
+function glmRows(data: GlmQuota | null): ProviderStatusRow[] {
+  if (!data || data.status !== "ok") return NO_DATA_ROW
+  const rows: ProviderStatusRow[] = []
+  const push = (label: string, pct: number, reset: number | null | undefined, mode: "hm" | "mdhm" | "md") => {
+    const parts = resetParts(reset)
+    const tail = !parts ? "→稍后" : mode === "hm" ? `→${parts.hm}` : mode === "md" ? `→${parts.md}` : `→${parts.md} ${parts.hm}`
+    rows.push({ label, text: `${bar8(pct)} ${pct}%`, usedPct: pct, tail })
+  }
+  // 5h 窗重置必在 5 小时内 → 只显 HH:mm；周窗跨天 → MM-DD HH:mm；MCP 月度 → MM-DD
+  if (typeof data.five_hour?.used_pct === "number") push("5h", data.five_hour.used_pct, data.five_hour.reset_at, "hm")
+  if (typeof data.weekly?.used_pct === "number") push("周", data.weekly.used_pct, data.weekly.reset_at, "mdhm")
+  const mcp = data.mcp_monthly
+  if (mcp && typeof mcp.used_pct === "number") push("MCP", mcp.used_pct, mcp.reset_at, "md")
+  if (rows.length === 0) return [{ label: "", text: "无配额数据", usedPct: null }]
+  return rows
+}
+
+function copilotRows(data: CopilotQuota | null): ProviderStatusRow[] {
+  if (!data || data.status !== "ok") return NO_DATA_ROW
+  const refresh: ProviderStatusRow = { label: "刷新", text: data.reset_date ?? "?", usedPct: null }
+  if (data.gateway_exhausted) return [{ label: "积分", text: "月度池已耗尽", usedPct: 100 }, refresh]
   const p = data.premium
-  if (data.gateway_exhausted) return { text: `月度池已耗尽(${data.reset_date ?? "?"}恢复)`, usedPct: 100 }
-  if (!p) return { text: "无配额数据", usedPct: null }
-  const usedTotal = typeof p.used === "number" && typeof p.entitlement === "number"
-    ? ` 已用${p.used}/${p.entitlement}` : ""
+  if (!p) return [{ label: "", text: "无配额数据", usedPct: null }]
   if (p.unlimited) {
     const used = typeof p.used === "number" ? ` 已用${p.used}` : ""
-    return { text: `积分不限量${used}(${data.reset_date ?? "?"}刷新)`, usedPct: null }
+    return [{ label: "积分", text: `不限量${used}`, usedPct: null }, refresh]
   }
   const pct = p.percent_remaining
   const usedPct = typeof pct === "number" ? Math.max(0, Math.min(100, 100 - pct)) : null
-  let body = `积分剩${pct ?? "?"}%${usedTotal}(${data.reset_date ?? "?"}刷新)`
+  const quotaTxt = typeof p.used === "number" && typeof p.entitlement === "number" ? ` ${p.used}/${p.entitlement}` : ""
   if (typeof pct === "number" && pct <= 0 && p.overage_permitted) {
-    body = `积分已耗尽·超额计费中${usedTotal}(${data.reset_date ?? "?"}刷新)`
+    return [{ label: "积分", text: `已耗尽·超额计费中${quotaTxt}`, usedPct: 100 }, refresh]
   }
-  if (data.stale) body += "·数据滞后"
-  return { text: body, usedPct }
+  const pctTxt = typeof pct === "number" ? (Number.isInteger(pct) ? pct : pct.toFixed(1)) : "?"
+  return [{ label: "积分", text: `${bar8(usedPct)} 剩${pctTxt}%${quotaTxt}`, usedPct }, refresh]
 }
 
-function dsFull(data: DeepseekQuota | null, lowWarnCny?: number): { text: string; usedPct: number | null } {
-  if (!data || data.status !== "ok") return { text: "查询中/暂无数据", usedPct: null }
-  if (data.exhausted) return { text: "余额已耗尽", usedPct: 100 }
+function dsRows(data: DeepseekQuota | null, lowWarnCny?: number): ProviderStatusRow[] {
+  if (!data || data.status !== "ok") return NO_DATA_ROW
+  if (data.exhausted) return [{ label: "余额", text: "已耗尽", usedPct: 100 }]
   const cny = dsBalanceCny(data)
-  if (cny === null) return { text: "余额未知（按量计费）", usedPct: null }
+  if (cny === null) return [{ label: "余额", text: "未知（按量计费）", usedPct: null }]
   const thr = typeof lowWarnCny === "number" && lowWarnCny >= 0 ? lowWarnCny : 10
-  const warn = cny < thr ? `（<¥${thr} 预警）` : ""
   // 按量计费无「总额」概念：以预警阈值 3 倍作为「余量充裕」锚点做相对渐变，仅用于着色不作为精确指标
   const usedPct = Math.max(0, Math.min(100, 100 - (cny / (thr * 3)) * 100))
-  return { text: `余额 ¥${cny.toFixed(2)}${warn}${data.stale ? "·数据滞后" : ""}`, usedPct }
+  return [{ label: "余额", text: `${bar8(usedPct)} ¥${cny.toFixed(2)}`, usedPct, tail: cny < thr ? ` <¥${thr} 预警` : undefined }]
 }
 
 export interface ProviderStatusInput {
@@ -182,17 +220,26 @@ export function providerStatusEntries(input: ProviderStatusInput): ProviderStatu
   const out: ProviderStatusEntry[] = []
   for (const pool of ["glm", "copilot", "deepseek"] as const) {
     const policy = input.providerPolicy?.[pool]
-    if (policy?.observe === false) continue // observe:false → 不显示该行
-    const { text, usedPct } = pool === "glm" ? glmFull(input.quota.glm)
-      : pool === "copilot" ? copilotFull(input.quota.copilot)
-      : dsFull(input.quota.deepseek ?? null, input.dsLowWarnCny)
+    if (policy?.observe === false) continue // observe:false → 不显示该块
+    let rows: ProviderStatusRow[]
+    let stale = false
+    if (pool === "glm") {
+      rows = glmRows(input.quota.glm)
+      stale = input.quota.glm?.stale === true
+    } else if (pool === "copilot") {
+      rows = copilotRows(input.quota.copilot)
+      stale = input.quota.copilot?.stale === true
+    } else {
+      rows = dsRows(input.quota.deepseek ?? null, input.dsLowWarnCny)
+      stale = input.quota.deepseek?.stale === true
+    }
     out.push({
       pool,
       label: POOL_LABEL[pool],
-      text,
+      rows,
       observeOnly: policy ? policy.routing === false : false,
       peakActive: input.peakOf ? Boolean(input.peakOf(POOL_PROVIDER_ID[pool])) : false,
-      usedPct,
+      stale,
     })
   }
   return out
