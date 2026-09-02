@@ -4,7 +4,7 @@
 
 This project follows [Semantic Versioning](https://semver.org/). Release notes describe user-visible behavior; implementation details remain in the technical specification and commit history.
 
-## [Unreleased]
+## [0.2.4] - 2026-09-02
 
 ### Fixed
 
@@ -84,7 +84,7 @@ The release documentation uses these repository assets:
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。此处记录面向使用者的行为变化；实现细节见技术方案与提交历史。
 
-## [Unreleased]
+## [0.2.4] - 2026-09-02
 
 ### 修复
 
