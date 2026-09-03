@@ -27,6 +27,8 @@ export interface BannerInput {
   doctorSummary?: string | null
   /** [2026-08-29]-[动态矩阵：[限制] 行追加 模式/watch/configStatus、restartRequired、models.dev 降级标注；缺省=legacy 原样] */
   matrixInfo?: { mode: string; configStatus: string; watch: boolean; restartRequired?: string[]; invalidConfigured?: string[]; degradedModels?: number; retiredModels?: number } | null
+  /** [2026-09-03]-[用户手动覆盖层标注（capability-rank.json/pool-config.json 生效条数；0=未配置不显示）] */
+  overrides?: { rankModels: number; poolLanes: number } | null
 }
 
 function routeLine(lanes: Record<string, LaneResult> | null): string {
@@ -264,7 +266,7 @@ function levelLine(input: BannerInput): string {
   return `[水位] ${segs.join(" | ")}`
 }
 
-function limitLine(down: Set<string> | string[] | Map<string, string>, unknownCount?: number, matrixInfo?: BannerInput["matrixInfo"], doctorSummary?: string | null): string {
+function limitLine(down: Set<string> | string[] | Map<string, string>, unknownCount?: number, matrixInfo?: BannerInput["matrixInfo"], doctorSummary?: string | null, overrides?: BannerInput["overrides"]): string {
   // [2026-09-01]-[down 来源标注：Map 值＝来源（熔断/实调隔离·剩余时长），排查时可直接区分探针结论与内存隔离]
   const pairs: [string, string][] = down instanceof Map
     ? [...down.entries()]
@@ -294,6 +296,12 @@ function limitLine(down: Set<string> | string[] | Map<string, string>, unknownCo
     }
   }
   if (doctorSummary) line += ` | ${doctorSummary}`
+  if (overrides && (overrides.rankModels > 0 || overrides.poolLanes > 0)) {
+    const parts: string[] = []
+    if (overrides.rankModels > 0) parts.push(`手动能力排名 ${overrides.rankModels} 模型`)
+    if (overrides.poolLanes > 0) parts.push(`任务池选配 ${overrides.poolLanes} 池`)
+    line += ` | ${parts.join("、")}生效（/modelRank /poolConfig 可调）`
+  }
   return line
 }
 
@@ -302,7 +310,7 @@ export function buildBanner(input: BannerInput): string[] {
   const lines = [
     routeLine(input.lanes),
     levelLine(input),
-    limitLine(input.down, input.states ? countUnknown(input) : undefined, input.matrixInfo ?? undefined, input.doctorSummary),
+    limitLine(input.down, input.states ? countUnknown(input) : undefined, input.matrixInfo ?? undefined, input.doctorSummary, input.overrides ?? undefined),
   ]
   if (input.update) lines.push(`[更新] ${input.update}`)
   return lines

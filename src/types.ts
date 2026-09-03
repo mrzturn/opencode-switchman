@@ -236,6 +236,10 @@ export interface GateSnapshot {
   water?: import("./scoring").WaterFactor
   glmPeak?: boolean | null
   states?: Record<string, { state?: PoolStateKind } & Record<string, unknown>> | null
+  /** [2026-09-03]-[任务池选配（pool-config.json 手动配置）：lane→参与该任务池的 modelId 归一化集合，
+   *  清单存在且非空即压过系统默认候选集（同模型可重复进驻多个 lane）；缺/空=fail-open 默认全量。
+   *  computeLane 与 checkShell 共用同一装配] */
+  poolConfig?: Partial<Record<string, ReadonlySet<string>>> | null
 }
 
 // 插件 options（["opencode-switchman", {...}] 元组形式）

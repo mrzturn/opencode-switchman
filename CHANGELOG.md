@@ -4,6 +4,17 @@
 
 This project follows [Semantic Versioning](https://semver.org/). Release notes describe user-visible behavior; implementation details remain in the technical specification and commit history.
 
+## [0.2.5] - 2026-09-03
+
+### Added
+
+- **Interactive manual overrides** — two new commands let user configuration beat system defaults, persisted to editable state files with mtime hot-reload:
+
+  - `/poolConfig` (per-lane model assignment): pick a task pool (economy / mechanical / main / hard / vision / review), then toggle models in a native TUI select dialog (select to include, select again to exclude; capability tier shown per model). Assignment makes each pool's candidates deliberately different — a pool's manual list **overrides the system default candidate set**, and models inside it are still recommended by capability level; **the same model may join multiple pools**; pools without a configured (or with an empty) list keep the system default; "clear config" restores the system default for that pool. Outside the TUI the same command drives a conversational flow backed by the bundled `switchman-config.js` CLI (`pool list|add|remove|set|clear`, pool name = one of the six task pools). Config: `~/.config/opencode/opencode-switchman/pool-config.json` (key = task pool name, value = participating modelId array).
+  - `/modelRank` (capability ranking): reorder models in the same dialog (pin to top / move up / move down / remove). A manual rank entry **takes priority over the base capability score** (realtime index → bundled snapshot → curated table all yield): matched models — including their prefix variants — get a rank-position score and S/A/B/C tier (rankings with ≤4 entries map positions to S/A/B/C in order; ≥5 entries use quantile buckets with the same semantics as the OpenRouter rank source — top 20% S, next 20% A, next 20% B, rest C; the linear rank position breaks ties within a tier). Unranked models are unaffected. The override feeds every decision surface: lane chains, effort affinity, capability-level gates and deny hints. Config: `~/.config/opencode/opencode-switchman/capability-rank.json` (`models` array order = strongest first).
+  - The banner `[限制]` line reports active overrides ("手动能力排名 N 模型 / 任务池选配 M 池"), and `computeLane`/gates gained a `pool-config` drop reason plus a new gate 5.5 deny so shells outside their lane's assignment list never dispatch and never appear in fallback hints.
+  - **Instant effect**: edits to either config file — hand-edited, via the TUI dialogs, or via the bundled CLI — are picked up by a directory watcher (5s mtime poll fallback) that immediately rebuilds the banner and sidebar panels; no need to wait for the next chat message.
+
 ## [0.2.4] - 2026-09-02
 
 ### Fixed

@@ -1,6 +1,6 @@
 {
   "name": "opencode-switchman",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "OpenCode 编排插件：六档壳矩阵调度（ROUTE_META 硬校验 / 熔断自愈 / 探针 / 三池配额感知 / 成本感知 tiebreaker）",
   "license": "MIT",
   "repository": {
@@ -38,7 +38,7 @@
     "typecheck": "tsc --noEmit",
     "gen:shells": "bun scripts/gen-shells.ts",
     "gen:capability": "bun scripts/gen-capability-default.ts",
-    "build": "bun run gen:shells && bun scripts/gen-version.ts && bun build src/index.ts --target=node --format=esm --outfile=dist/opencode-switchman.js && bun build src/doctor-cli.ts --target=node --format=esm --outfile=dist/switchman-doctor.js && bun scripts/build-tui.ts && cp scripts/update-cli.mjs dist/update-cli.js",
+    "build": "bun run gen:shells && bun scripts/gen-version.ts && bun build src/index.ts --target=node --format=esm --outfile=dist/opencode-switchman.js && bun build src/doctor-cli.ts --target=node --format=esm --outfile=dist/switchman-doctor.js && bun build src/config-cli.ts --target=node --format=esm --outfile=dist/switchman-config.js && bun scripts/build-tui.ts && cp scripts/update-cli.mjs dist/update-cli.js",
     "prepublishOnly": "bun install --frozen-lockfile && bun run build && bun test",
     "pack": "bun run build && npm pack",
     "mode:local": "bun run build && bun scripts/plugin-mode.ts local",

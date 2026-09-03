@@ -25,6 +25,11 @@ export const paths = () => {
     costs: join(dir, "costs.json"),
     // [2026-08-31]-[动态能力分级缓存（source/version/fetched_at + 模型指数表；TTL 24h last-good）]
     capability: join(dir, "capability.json"),
+    // [2026-09-03]-[用户手动覆盖层（可手改、mtime 热加载）：
+    //  capability-rank.json=手动能力排名（顺序=能力降序，覆盖基础能力分）；
+    //  pool-config.json=任务池选配（lane→参与该任务池的 modelId 清单，同模型可跨池重复；非空才过滤）]
+    capabilityRank: join(dir, "capability-rank.json"),
+    poolConfig: join(dir, "pool-config.json"),
     // [2026-08-29]-[动态矩阵 v1.3 新增状态文件]
     modelCatalog: join(dir, "model-catalog.json"),
     // [2026-09-01]-[对齐 opencode 内置 github-copilot/models.ts：Copilot /models 真实 capabilities.supports

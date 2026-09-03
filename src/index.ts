@@ -4,7 +4,7 @@
 //         tool.execute.before(六闸 deny) / event(失败记账→熔断) / tool(handover 交接工具)
 // [fail-open 铁律：任何钩子异常只写 stderr，绝不阻塞主流程；核心逻辑全部在纯函数层]
 import type { Plugin } from "@opencode-ai/plugin"
-import { writeFileSync } from "node:fs"
+import { watch, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { AGENTS_MD } from "./assets/agents-md"
@@ -31,7 +31,9 @@ import { baseScoreDynamic, refreshCapability, capabilityStale } from "./capabili
 import { refreshMatrixIfStale, refreshActiveMatrixIfStale, probeKeys } from "./probe"
 import { injectShells, injectShellDefs, selectInjectableDefs } from "./shells"
 import { buildBanner, shortName, providerStatusEntries } from "./banner"
-import { refreshSelfUpdate, updateBannerText, ensureUpdateCommands, detectLoadMode } from "./selfupdate"
+import { refreshSelfUpdate, updateBannerText, ensureUpdateCommands, detectLoadMode, pluginCliPath } from "./selfupdate"
+import { loadPoolConfig, overrideSummary } from "./user-overrides"
+import { poolConfigCommandMd, modelRankCommandMd } from "./commands-md"
 import { billingOfProvider, loadUserConfig, resolveEffectiveOptions, routingPeakActive, routePolicy } from "./config"
 import { poolForProviderId } from "./provider-config"
 import { runDoctor } from "./doctor"
@@ -129,6 +131,50 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       clearBannerCache()
       bannerLines()
     } catch { /* fail-open */ }
+  }
+
+  // [2026-09-03]-[手动改能力排名/任务池选配即时生效：目录级 watch 两份覆盖文件（writeJsonAtomic=tmp+rename
+  //  换 inode，必须监听目录而非文件本身），5s mtime 轮询兜底（部分宿主 fs.watch 不投递，matrix-manager
+  //  同款策略）；触发即强制重建横幅+侧栏快照，TUI 对话框/CLI/手改文件三条路径统一即时可见]-[配置改动即时可见]
+  const OVERRIDE_WATCH_FILES = new Set(["capability-rank.json", "pool-config.json"])
+  let overrideWatchStarted = false
+  let overrideWatchTimer: ReturnType<typeof setTimeout> | null = null
+  let overrideWatchMtimeSig = ""
+  function onOverrideConfigChanged(): void {
+    if (overrideWatchTimer) clearTimeout(overrideWatchTimer)
+    overrideWatchTimer = setTimeout(() => {
+      overrideWatchTimer = null
+      try { appendStatusLog("能力排名/任务池选配已变更：横幅与侧栏即时刷新") } catch { /* fail-open */ }
+      refreshSidebarState()
+    }, 200)
+    if (typeof overrideWatchTimer === "object" && overrideWatchTimer !== null && "unref" in overrideWatchTimer) (overrideWatchTimer as any).unref()
+  }
+
+  function startOverrideConfigWatcher(): void {
+    if (overrideWatchStarted) return
+    overrideWatchStarted = true
+    let dir = ""
+    try {
+      dir = stateDir()
+      const w = watch(dir, { recursive: false }, (_event, filename) => {
+        if (filename && OVERRIDE_WATCH_FILES.has(String(filename))) onOverrideConfigChanged()
+      })
+      w.on("error", (exc) => { try { appendStatusLog(`fs.watch(${dir}) 覆盖配置监听异常（mtime 轮询兜底）: ${exc}`) } catch { /* fail-open */ } })
+    } catch { /* fail-open：目录缺失/启动失败由轮询兜底 */ }
+    // mtime 轮询兜底：首跑仅记基线不触发
+    const poll = () => {
+      try {
+        let sig = ""
+        for (const name of OVERRIDE_WATCH_FILES) {
+          try { sig += `${statSync(join(dir, name)).mtimeMs};` } catch { sig += "-;" }
+        }
+        if (overrideWatchMtimeSig && sig !== overrideWatchMtimeSig) onOverrideConfigChanged()
+        overrideWatchMtimeSig = sig
+      } catch { /* fail-open */ }
+    }
+    poll()
+    const pollTimer = setInterval(poll, 5000)
+    if (typeof pollTimer === "object" && pollTimer !== null && "unref" in pollTimer) (pollTimer as any).unref()
   }
 
   function routingWithRealFailures(routing: ReturnType<typeof loadContext>["routing"]) {
@@ -433,6 +479,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
               billingBoostOf, peakOf: peakOfProvider,
               // [2026-09-02]-[favorites 优先：运行期同 tier 排前与 base 链同源]
               preferredModels: preferredModelIds(),
+              // [2026-09-03]-[任务池选配：横幅推荐与各 lane 选配清单一致]
+              poolConfig: loadPoolConfig(),
            })
          } catch { /* 单档失败不影响其余档 */ }
        }
@@ -461,8 +509,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
          advice: routingAdvice(states, policy),
          providerPolicy: policy as any,
          doctorSummary,
-        matrixInfo,
-        update: updateBannerText(),
+         matrixInfo,
+         update: updateBannerText(),
+         overrides: overrideSummary(),
       })
       // [水位] 行需要原始配额数据 → 二次组装（banner 纯函数吃快照；这里补真实 quota）
       const lines2 = buildBanner({
@@ -477,6 +526,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         dsLowWarnCny: options.quota!.deepseek!.lowBalanceWarnCny,
         matrixInfo,
         update: updateBannerText(),
+        overrides: overrideSummary(),
       })
       // [2026-08-29]-[评分引擎决策日志：每次横幅重建（15s 缓存失效）追加各 lane 评分明细；fail-open 不阻塞]
       try {
@@ -542,6 +592,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         water: extras?.water,
         glmPeak: extras?.glmPeak,
         states: extras?.states as any,
+        // [2026-09-03]-[deny 附言候选不推荐未入选任务池选配清单的模型（与闸5.5/横幅同源）]
+        poolConfig: loadPoolConfig(),
       } as any, agent)
       return cand ? `请改派 ${cand}` : "降级链已尽：向用户声明原因并给 2 个可选项"
     } catch {
@@ -570,7 +622,15 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         // [2026-08-29]-[一键升级命令资产：prod 注册 /switchman-update，local 删除残留——legacy/动态两路都生效]-
         ensureUpdateCommands(detectLoadMode())
         // [2026-08-31]-[/handover 交接命令：cfg.command 运行期注入，覆盖同名用户自定义命令时以用户为准]-
-        cfg.command = { handover: { template: HANDOVER_COMMAND_TEMPLATE, description: HANDOVER_COMMAND_DESCRIPTION }, ...cfg.command }
+        // [2026-09-03]-[/poolConfig //modelRank：会话式配置入口（TUI 内另有同名单交互弹窗，两者互补）]-
+        cfg.command = {
+          handover: { template: HANDOVER_COMMAND_TEMPLATE, description: HANDOVER_COMMAND_DESCRIPTION },
+          poolConfig: { template: poolConfigCommandMd(pluginCliPath("switchman-config.js")), description: "交互式配置各任务池参与模型（economy/mechanical/main/hard/vision/review）" },
+          modelRank: { template: modelRankCommandMd(pluginCliPath("switchman-config.js")), description: "交互式配置模型能力排名（手动排名优先于基础能力分）" },
+          ...cfg.command,
+        }
+        // [2026-09-03]-[能力排名/任务池选配 watch：手动改配置即时刷新横幅与侧栏，不等下一条聊天消息；legacy/动态两路都生效]-[配置改动即时可见]
+        startOverrideConfigWatcher()
         if (!dynamic) {
           // legacy：静态 shells.json 路径（行为与 v1.2 逐字节一致）
           const { registry } = currentContext()
@@ -784,7 +844,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           appendStatusLog(noteUnknownAgent(agent))
           return
         }
-        const r = checkShell(agent, shell, output.args?.prompt, {
+         const r = checkShell(agent, shell, output.args?.prompt, {
           registry,
           matrix: ctx.matrix?.combos ?? null,
           // [2026-08-29]-[功能1 仅动态矩阵：legacy 静态路径逐字节不变（tester 回归发现漏_gate）]-
@@ -802,6 +862,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           water: gateExtras.water,
           glmPeak: gateExtras.glmPeak,
           states: gateExtras.states as any,
+          // [2026-09-03]-[闸5.5 任务池选配：手动配置优先于系统默认（与横幅/hint 同源）]
+          poolConfig: loadPoolConfig(),
         })
         if (r.note) appendStatusLog(r.note)
         if (r.deny) {

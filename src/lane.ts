@@ -13,6 +13,7 @@ import type { WaterFactor } from "./scoring"
 import { evaluatePeakSchedules } from "./config"
 import { defaultProviderConfig } from "./provider-config"
 import { appendStatusLog } from "./state"
+import { normalizeModelKey } from "./capability"
 
 // ---- 计费窗口（可配置）----
 export interface BillingWindowCfg {
@@ -245,6 +246,10 @@ export interface ComputeLaneParams {
   peakOf?: (provider: string) => boolean
   /** [2026-09-02]-[favorites 优先：收藏模型（modelId 口径）运行期同 tier 排前（透传 rankCandidates）] */
   preferredModels?: ReadonlySet<string>
+  /** [2026-09-03]-[任务池选配（pool-config.json 手动配置，优先于系统默认候选集）：
+   *  lane→参与该任务池的 modelId 归一化集合（同模型可重复进驻多个 lane）；清单存在且非空即生效，
+   *  缺键/空=fail-open 默认全量；配置后未入选模型 reason=pool-config] */
+  poolConfig?: Partial<Record<string, ReadonlySet<string>>> | null
 }
 
 /** agentDown 引用（避免循环依赖放此处实现：纯读传入 routing） */
@@ -293,6 +298,12 @@ export function computeLane(lane: Lane, base: string[], p: ComputeLaneParams): L
       else if ((p.modality === "image" || p.modality === "vision") && !shell.vision) reason = "modality"
       else if (p.capability === "rw" && shell.capability === "ro") reason = "capability"
       else if (exhausted[shell.pool as Pool] && p.routePolicy?.[shell.pool as Pool]?.routing !== false) reason = "pool-exhausted"
+      else {
+        // [2026-09-03]-[任务池选配过滤：用户手动配置的 lane 候选清单压过系统默认（各任务池候选体现差异化，
+        //  跨 provider 池模型可重复进驻）；归一化精确匹配，清单存在且非空才过滤，缺键=fail-open 默认全量]
+        const allow = p.poolConfig?.[lane]
+        if (allow && allow.size > 0 && !allow.has(normalizeModelKey(shell.modelId))) reason = "pool-config"
+      }
     }
     if (reason) {
       dropped.push({ shell: name, reason })

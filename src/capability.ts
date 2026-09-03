@@ -11,6 +11,7 @@
 import { CAPABILITY_TTL, paths, readJson, writeJsonAtomic, appendStatusLog } from "./state"
 import { baseScore, TIER_SCORE, type Tier } from "./model-ranks"
 import bundledDefaultJson from "./capability-default.json"
+import { loadCapabilityRank } from "./user-overrides"
 import type { CapabilityOptions } from "./types"
 
 export type CapabilitySourceName = "artificial-analysis" | "openrouter"
@@ -37,7 +38,11 @@ export interface CapabilityIndex {
   counts?: { models: number }
 }
 
-export type BaseSourceKind = "api" | "bundled" | "exact" | "prefix" | "family" | "global"
+// [2026-09-03]-[手动能力排名覆盖层：capability-rank.json（用户配置，顺序=能力降序）压过实时
+//  api/内置快照——命中即返回 manual 结果，未命中走原三级回退链；分数=线性序位百分位（首名 100
+//  线性降至末名 0，与 OpenRouter rank 序位同语义），阈值 quantile（p80/p60/p40，同 refreshCapability
+//  rank 口径：top20% S / 次20% A / 次20% B / 其余 C）]
+export type BaseSourceKind = "api" | "bundled" | "exact" | "prefix" | "family" | "global" | "manual"
 
 export interface DynamicBaseResult {
   score: number
@@ -384,14 +389,78 @@ function apiMatch(idx: CapabilityIndex, normKey: string): { entry: CapabilityEnt
 }
 
 /**
- * 动态 base 三级回退链：实时 api（capability.json）→ 随包内置默认排名（bundled 快照）→ 策展表。
+ * 动态 base 四级回退链：手动排名（capability-rank.json）→ 实时 api（capability.json）→
+ * 随包内置默认排名（bundled 快照）→ 策展表。
  * api/bundled 命中时 score=TIER_SCORE[tierOfScore(指数)]（与策展同口径，tier 分组序不变）；
- * version 随数据版本透出供 routing-decisions.jsonl 追溯（bundled- 前缀=内置快照）。
+ * manual 命中时 score=线性序位百分分、tier 由 quantile 阈值派生（同 rank 语义）；
+ * version 随数据版本透出供 routing-decisions.jsonl 追溯（bundled-/manual- 前缀=覆盖层来源）。
  */
 export function baseScoreDynamic(modelId: string): DynamicBaseResult {
+  const manual = manualRankResult(modelId)
+  if (manual) return manual
   const idx = loadCapability() ?? loadBundledCapability()
   const fromIndex = baseScoreFromCapabilityIndex(modelId, idx)
   if (fromIndex) return fromIndex
   const fb = baseScore(modelId)
   return { ...fb, version: null }
+}
+
+// ---- 手动能力排名覆盖层（/modelRank 命令与 capability-rank.json 手改共用）----
+
+/** [2026-09-03 复审P1-1修正]-[档位=序位阶梯：n≤4 依次 S/A/B/C（消除小 n quantile 退化造成的档位
+ *  跳变，如 2 项排名次名落 C）；n≥5 维持 quantile 分位口径（top20% S / 次20% A / 次20% B / 其余 C，
+ *  与 OpenRouter rank 序位同语义）。rawScore 恒为线性序位百分分（同 tier 内细粒度排序不变）。
+ *  序位→tier 表只依赖 total，按 n 记忆化（不依赖文件对象身份）] */
+const manualTierTables = new Map<number, Tier[]>()
+
+function manualTierAt(index: number, total: number): Tier {
+  let table = manualTierTables.get(total)
+  if (!table) {
+    const scores = Array.from({ length: total }, (_, i) => manualLinearScore(i, total))
+    const th = resolveThresholds("quantile", scores)
+    table = total >= 5
+      ? scores.map((s) => tierOfScore(s, th))
+      : ["S", "A", "B", "C"]
+    manualTierTables.set(total, table)
+  }
+  return table[Math.min(index, total - 1)]!
+}
+
+function manualLinearScore(index: number, total: number): number {
+  return total > 1 ? Math.round((1 - index / (total - 1)) * 1000) / 10 : 100
+}
+
+function manualRankMatch(normKey: string): { rank: NonNullable<ReturnType<typeof loadCapabilityRank>>; index: number } | null {
+  const rank = loadCapabilityRank()
+  if (!rank || rank.models.length === 0) return null
+  const exact = rank.models.indexOf(normKey)
+  if (exact >= 0) return { rank, index: exact }
+  // 最长前缀（≥MIN_PREFIX_LEN 防误配）：排名条目覆盖其变体（如 gpt-5.6 覆盖 gpt-5.6-luna），与策展表口径一致
+  let best = -1
+  let bestLen = 0
+  for (let i = 0; i < rank.models.length; i++) {
+    const k = rank.models[i]!
+    if (k.length >= MIN_PREFIX_LEN && normKey.startsWith(k) && k.length > bestLen) {
+      best = i
+      bestLen = k.length
+    }
+  }
+  return best >= 0 ? { rank, index: best } : null
+}
+
+/** 手动排名命中 → DynamicBaseResult（source="manual"；未命中=null 走原回退链） */
+export function manualRankResult(modelId: string): DynamicBaseResult | null {
+  const norm = normalizeModelKey(modelId)
+  if (!norm) return null
+  const hit = manualRankMatch(norm)
+  if (!hit) return null
+  const tier = manualTierAt(hit.index, hit.rank.models.length)
+  return {
+    score: TIER_SCORE[tier],
+    rawScore: manualLinearScore(hit.index, hit.rank.models.length),
+    tier,
+    source: "manual",
+    version: `manual-${hit.rank.updated_at || "unset"}`,
+    matchedAs: hit.rank.models[hit.index]!,
+  }
 }

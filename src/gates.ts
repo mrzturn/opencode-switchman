@@ -4,7 +4,7 @@ import { META_LEGAL } from "./types"
 import type { GateSnapshot, Meta, ShellRegEntry } from "./types"
 import { metaErrorHint, parseRouteMeta } from "./meta"
 import { computeLane, firstCandidate, laneOfShell } from "./lane"
-import { baseScoreDynamic } from "./capability"
+import { baseScoreDynamic, normalizeModelKey } from "./capability"
 import { isFallbackCandidate, isPrimaryCandidate } from "./lane-policy"
 
 export interface GateResult { deny: string | null; note: string | null }
@@ -59,6 +59,8 @@ export function checkShell(
       water: snap.water,
       glmPeak: snap.glmPeak,
       states: snap.states,
+      // [2026-09-03]-[deny 附言候选与任务池选配清单同源：hint 不推荐未入选模型]
+      poolConfig: snap.poolConfig,
       ...metaKw,
       _lane: laneOverride,
     }
@@ -145,6 +147,15 @@ export function checkShell(
       ? "GLM 套餐已用尽"
       : pool === "copilot" ? "Copilot 积分已耗尽" : "DeepSeek 余额已耗尽"
     return { deny: `${agent} 暂不可用（${why}）${hint()}`, note: null }
+  }
+
+  // 闸5.5 任务池选配（pool-config.json 手动配置）：lane→参与模型清单，清单存在且非空即压过
+  // 系统默认候选集（同模型可重复进驻多个 lane）；未配置=fail-open 放行（该 lane 走系统默认）
+  {
+    const allow = snap.poolConfig?.[lane]
+    if (allow && allow.size > 0 && !allow.has(normalizeModelKey(shell.modelId))) {
+      return { deny: `${agent} 不在 ${lane} 任务池选配清单（/poolConfig 可调整各任务池参与模型，或改派其他候选）${hint()}`, note: null }
+    }
   }
 
   // 闸6 ROUTE_META 硬闸：行缺失/格式坏/字段非法/安全字段缺失一律 deny 附样例+实时候选

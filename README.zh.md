@@ -123,6 +123,25 @@ TUI 插件没有目录自动发现机制，需要在 **`tui.jsonc`/`tui.json`** 
 }
 ```
 
+## 手动覆盖层：/poolConfig 与 /modelRank（v0.2.5 新增）
+
+两个交互式命令让你用配置压过系统默认决策，全部状态落盘、可手改、保存即热加载（mtime 感知，即时生效，侧栏同步刷新）：
+
+### /poolConfig —— 任务池选配
+
+- **TUI**：弹出选择框（与选模型/思考等级同款交互）——先选任务池（economy / mechanical / main / hard / vision / review），再对全部可用模型上下勾选：选中即参与该池、再选即移出，附能力档标注，改动实时落盘并 toast 回执。
+- **非 TUI / 会话内**：同名列命令走会话式流程——注入各池选配总览（带池名可看 `[x]/[ ]` 完整清单），回复「main 只留 3 5」「economy 勾 1、取消 2」由 agent 调 `switchman-config.js` 落盘。
+- **语义**：选配=让各任务池的候选模型**体现差异化**（如 economy 只配轻量模型、hard 只配重思考模型）——某池的手动清单**优先于系统默认候选集**，清单内模型仍按能力等级排序推荐；**同一模型可重复参与多个池**；未配置/空清单的池走系统默认决策。「清除配置」=恢复该池系统默认。
+- **配置文件**：`~/.config/opencode/opencode-switchman/pool-config.json`（键=任务池名，值=参与该池的 modelId 数组）。
+
+### /modelRank —— 模型能力排名
+
+- **TUI**：弹出按有效能力排序的模型列表，选中模型后可「置顶 / 上移 / 下移 / 移出排名」，即时生效。
+- **语义**：手动排名**优先于基础能力分**（实时第三方指数 → 内置快照 → 策展表全部让位）——命中模型（含其前缀变体）按排名序位取能力分与 S/A/B/C 档：排名 ≤4 项时依次 S/A/B/C；≥5 项按分位口径（top20% S / 次20% A / 次20% B / 其余 C，与 OpenRouter 序位派生同口径）；同档内按序位线性分细排。未排名模型不受影响。排名参与所有决策面：六档链排序、档位亲和、能力等级闸与 deny 改派建议。
+- **配置文件**：`~/.config/opencode/opencode-switchman/capability-rank.json`（`models` 数组顺序=能力降序，#1 最强）。
+
+两命令亦可用随包 CLI 直操作：`node <包目录>/dist/switchman-config.js pool list|add|remove|set|clear`（池名=economy/mechanical/main/hard/vision/review）/ `rank list|set|add|remove|clear`（编号引用 `list` 输出）。横幅 `[限制]` 行会标注当前生效的手动覆盖（「手动能力排名 N 模型 / 任务池选配 M 池」）。
+
 ## v0.2.0 更新内容
 
 v0.2.0 将 switchman 从固定多供应商调度器升级为实时、能力感知的编排层。

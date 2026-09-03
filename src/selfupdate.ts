@@ -146,7 +146,12 @@ export function flagSemantics(baseDir = join(homedir(), ".config", "opencode", "
 
 /** 随包更新器路径（与主产物同目录；build 时由 scripts/update-cli.mjs 复制为 dist/update-cli.js） */
 export function updateCliPath(): string {
-  return join(moduleDir(), "update-cli.js")
+  return pluginCliPath("update-cli.js")
+}
+
+/** 随包 CLI 资产路径（switchman-doctor.js / switchman-config.js 等与主产物同目录） */
+export function pluginCliPath(name: string): string {
+  return join(moduleDir(), name)
 }
 
 // [2026-09-01]-[opencode 1.18.x 插件缓存按 spec 目录钉死，npm install 到 ~/.config/opencode 对实际加载

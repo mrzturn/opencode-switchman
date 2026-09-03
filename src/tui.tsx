@@ -15,6 +15,11 @@ import { createSignal, createMemo, onCleanup, For } from "solid-js"
 import { readFileSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { join, relative, isAbsolute, sep } from "node:path"
+// [2026-09-03]-[/poolConfig //modelRank 交互弹窗：任务池选配勾选与能力排名直接读写用户覆盖层
+//  （pool-config.json / capability-rank.json），与插件主进程 mtime 热加载同源生效]
+import { loadPoolConfig, writePoolConfig, resetPoolConfig, loadCapabilityRank, writeCapabilityRank } from "./user-overrides"
+import { allModelRows, rankViewRows } from "./config-cli"
+import { LANE_ORDER, type Lane } from "./types"
 
 type StatusLogEntry = { ts: string; text: string }
 type RouteSnapshotEntry = { lane: string; best: string | null; degraded: boolean }
@@ -315,6 +320,180 @@ function ViewInner(props: { api: TuiPluginApi; sessionID: string }) {
   )
 }
 
+// ---- [2026-09-03]-[/poolConfig //modelRank 交互弹窗：DialogSelect 选中不关窗（宿主 submit 只回调），
+//  勾选语义=onSelect 原地切换 + writeJsonAtomic 落盘 + toast 回执；层间跳转用 dialog.replace
+//  （与宿主内置弹窗同模式）；Esc 由宿主 DialogSelect 自带关闭。非 TUI 客户端走 cfg.command 会话式]----
+
+function openPoolConfigDialog(api: TuiPluginApi): void {
+  api.ui.dialog.replace(() => <PoolPickerDialog api={api} />)
+}
+
+function PoolPickerDialog(props: { api: TuiPluginApi }) {
+  // [2026-09-03 语义修正]-[池=任务池 lane（economy/mechanical/main/hard/vision/review），非 provider 池：
+  //  选配各 lane 参与模型让六档候选体现差异化；同模型可重复参与多个 lane]
+  const lanes = createMemo(() => {
+    const allow = loadPoolConfig()
+    const total = allModelRows().length
+    return LANE_ORDER.map((lane) => ({
+      lane,
+      sel: allow[lane],
+      total,
+    }))
+  })
+  return (
+    <props.api.ui.DialogSelect
+      title="任务池选配（选择任务池；Esc 退出）"
+      options={lanes().map((p) => ({
+        title: `${p.sel ? "✎ " : ""}${p.lane}`,
+        value: p.lane,
+        description: p.sel
+          ? `手动选配 ${p.sel.size}/${p.total} 参与模型`
+          : "未配置：系统默认（全部可用模型参与）",
+        onSelect: () => props.api.ui.dialog.replace(() => <PoolModelsDialog api={props.api} lane={p.lane} />),
+      }))}
+    />
+  )
+}
+
+function PoolModelsDialog(props: { api: TuiPluginApi; lane: Lane }) {
+  const rows = createMemo(() => allModelRows())
+  // 初始勾选：已手动配置→配置清单；未配置→系统默认全量（首次切换即物化为显式清单）
+  const [selected, setSelected] = createSignal<ReadonlySet<string>>(
+    new Set(loadPoolConfig()[props.lane] ?? rows().map((r) => r.key)),
+  )
+  const persist = (cur: Set<string>, added: boolean, key: string) => {
+    setSelected(cur)
+    try {
+      writePoolConfig(props.lane, [...cur])
+    } catch (exc) {
+      // 防御：未知 lane/IO 异常不中断弹窗（当前 lane 来自 LANE_ORDER 不可达，兜底未来改动）
+      props.api.ui.toast({ variant: "error", message: `写入失败：${exc instanceof Error ? exc.message : exc}` })
+      return
+    }
+    props.api.ui.toast({
+      variant: added ? "success" : "info",
+      message: `${added ? "已加入" : "已移出"} ${props.lane} 任务池：${key}（即时生效，侧栏同步刷新）`,
+    })
+  }
+  const toggle = (key: string) => {
+    const cur = new Set(selected())
+    const added = !cur.has(key)
+    if (added) cur.add(key)
+    else {
+      // 至少保留一个参与模型；恢复系统默认请用「清除配置」（空清单=未配置=默认全量）
+      if (cur.size <= 1) {
+        props.api.ui.toast({ variant: "warning", message: "至少保留一个参与模型；恢复系统默认请用「清除配置」" })
+        return
+      }
+      cur.delete(key)
+    }
+    persist(cur, added, key)
+  }
+  const bulk = () => {
+    const cur = new Set(rows().map((r) => r.key))
+    setSelected(cur)
+    try {
+      writePoolConfig(props.lane, [...cur])
+    } catch (exc) {
+      props.api.ui.toast({ variant: "error", message: `写入失败：${exc instanceof Error ? exc.message : exc}` })
+      return
+    }
+    props.api.ui.toast({ variant: "success", message: `${props.lane} 任务池已全量选配` })
+  }
+  const reset = () => {
+    resetPoolConfig(props.lane)
+    setSelected(new Set(rows().map((r) => r.key)))
+    props.api.ui.toast({ variant: "success", message: `${props.lane} 任务池配置已清除（恢复系统默认候选集）` })
+  }
+  const nSel = () => selected().size
+  const options = createMemo(() => [
+    { title: "← 返回任务池列表", value: "__back", onSelect: () => props.api.ui.dialog.replace(() => <PoolPickerDialog api={props.api} />) },
+    { title: "☑ 全部选配", value: "__all", onSelect: () => bulk() },
+    { title: "✕ 清除配置（恢复系统默认：全部可用模型参与）", value: "__reset", onSelect: reset },
+    ...rows().map((r) => ({
+      title: `${selected().has(r.key) ? "[x]" : "[ ]"} ${r.modelId}`,
+      value: r.key,
+      description: `${r.tier}档${r.source === "manual" ? " · 手动排名" : ""}`,
+      onSelect: () => toggle(r.key),
+    })),
+  ])
+  return (
+    <props.api.ui.DialogSelect
+      title={`${props.lane} 任务池选配（${nSel()}/${rows().length} 参与；选中即切换，可跨池重复）`}
+      options={options()}
+      flat
+    />
+  )
+}
+
+function openModelRankDialog(api: TuiPluginApi): void {
+  api.ui.dialog.replace(() => <RankPickerDialog api={api} />)
+}
+
+function RankPickerDialog(props: { api: TuiPluginApi }) {
+  const rows = createMemo(() => rankViewRows())
+  return (
+    <props.api.ui.DialogSelect
+      title="模型能力排名（#1 最强，命中者优先于基础能力分；选择模型进行调整）"
+      options={rows().map((r, i) => ({
+        title: `#${String(i + 1).padStart(2, "0")} ${r.modelId}`,
+        value: r.key,
+        description: `${r.tier}档 · ${r.source === "manual" ? "手动排名" : "基础能力分"}`,
+        onSelect: () => props.api.ui.dialog.replace(() => <RankActionsDialog api={props.api} model={r.modelId} modelKey={r.key} />),
+      }))}
+      flat
+    />
+  )
+}
+
+function RankActionsDialog(props: { api: TuiPluginApi; model: string; modelKey: string }) {
+  const rank = () => [...(loadCapabilityRank()?.models ?? [])]
+  const at = () => rank().indexOf(props.modelKey)
+  const apply = (next: string[], message: string) => {
+    writeCapabilityRank(next)
+    props.api.ui.toast({ variant: "success", message: `${message}（即时生效，侧栏同步刷新）` })
+    props.api.ui.dialog.replace(() => <RankPickerDialog api={props.api} />)
+  }
+  const move = (delta: -1 | 0 | 1) => {
+    // delta 0=置顶；±1=相邻换位（未排名模型上移/下移=按目标位插入）
+    const cur = rank()
+    const i = cur.indexOf(props.modelKey)
+    if (delta === 0) {
+      if (i >= 0) cur.splice(i, 1)
+      cur.unshift(props.modelKey)
+    } else {
+      const target = i >= 0 ? Math.min(Math.max(i + delta, 0), cur.length - 1) : cur.length
+      if (i >= 0) cur.splice(i, 1)
+      cur.splice(target, 0, props.modelKey)
+    }
+    apply(cur, delta === 0 ? `已置顶 ${props.model}` : `已调整 ${props.model} 排名至 #${cur.indexOf(props.modelKey) + 1}`)
+  }
+  const ranked = () => at() >= 0
+  const options = createMemo(() => {
+    const list = [
+      { title: "▲ 置顶（设为最强）", value: "top", onSelect: () => move(0) },
+      ...(ranked() && at() > 0
+        ? [{ title: "↑ 上移一位", value: "up", onSelect: () => move(-1) }]
+        : []),
+      ...(ranked() && at() < rank().length - 1
+        ? [{ title: "↓ 下移一位", value: "down", onSelect: () => move(1) }]
+        : []),
+      ...(ranked()
+        ? [{ title: "✕ 移出排名（回退基础能力分）", value: "out", onSelect: () => apply(rank().filter((k) => k !== props.modelKey), `已移出 ${props.model}`) }]
+        : [{ title: "＋ 加入排名（末尾）", value: "in", onSelect: () => move(1) }]),
+      { title: "← 返回排名列表", value: "__back", onSelect: () => props.api.ui.dialog.replace(() => <RankPickerDialog api={props.api} />) },
+    ]
+    return list
+  })
+  return (
+    <props.api.ui.DialogSelect
+      title={`${props.model}（当前 ${ranked() ? `手动排名 #${at() + 1}` : "未手动排名"}）`}
+      options={options()}
+      flat
+    />
+  )
+}
+
 const tui: TuiPlugin = async (api) => {
   api.slots.register({
     slots: {
@@ -323,6 +502,34 @@ const tui: TuiPlugin = async (api) => {
       },
     },
   })
+  // [2026-09-03]-[/poolConfig //modelRank slash 命令：namespace=palette 才会出现在 "/" 面板
+  //  （宿主 useCommandSlashes 只取 palette 命名空间的 slashName）；老版本无 registerLayer 时
+  //  fail-open 仅缺弹窗入口（会话式 cfg.command 版本不受影响）]
+  try {
+    api.keymap.registerLayer({
+      commands: [
+        {
+          name: "switchman.pool-config",
+          title: "任务池选配",
+          desc: "选配各任务池（economy/mechanical/main/hard/vision/review）参与模型",
+          category: "switchman",
+          namespace: "palette",
+          slashName: "poolConfig",
+          run: () => openPoolConfigDialog(api),
+        },
+        {
+          name: "switchman.model-rank",
+          title: "模型能力排名",
+          desc: "手动能力排名（优先于基础能力分，越靠前能力越强）",
+          category: "switchman",
+          namespace: "palette",
+          slashName: "modelRank",
+          run: () => openModelRankDialog(api),
+        },
+      ],
+      bindings: [],
+    })
+  } catch { /* fail-open */ }
 }
 
 const plugin: TuiPluginModule & { id: string } = {
