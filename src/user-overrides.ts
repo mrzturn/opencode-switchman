@@ -4,7 +4,7 @@
 // ② pool-config.json：任务池选配——pools[lane]=参与该任务池（economy/mechanical/main/hard/vision/review）
 //    的 modelId 清单，让各 lane 的候选模型体现差异化（手动配置优先于系统默认候选集）；
 //    同一模型可重复进驻多个 lane；未配置/空清单的 lane 走系统默认决策（fail-open 全量）。
-// [2026-09-03]-[随 /poolConfig、/modelRank 命令新增；[2026-09-03 语义修正]-[键从 provider 池改为
+// [2026-09-03]-[随 /poolConfig(-chat)、/modelRank(-chat) 命令新增；[2026-09-03 语义修正]-[键从 provider 池改为
 //  任务池 lane：选配的是「哪些模型参与哪个任务池」，不是 provider 进驻开关；写走 writeJsonAtomic 原子替换]
 import { rmSync, statSync } from "node:fs"
 import { normalizeModelKey } from "./capability"

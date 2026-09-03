@@ -1,4 +1,5 @@
-// 会话式配置命令模板（cfg.command 注入）：/poolConfig 与 /modelRank。
+// 会话式配置命令模板（cfg.command 注入）：/poolConfig-chat 与 /modelRank-chat
+// （手动交互弹窗为 TUI 插件的 /poolConfig //modelRank，两者互补）。
 // [2026-09-03]-[opencode 命令 `!` 块为非交互执行（stdin=ignore/输出捕获），交互式弹窗由 TUI 插件
 //  （src/tui.tsx DialogSelect）承载；本模板为非 TUI 客户端与会话内的会话式等价流程：
 //  命令注入当前配置清单 → 用户回复勾选/排序意图 → agent 调 switchman-config.js 落盘]

@@ -502,7 +502,8 @@ const tui: TuiPlugin = async (api) => {
       },
     },
   })
-  // [2026-09-03]-[/poolConfig //modelRank slash 命令：namespace=palette 才会出现在 "/" 面板
+  // [2026-09-03]-[/poolConfig //modelRank slash 命令（手动弹窗入口；会话式为 /poolConfig-chat
+  //  //modelRank-chat）：namespace=palette 才会出现在 "/" 面板
   //  （宿主 useCommandSlashes 只取 palette 命名空间的 slashName）；老版本无 registerLayer 时
   //  fail-open 仅缺弹窗入口（会话式 cfg.command 版本不受影响）]
   try {

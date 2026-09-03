@@ -622,11 +622,12 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         // [2026-08-29]-[一键升级命令资产：prod 注册 /switchman-update，local 删除残留——legacy/动态两路都生效]-
         ensureUpdateCommands(detectLoadMode())
         // [2026-08-31]-[/handover 交接命令：cfg.command 运行期注入，覆盖同名用户自定义命令时以用户为准]-
-        // [2026-09-03]-[/poolConfig //modelRank：会话式配置入口（TUI 内另有同名单交互弹窗，两者互补）]-
+        // [2026-09-03]-[/poolConfig-chat //modelRank-chat：会话式配置入口（AI 交互换算 CLI 命令）；
+        //  手动交互弹窗由 TUI 插件承载，保留原名 /poolConfig //modelRank，两者互补]-
         cfg.command = {
           handover: { template: HANDOVER_COMMAND_TEMPLATE, description: HANDOVER_COMMAND_DESCRIPTION },
-          poolConfig: { template: poolConfigCommandMd(pluginCliPath("switchman-config.js")), description: "交互式配置各任务池参与模型（economy/mechanical/main/hard/vision/review）" },
-          modelRank: { template: modelRankCommandMd(pluginCliPath("switchman-config.js")), description: "交互式配置模型能力排名（手动排名优先于基础能力分）" },
+          "poolConfig-chat": { template: poolConfigCommandMd(pluginCliPath("switchman-config.js")), description: "会话式配置各任务池参与模型（economy/mechanical/main/hard/vision/review）；手动弹窗用 /poolConfig" },
+          "modelRank-chat": { template: modelRankCommandMd(pluginCliPath("switchman-config.js")), description: "会话式配置模型能力排名（手动排名优先于基础能力分）；手动弹窗用 /modelRank" },
           ...cfg.command,
         }
         // [2026-09-03]-[能力排名/任务池选配 watch：手动改配置即时刷新横幅与侧栏，不等下一条聊天消息；legacy/动态两路都生效]-[配置改动即时可见]

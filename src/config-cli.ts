@@ -1,5 +1,5 @@
 // switchman-config CLI（随包资产，node/bun 直跑）：任务池选配与能力排名的读写入口。
-// 供 /poolConfig、/modelRank 命令模板与 TUI 弹窗外的所有客户端使用；全部命令非交互。
+// 供 /poolConfig-chat、/modelRank-chat 命令模板与 TUI 弹窗外的所有客户端使用；全部命令非交互。
 // [2026-09-03]-[随任务池选配/手动排名两功能新增；[2026-09-03 语义修正]-[池=任务池 lane（非 provider 池），
 //  选配各 lane 参与模型、同模型可重复进驻多个 lane]；退出码 0=成功 1=失败]
 import { baseScoreDynamic, normalizeModelKey } from "./capability"
