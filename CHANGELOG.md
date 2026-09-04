@@ -4,7 +4,7 @@
 
 This project follows [Semantic Versioning](https://semver.org/). Release notes describe user-visible behavior; implementation details remain in the technical specification and commit history.
 
-## [Unreleased]
+## [0.2.7] - 2026-09-04
 
 ### Added
 
@@ -122,6 +122,18 @@ The release documentation uses these repository assets:
 [English](#changelog)
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。此处记录面向使用者的行为变化；实现细节见技术方案与提交历史。
+
+## [0.2.7] - 2026-09-04
+
+### 新增
+
+- **派发 deny 自动改派（`dispatch.autoRedirect`，默认开）**——错误壳派发不再靠 deny-重试烧 token：派发闸 deny 时直接把 `subagent_type` 在途改写为附言已算出的链首候选（同快照一跳守卫复检、状态日志记 `自动改派 X → Y`），首发即落最优壳。覆盖全部带候选的 deny（配额/熔断/退休/任务池/语义门）、`denyUninjected`（META 有效+链首候选）、explore/general 封堵（prompt 末尾追加合成 economy/main ROUTE_META）与非 review lane 的闸6无效 META（按 lane 合成；review 保持硬 deny——异族复审需真实 `producer_family`）。守卫仍拒则维持原 deny。jsonc 设 `dispatch.autoRedirect:false` 恢复旧行为。
+
+- **无视觉主会话图片中继（`relay.image`，默认开）**——主会话模型无视觉输入时，用户贴图此前只剩宿主报错无人能读。现于请求时拦截最后一条用户消息（`experimental.chat.messages.transform`），把 `data:` 图片解码落盘到 `~/.config/opencode/opencode-switchman/media/<sessionID>/`，图片部件替换为携带路径与读图指引的单个文本部件（委派 image-modality ROUTE_META 的 vision 壳，或把路径传给 MCP 视觉工具）。本地路径/http URL 原值引用；有视觉元数据（或元数据未知）的模型不动；钩子全 fail-open，聊天永不中断。
+
+### 修复
+
+- `denyUninjected` 的 deny 此前被钩子兜底 fail-open catch 静默吞掉（callID 未标记为自deny），点名未注入壳从未真正阻断；现如实上抛。
 
 ## [0.2.6] - 2026-09-04
 
