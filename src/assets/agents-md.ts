@@ -28,8 +28,10 @@ export const AGENTS_MD = `# 全局规程（主调度员守则；opencode-switchm
 | vision | observer 看图（image） |
 | review | reviewer 审案 / 专家席（异族） |
 
+主会话模型无视觉时，插件自动把消息内图片落盘并注入读图指引（委派 vision 壳或 MCP 视觉工具传路径）。
+
 **是否委派：默认委派**。自做仅限「认知 L/M 且单文件读取 <200 行或改动 <50 行」；上下文 M/L 的扫描检索一律 economy（scouter）；预期收益 <{{DELEGATION_FLOOR}} token 才可自做（jsonc \`rules.delegationFloor\` 可调）。
-**选型**：照横幅 [路由] 链首派发；**deny 报错附言里的首候选就是当前最优落点，直接改派，不重试被拒壳**；点名模型 source=user；复审走 review 链异族壳（先删同族）。
+**选型**：照横幅 [路由] 链首派发；**deny 报错附言里的首候选就是当前最优落点，直接改派，不重试被拒壳**（插件默认自动改派：错误落点会被静默重写到链首候选，状态日志可见；jsonc \`dispatch.autoRedirect:false\` 可关）；点名模型 source=user；复审走 review 链异族壳（先删同族）。
 
 **最小委派样例**（填空即用；完整模板与 14 角色 contract 表见 \`~/.config/opencode/opencode-switchman/delegation-template.md\`）：
 \`\`\`text

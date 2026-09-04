@@ -5,8 +5,10 @@ import {
   READ_CLASS_TOOLS, estimateContextTokens, thresholdsOf, watermarkLevel,
   isVerificationBash, readGateDecision,
 } from "../src/context-watch"
-import { builtinAgentDeny } from "../src/gates"
+import { builtinAgentDeny, checkShell } from "../src/gates"
+import { firstCandidate } from "../src/lane"
 import { validateUserConfig } from "../src/config"
+import type { GateSnapshot, ShellRegEntry } from "../src/types"
 
 describe("context-watch：token 估算与水位分级", () => {
   test("estimateContextTokens：v2 顶层 tokens 与 v1 metadata.assistant.tokens 双路径", () => {
@@ -118,5 +120,76 @@ describe("config：新行为段校验", () => {
     expect(r.config.injection.mode).toBe("chain")
     expect(r.config.rules.delegationFloor).toBe(3_000)
     expect(r.diagnostics.some((d) => d.code === "SWM037")).toBe(true)
+  })
+  test("dispatch.autoRedirect / relay.image：缺省 true、坏值回退、合法值透传", () => {
+    const d = validateUserConfig(base)
+    expect(d.config.dispatch.autoRedirect).toBe(true)
+    expect(d.config.relay.image).toBe(true)
+    const bad = validateUserConfig({ ...base, dispatch: { autoRedirect: "yes" }, relay: { image: 0 } })
+    expect(bad.config.dispatch.autoRedirect).toBe(true)
+    expect(bad.config.relay.image).toBe(true)
+    expect(bad.diagnostics.some((x) => x.code === "SWM037")).toBe(true)
+    const ok = validateUserConfig({ ...base, dispatch: { autoRedirect: false }, relay: { image: false } })
+    expect(ok.config.dispatch.autoRedirect).toBe(false)
+    expect(ok.config.relay.image).toBe(false)
+    expect(ok.diagnostics.filter((x) => x.level === "error")).toEqual([])
+  })
+})
+
+// [2026-09-04]-[autoRedirect fixture：deny 附言候选同步透出 redirect 字段（index 层静默改派数据源）；
+//  合成注册表零状态依赖（不读 manifest/矩阵），deny 文案与候选由同参 firstCandidate 对拍]
+describe("gates：GateResult.redirect（autoRedirect）", () => {
+  const glmShell: ShellRegEntry = {
+    name: "glm-mx-glm53-high", pool: "glm", provider: "zhipuai-coding-plan", modelId: "glm-5.3",
+    effort: "high", family: "glm", capability: "rw", vision: false,
+    matrixKey: "zhipuai-coding-plan|glm-5.3|high", status: "enabled", comboKey: "zhipuai-coding-plan|glm-5.3|high",
+  }
+  const copilotShell: ShellRegEntry = {
+    name: "copilot-mx-claude5-high", pool: "copilot", provider: "github-copilot", modelId: "claude-sonnet-5",
+    effort: "high", family: "claude", capability: "rw", vision: false,
+    matrixKey: "github-copilot|claude-sonnet-5|high", status: "enabled", comboKey: "github-copilot|claude-sonnet-5|high",
+  }
+  const LANES = { main: [glmShell.name, copilotShell.name] }
+  const META = 'ROUTE_META {"lane":"main","role":"programmer","producer_family":"glm","capability":"rw","modality":"text","source":"auto"}'
+  const registry = { [glmShell.name]: glmShell, [copilotShell.name]: copilotShell }
+  const snap = (over: Partial<GateSnapshot> = {}): GateSnapshot & { lanes: Record<string, string[]> } => ({
+    registry, matrix: null,
+    routing: { down_agents: {}, down_expiry: {} },
+    quotaExhausted: {}, routePolicy: { glm: { observe: true, routing: true }, copilot: { observe: true, routing: true }, deepseek: { observe: false, routing: true } },
+    lanes: LANES, ...over,
+  })
+  const expectedCand = (s: GateSnapshot) =>
+    firstCandidate("main", LANES.main, {
+      registry, matrix: null, routing: s.routing, quotaExhausted: s.quotaExhausted, routePolicy: s.routePolicy,
+    } as any, glmShell.name)
+
+  test("闸5 池耗尽 deny → deny 文案不变且 redirect=候选（hint 同源）", () => {
+    const s = snap({ quotaExhausted: { glm: true, copilot: false, deepseek: false } })
+    const r = checkShell(glmShell.name, glmShell, META, s)
+    expect(r.deny).toContain("GLM 套餐已用尽")
+    expect(r.deny).toContain("，请改派 ")
+    expect(r.redirect).toBe(expectedCand(s))
+    expect(r.redirect).toBe(copilotShell.name)
+  })
+
+  test("闸1 用户同名冲突 deny → redirect=null（不可改派类）", () => {
+    const s = snap({
+      activation: { enabled: true, activeShells: new Set([glmShell.name, copilotShell.name]), conflicts: new Set([glmShell.name]), restartRequired: [] },
+    })
+    const r = checkShell(glmShell.name, glmShell, META, s)
+    expect(r.deny).toContain("同名 agent 冲突")
+    expect(r.redirect).toBeNull()
+  })
+
+  test("闸6 META 无效 deny → redirect=null（改派在 index 层合成 META）", () => {
+    const r = checkShell(glmShell.name, glmShell, "没有 META 的 prompt", snap())
+    expect(r.deny).toContain("ROUTE_META 无效")
+    expect(r.redirect).toBeNull()
+  })
+
+  test("放行路径 deny=null 且 redirect=null", () => {
+    const r = checkShell(copilotShell.name, copilotShell, META, snap())
+    expect(r.deny).toBeNull()
+    expect(r.redirect).toBeNull()
   })
 })

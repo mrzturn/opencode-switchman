@@ -19,10 +19,10 @@ import {
   writeQuotaBrief,
   loadProviderCache, saveProviderCache, nowIso,
 } from "./state"
-import { checkShell, noteUnknownAgent, shellLikeName, denyUninjected, builtinAgentDeny } from "./gates"
+import { checkShell, noteUnknownAgent, shellLikeName, denyUninjected, builtinAgentDeny, BUILTIN_SUBAGENTS } from "./gates"
 import {
   computeLane, billingWindow, billingWindowForConfig, poolStates, routingAdvice,
-  glmExhausted, copilotExhausted, deepseekExhausted, firstCandidate,
+  glmExhausted, copilotExhausted, deepseekExhausted, firstCandidate, laneOfShell,
 } from "./lane"
 import { READ_CLASS_TOOLS, estimateContextTokens, thresholdsOf, watermarkLevel, readGateDecision } from "./context-watch"
 import { runHandover, v1HandoverPort } from "./handover-core"
@@ -53,6 +53,8 @@ import type { MatrixModeOption } from "./activation"
 // [2026-08-29]-[事件/参数形状提取纯函数迁至 helpers.ts：入口禁导出非插件函数，否则
 //  opencode 会把它们当插件工厂调用产生 null hooks，炸掉 config 钩子与 provider.list]-[修复启动报错]
 import { chatParamsModelKey, sessionDeletedId, sessionCreatedInfo } from "./helpers"
+import { parseRouteMeta } from "./meta"
+import { relayImageParts } from "./relay"
 import { MatrixManager } from "./matrix-manager"
 import { laneBaseChain } from "./lane-policy"
 import {
@@ -116,6 +118,10 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   const denySkip = new Set<string>() // 自身 deny 的 callID：记账时排除
   let bannerCache: { at: number; lines: string[] } | null = null
   const sessionAgent = new Map<string, string>() // legacy 路径：chat.params 记录（区分主模型与壳子代理）
+  // [2026-09-04]-[图片中继：会话→主模型 modelKey（chat.params 记录，dynamic/legacy 两路）＋config 钩子
+  //  构建的模型元数据索引（vision 判定与壳注入同源），experimental.chat.messages.transform 运行期查询]
+  const sessionModelKey = new Map<string, ModelKey>()
+  let metaIndexRuntime: Record<string, EffortInfo> | null = null
   // [2026-08-29]-[动态矩阵 v1.3：mode 判定一次性；legacy=原静态路径逐字节不变]
   const runMode = detectMode(options.matrix!.mode as MatrixModeOption, process.env.OPENCODE_CLIENT)
   const dynamic = runMode !== "legacy"
@@ -700,11 +706,12 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     }
   }
 
-  /** deny 附言：首候选（过全组闸后的链首壳）；[2026-08-31]-[终审P1-3：与横幅同源——接受 gateExtras 补足运行期输入] */  function firstCandidateHint(agent: string, ctx: ReturnType<typeof loadContext>, extras?: { water?: WaterFactor; glmPeak?: boolean; states?: Record<string, unknown> }): string | null {
+  /** [2026-09-04]-[autoRedirect：deny 附言候选壳名原值（firstCandidateHint 复用；index 层静默改派用）] */
+  function firstCandidateShell(agent: string, ctx: ReturnType<typeof loadContext>, extras?: { water?: WaterFactor; glmPeak?: boolean; states?: Record<string, unknown> }): string | null {
     try {
       const lanes = dynamicLaneMap(ctx)
       const lane = (Object.keys(lanes) as Lane[]).find((l) => lanes[l]?.includes(agent)) ?? "main"
-      const cand = firstCandidate(lane, lanes[lane] ?? [], {
+      return firstCandidate(lane, lanes[lane] ?? [], {
         registry: buildRegistry(ctx),
         matrix: ctx.matrix?.combos ?? null,
         routing: routingWithRealFailures(ctx.routing),
@@ -718,10 +725,15 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         // [2026-09-03]-[deny 附言候选不推荐未入选任务池选配清单的模型（与闸5.5/横幅同源）]
         poolConfig: loadPoolConfig(),
       } as any, agent)
-      return cand ? `请改派 ${cand}` : "降级链已尽：向用户声明原因并给 2 个可选项"
     } catch {
       return null
     }
+  }
+
+  /** deny 附言：首候选（过全组闸后的链首壳）；[2026-08-31]-[终审P1-3：与横幅同源——接受 gateExtras 补足运行期输入] */
+  function firstCandidateHint(agent: string, ctx: ReturnType<typeof loadContext>, extras?: { water?: WaterFactor; glmPeak?: boolean; states?: Record<string, unknown> }): string | null {
+    const cand = firstCandidateShell(agent, ctx, extras)
+    return cand ? `请改派 ${cand}` : "降级链已尽：向用户声明原因并给 2 个可选项"
   }
 
   return {
@@ -808,6 +820,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           .filter((full) => isConversational(full.slice(full.indexOf("/") + 1)))
           .sort()
         const metaIndex: Record<string, EffortInfo> = { ...bundledModelIndex(), ...catalog.index }
+        // [2026-09-04]-[图片中继：同一份元数据索引供 messages.transform 运行期查 vision（与壳注入同源）]
+        metaIndexRuntime = metaIndex
         supersetDefs = buildShells(supersetModels, metaIndex, {
           roAliases: true, degradedFamilyByProvider: true, markDegraded: true,
         })
@@ -887,6 +901,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         //  modelKey 取 Model 对象 providerID/id（chatParamsModelKey）]
         const sessionID = (input as any).sessionID as string | undefined
         const agent = (input as any).agent as string | undefined
+        // [2026-09-04]-[图片中继：会话主模型记录（两路都记；messages.transform 查 vision 用）]
+        const modelKey = chatParamsModelKey(input)
+        if (sessionID && modelKey) sessionModelKey.set(sessionID, modelKey)
         if (dynamic) {
           if (manager?.noteChatParams(sessionID, agent, chatParamsModelKey(input))) manager.scheduleRecompute(50, "session")
           return
@@ -942,6 +959,45 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       }
     },
 
+    // [2026-09-04]-[图片中继：主会话模型无视觉时，把最后一条用户消息里的图片部件替换为
+    //  「落盘路径+读图指引」文本（vision 壳/MCP 视觉工具按路径接力），宿主不再报错；
+    //  元数据未知/查不到模型 → fail-open 不动；整钩子 try/catch，绝不让聊天断流]
+    "experimental.chat.messages.transform": async (_input, output) => {
+      try {
+        if (options.relay?.image === false) return
+        const msgs = (output as any)?.messages
+        if (!Array.isArray(msgs) || msgs.length === 0) return
+        let target: { info: any; parts: unknown[] } | null = null
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          if (msgs[i]?.info?.role === "user") { target = msgs[i]; break }
+        }
+        if (!target || !Array.isArray(target.parts)) return
+        const sid = typeof target.info?.sessionID === "string" ? target.info.sessionID : undefined
+        if (!sid || isShellOrInternalSession(sid)) return
+        const m = target.info?.model
+        const key = sessionModelKey.get(sid)
+          ?? (typeof m?.providerID === "string" && typeof m?.id === "string" ? `${m.providerID}/${m.id}` as ModelKey : null)
+        if (!key) return
+        const meta = (metaIndexRuntime ?? bundledModelIndex())[key]
+        const modelVision = meta ? meta.vision === true : null // 元数据未知 → null 不动
+        if (modelVision !== false) return
+        const { ctx } = currentContext()
+        const writeDir = join(stateDir(), "media", sid)
+        const res = await relayImageParts(target.parts, {
+          modelVision,
+          visionHead: laneHeadCandidate("vision", ctx),
+          writeDir,
+        })
+        // 只有部件确实变化时才写回 output（msgs 元素即 output.messages[i] 引用）
+        if (res.changed) {
+          target.parts = res.parts
+          appendStatusLog(`图片中继：模型 ${key} 无视觉输入，已落盘 ${res.paths.length} 张图片并注入读图指引（会话 ${sid}）`)
+        }
+      } catch (exc) {
+        appendStatusLog(`图片中继 fail-open（放行）: ${exc}`)
+      }
+    },
+
     "tool.execute.before": async (input, output) => {
       // [2026-09-04]-[读取水位闸：task 之外的读取类/bash 工具按实测会话水位分级拦截]
       if (input.tool !== "task") {
@@ -967,27 +1023,14 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         // [2026-08-31]-[终审P1-3：deny 附言候选与横幅同源——补 water/glmPeak/states 运行期输入
         //  （quotaView 为缓存读，与 quotaExhaustedFlags 同 TTL，不新增网络成本）]
         const gateExtras = gateExtrasSnapshot()
-        if (!shell) {
-          if (dynamic && shellLikeName(agent)) {
-            const hint = firstCandidateHint(agent, ctx, gateExtras)
-            throw new Error(denyUninjected(agent, activationGate?.restartRequired ?? [], hint))
-          }
-          // [2026-09-04]-[内置 subagent 封堵：explore/general 与壳路由竞争，默认 deny 附改派建议]
-          const builtinDeny = builtinAgentDeny(agent, options.builtinAgents!.mode ?? "deny", (lane) => laneHeadCandidate(lane, ctx))
-          if (builtinDeny) {
-            denySkip.add(input.callID)
-            throw new Error(builtinDeny)
-          }
-          appendStatusLog(noteUnknownAgent(agent))
-          return
-        }
-         const r = checkShell(agent, shell, output.args?.prompt, {
+        // [2026-09-04]-[autoRedirect：闸快照提取为共享对象（改派守卫用同一 snap 复检目标壳）]
+        const gateSnap = {
           registry,
           matrix: ctx.matrix?.combos ?? null,
           // [2026-08-29]-[功能1 仅动态矩阵：legacy 静态路径逐字节不变（tester 回归发现漏_gate）]-
           routing: dynamic ? routingWithRealFailures(ctx.routing) : ctx.routing,
-           quotaExhausted: quotaExhaustedFlags(),
-           routePolicy: policy,
+          quotaExhausted: quotaExhaustedFlags(),
+          routePolicy: policy,
           costs: options.cost!.enabled ? costOf : undefined,
           lanes: dynamicLaneMap(ctx),
           activation: activationGate,
@@ -1001,9 +1044,90 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           states: gateExtras.states as any,
           // [2026-09-03]-[闸5.5 任务池选配：手动配置优先于系统默认（与横幅/hint 同源）]
           poolConfig: loadPoolConfig(),
-        })
+        }
+        // [2026-09-04]-[autoRedirect：一跳守卫——对目标壳用同一 snap 复检 checkShell；目标仍 deny 或
+        //  redirect 回环 → 维持原 deny 返回 false（守卫只判放行与否，不再二次改派）]
+        const autoRedirectOn = options.dispatch?.autoRedirect !== false
+        const tryRedirect = (target: string | null, prompt: unknown): boolean => {
+          try {
+            if (!autoRedirectOn || !target || target === agent) return false
+            const tshell = registry[target]
+            if (!tshell) return false
+            const g = checkShell(target, tshell, prompt, gateSnap)
+            if (g.deny || (g.redirect && g.redirect !== target)) return false
+            output.args.subagent_type = target
+            return true
+          } catch {
+            return false
+          }
+        }
+        if (!shell) {
+          if (dynamic && shellLikeName(agent)) {
+            const hint = firstCandidateHint(agent, ctx, gateExtras)
+            // [2026-09-04]-[autoRedirect：未注入壳 deny——META 有效且链首候选过守卫时静默改派放行]
+            if (autoRedirectOn) {
+              const [meta, metaErr] = parseRouteMeta(output.args?.prompt)
+              const cand = meta !== null && metaErr === null ? firstCandidateShell(agent, ctx, gateExtras) : null
+              if (cand && tryRedirect(cand, output.args?.prompt)) {
+                appendStatusLog(`自动改派 ${agent} → ${cand}（未注入壳，改派链首候选）`)
+                return
+              }
+            }
+            // [2026-09-04]-[补 denySkip：原实现此分支 throw 未标记 callID，被兜底 catch 当 fail-open
+            //  吞掉放行——denyUninjected 的「维持抛错」从未真正阻断；修复后 deny 才会如实上抛]
+            denySkip.add(input.callID)
+            throw new Error(denyUninjected(agent, activationGate?.restartRequired ?? [], hint))
+          }
+          // [2026-09-04]-[内置 subagent 封堵：explore/general 与壳路由竞争，默认 deny 附改派建议]
+          const builtinDeny = builtinAgentDeny(agent, options.builtinAgents!.mode ?? "deny", (lane) => laneHeadCandidate(lane, ctx))
+          if (builtinDeny) {
+            // [2026-09-04]-[autoRedirect：内置代理封堵——prompt 末尾追加合成 ROUTE_META 后改派对应 lane 链首]
+            if (autoRedirectOn) {
+              const lane = BUILTIN_SUBAGENTS[agent]
+              const cand = lane ? laneHeadCandidate(lane, ctx) : null
+              if (cand) {
+                const role = lane === "economy" ? "scouter" : "generic"
+                const metaLine = `ROUTE_META {"lane":"${lane}","role":"${role}","modality":"text","capability":"ro","source":"auto"}`
+                const basePrompt = typeof output.args?.prompt === "string" ? output.args.prompt : ""
+                const newPrompt = `${basePrompt}${basePrompt.endsWith("\n") ? "" : "\n"}${metaLine}`
+                if (tryRedirect(cand, newPrompt)) {
+                  output.args.prompt = newPrompt
+                  appendStatusLog(`自动改派 ${agent} → ${cand}（内置代理封堵，追加合成 ROUTE_META）`)
+                  return
+                }
+              }
+            }
+            denySkip.add(input.callID)
+            throw new Error(builtinDeny)
+          }
+          appendStatusLog(noteUnknownAgent(agent))
+          return
+        }
+        const r = checkShell(agent, shell, output.args?.prompt, gateSnap)
         if (r.note) appendStatusLog(r.note)
         if (r.deny) {
+          // [2026-09-04]-[autoRedirect：deny 且 hint 已算出候选 → 一跳静默改派（守卫复检），零重试]
+          if (tryRedirect(r.redirect, output.args?.prompt)) {
+            appendStatusLog(`自动改派 ${agent} → ${r.redirect}（${r.deny.slice(0, 60)}）`)
+            return
+          }
+          // [2026-09-04]-[autoRedirect：闸6 META 无效——非 review lane 在 prompt 末尾合成 ROUTE_META
+          //  后同壳复检放行（review 须真实异族 producer_family，不可合成，维持 deny）]
+          if (autoRedirectOn && !r.redirect && r.deny.includes("ROUTE_META 无效")) {
+            const lane = laneOfShell(agent, gateSnap.lanes) ?? "main"
+            if (lane !== "review") {
+              const role = ({ hard: "planner", main: "programmer", mechanical: "tester", economy: "scouter", vision: "observer" } as Record<string, string>)[lane] ?? "programmer"
+              const metaLine = `ROUTE_META {"lane":"${lane}","role":"${role}","modality":"${lane === "vision" ? "image" : "text"}","capability":"${lane === "economy" ? "ro" : "rw"}","source":"auto"}`
+              const basePrompt = typeof output.args?.prompt === "string" ? output.args.prompt : ""
+              const newPrompt = `${basePrompt}${basePrompt.endsWith("\n") ? "" : "\n"}${metaLine}`
+              const g = checkShell(agent, shell, newPrompt, gateSnap)
+              if (!g.deny && !(g.redirect && g.redirect !== agent)) {
+                output.args.prompt = newPrompt
+                appendStatusLog(`自动改派 ${agent}（补 ROUTE_META，${lane} 档）`)
+                return
+              }
+            }
+          }
           denySkip.add(input.callID)
           throw new Error(r.deny)
         }

@@ -296,6 +296,12 @@ export interface BuiltinAgentsOptions { mode?: "deny" | "allow" }
 // [2026-09-04]-[注入面模式：chain=六档链精选∪favorites∪可见集（省 6-10k/会话，链外模型
 //  点名走 denyUninjected 提示）；all=可用全集（旧行为，任何可用模型可点名）]
 export interface InjectionOptions { mode?: "chain" | "all" }
+// [2026-09-04]-[deny 自动改派：错误落点在 tool.execute.before 内静默重写到链首候选（一跳+同 snap
+//  守卫复检），免去主模型多次 deny 试错浪费 token；默认 true]
+export interface DispatchOptions { autoRedirect?: boolean }
+// [2026-09-04]-[图片中继：主会话模型无视觉时把消息内图片落盘并注入读图指引（vision 壳/MCP 视觉
+//  工具接力），避免宿主报错；默认 true]
+export interface RelayOptions { image?: boolean }
 export interface RulesOptions {
   enabled?: boolean
   /** 委派底价（token）：预期收益低于该值可自做；注入规程时插值到 {{DELEGATION_FLOOR}} */
@@ -316,4 +322,6 @@ export interface SwitchmanOptions {
   context?: ContextOptions
   builtinAgents?: BuiltinAgentsOptions
   injection?: InjectionOptions
+  dispatch?: DispatchOptions
+  relay?: RelayOptions
 }

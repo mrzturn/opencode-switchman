@@ -7,7 +7,9 @@ import { computeLane, firstCandidate, laneOfShell } from "./lane"
 import { baseScoreDynamic, normalizeModelKey } from "./capability"
 import { isFallbackCandidate, isPrimaryCandidate } from "./lane-policy"
 
-export interface GateResult { deny: string | null; note: string | null }
+// [2026-09-04]-[autoRedirect：deny 附言候选同步透出 redirect（index 层零重试静默改派用）；
+//  deny 文案一字不改（存量 fixture 锁死），不可改派类（同名冲突/链已尽无候选/闸6 meta）保持 null]
+export interface GateResult { deny: string | null; note: string | null; redirect: string | null }
 
 function matrixStatus(shell: ShellRegEntry, mcombos: GateSnapshot["matrix"]): [string, string] {
   if (!shell.matrixKey) return ["unprobed", ""]
@@ -66,15 +68,18 @@ export function checkShell(
     }
   }
 
-  const hint = (laneOverride?: string): string => {
-    let cand: string | null = null
+  // [2026-09-04]-[autoRedirect：候选壳名计算与 hint 文案拆分复用（deny 文案不变），redirect 同值透出]
+  const candidateOf = (laneOverride?: string): string | null => {
     try {
       const p = buildParams() as any
       const useLane = (laneOverride ?? lane) as import("./types").Lane
-      cand = firstCandidate(useLane, snap.lanes[useLane] ?? base, p, agent)
+      return firstCandidate(useLane, snap.lanes[useLane] ?? base, p, agent)
     } catch {
-      cand = null
+      return null
     }
+  }
+  const hint = (laneOverride?: string): string => {
+    const cand = candidateOf(laneOverride)
     return cand ? `，请改派 ${cand}` : "，降级链已尽：向用户声明原因并给 2 个可选项"
   }
 
@@ -84,16 +89,19 @@ export function checkShell(
   const act = snap.activation
   if (act && act.enabled) {
     if (act.conflicts && act.conflicts.has(agent)) {
-      return { deny: `${agent} 与用户自定义同名 agent 冲突，不可派发（请改名或删除自定义 agent）${hint()}`, note: null }
+      // 不可改派类：同名冲突须用户处理
+      return { deny: `${agent} 与用户自定义同名 agent 冲突，不可派发（请改名或删除自定义 agent）${hint()}`, note: null, redirect: null }
     }
     if (act.activeShells && !act.activeShells.has(agent)) {
       const restart = act.restartRequired.length > 0
         ? `；新 provider（${act.restartRequired.join("、")}）壳注册需重启 opencode`
         : ""
+      const cand = candidateOf()
       return {
         // [2026-08-29]-[修复复审P2-文案口径：「实时」→「下一请求生效」（激活面变化对派发闸在下一次 tool 派发生效）]
         deny: `${agent} 未激活（模型不在当前激活矩阵：在模型管理设为可见/加入 favorites/主会话切到该模型即可激活，下一请求生效${restart}）${hint()}`,
         note: null,
+        redirect: cand,
       }
     }
   }
@@ -104,11 +112,14 @@ export function checkShell(
       return {
         deny: null,
         note: `[opencode-switchman] ${agent} registry=disabled 但矩阵状态=${mstat || "missing"}（非 down）：fail-open 放行，探针下轮刷新后自动纠正`,
+        redirect: null,
       }
     }
+    const cand = candidateOf()
     return {
       deny: `${agent} 不可派发（registry status=${status}${snap.matrix !== null && mstat === "down" ? `，矩阵 ${mstat}：${mreason}` : ""}）${hint()}`,
       note: null,
+      redirect: cand,
     }
   }
 
@@ -116,28 +127,28 @@ export function checkShell(
   if (snap.matrix !== null) {
     const [mstat, mreason] = matrixStatus(shell, snap.matrix)
     if (mstat === "down") {
-      return { deny: `${agent} 不可用（矩阵 down，${mreason}）${hint()}`, note: null }
+      return { deny: `${agent} 不可用（矩阵 down，${mreason}）${hint()}`, note: null, redirect: candidateOf() }
     }
     if (mstat === "unknown" || mstat === "missing" || mstat === "unprobed") {
-      return { deny: null, note: `[opencode-switchman] ${agent} 矩阵状态=${mstat}（非 down）：不拦截，探针下轮刷新` }
+      return { deny: null, note: `[opencode-switchman] ${agent} 矩阵状态=${mstat}（非 down）：不拦截，探针下轮刷新`, redirect: null }
     }
   }
 
   // 闸2.5：模型已退休（连续 404 永久移出候选，重启清空；仅 dynamic 注入 retiredModels）
   // [2026-08-29]-[失败分类：厂商无关，provider/modelId 命中即 deny，不再依赖池硬编码]
   if (snap.retiredModels?.has(`${shell.provider}/${shell.modelId}`)) {
-    return { deny: `${agent} 不可用（模型已下线：连续 404，请改派其他候选）${hint()}`, note: null }
+    return { deny: `${agent} 不可用（模型已下线：连续 404，请改派其他候选）${hint()}`, note: null, redirect: candidateOf() }
   }
 
   // 闸3：探针可用但实调失败的进程内隔离（不落盘，30 分钟/重启后恢复）
   if (shell.comboKey && snap.realFailedCombos?.has(shell.comboKey)) {
-    return { deny: `${agent} 暂不可用（探针可用但实际委派失败，30 分钟后自动解锁或重启 opencode 恢复）${hint()}`, note: null }
+    return { deny: `${agent} 暂不可用（探针可用但实际委派失败，30 分钟后自动解锁或重启 opencode 恢复）${hint()}`, note: null, redirect: candidateOf() }
   }
 
   // 闸4 熔断：down_agents 命中壳名或 comboKey（600s 窗 × 2 次）
   const down = snap.routing?.down_agents
   if (down && ((agent in down) || (shell.comboKey && shell.comboKey in down))) {
-    return { deny: `${agent} 暂不可用（连续失败熔断中，约 10 分钟自动恢复）${hint()}`, note: null }
+    return { deny: `${agent} 暂不可用（连续失败熔断中，约 10 分钟自动恢复）${hint()}`, note: null, redirect: candidateOf() }
   }
 
   // 闸5 池耗尽（只认调用必失败；unknown/高水位不拦）
@@ -146,7 +157,7 @@ export function checkShell(
     const why = pool === "glm"
       ? "GLM 套餐已用尽"
       : pool === "copilot" ? "Copilot 积分已耗尽" : "DeepSeek 余额已耗尽"
-    return { deny: `${agent} 暂不可用（${why}）${hint()}`, note: null }
+    return { deny: `${agent} 暂不可用（${why}）${hint()}`, note: null, redirect: candidateOf() }
   }
 
   // 闸5.5 任务池选配（pool-config.json 手动配置）：lane→参与模型清单，清单存在且非空即压过
@@ -154,7 +165,7 @@ export function checkShell(
   {
     const allow = snap.poolConfig?.[lane]
     if (allow && allow.size > 0 && !allow.has(normalizeModelKey(shell.modelId))) {
-      return { deny: `${agent} 不在 ${lane} 任务池选配清单（/poolConfig 可调整各任务池参与模型，或改派其他候选）${hint()}`, note: null }
+      return { deny: `${agent} 不在 ${lane} 任务池选配清单（/poolConfig 可调整各任务池参与模型，或改派其他候选）${hint()}`, note: null, redirect: candidateOf() }
     }
   }
 
@@ -171,6 +182,8 @@ export function checkShell(
     return {
       deny: `${agent} 为壳名派发，ROUTE_META 无效：${metaErrorHint(metaErr)}${fallback}`,
       note: null,
+      // 改派在 index.ts 做（需改 prompt 合成 META），此处保持 null
+      redirect: null,
     }
   }
   const role = meta!.role
@@ -179,39 +192,39 @@ export function checkShell(
   if (role === "reviewer") {
     const pf = meta!.producer_family
     if (pf && pf === String(shell.family)) {
-      return { deny: `${agent} 与 producer 同 family（${pf}），复审须异族视角${hint("review")}`, note: null }
+      return { deny: `${agent} 与 producer 同 family（${pf}），复审须异族视角${hint("review")}`, note: null, redirect: candidateOf("review") }
     }
   }
   if (meta!.capability === "rw" && String(shell.capability) === "ro") {
-    return { deny: `${agent} 为只读壳（ro），不接 rw 写任务${hint()}`, note: null }
+    return { deny: `${agent} 为只读壳（ro），不接 rw 写任务${hint()}`, note: null, redirect: candidateOf() }
   }
   if ((meta!.modality === "image" || meta!.modality === "vision") && !shell.vision) {
-    return { deny: `${agent} 非视觉壳，不能承接 modality=${meta!.modality} 任务${hint("vision")}`, note: null }
+    return { deny: `${agent} 非视觉壳，不能承接 modality=${meta!.modality} 任务${hint("vision")}`, note: null, redirect: candidateOf("vision") }
   }
   if (lane === "vision" && meta!.modality === "text") {
-    return { deny: `${agent} lane=vision 必须声明 image/vision modality${hint("vision")}`, note: null }
+    return { deny: `${agent} lane=vision 必须声明 image/vision modality${hint("vision")}`, note: null, redirect: candidateOf("vision") }
   }
   const capability = baseScoreDynamic(shell.modelId)
   if (!isPrimaryCandidate(lane as import("./types").Lane, capability) && !isFallbackCandidate(lane as import("./types").Lane, capability)) {
-    return { deny: `${agent} 能力等级不足，不能承接 ${lane} 任务${hint()}`, note: null }
+    return { deny: `${agent} 能力等级不足，不能承接 ${lane} 任务${hint()}`, note: null, redirect: candidateOf() }
   }
   if (isFallbackCandidate(lane as import("./types").Lane, capability) && meta!.source !== "user") {
     let current
     try {
       current = computeLane(lane as import("./types").Lane, snap.lanes[lane] ?? base, buildParams() as any)
     } catch {
-      return { deny: `${agent} 无法确认 ${lane} 跨级补位资格，为避免错误降级拒绝派发${hint()}`, note: null }
+      return { deny: `${agent} 无法确认 ${lane} 跨级补位资格，为避免错误降级拒绝派发${hint()}`, note: null, redirect: candidateOf() }
     }
     if (!current.chain.some((candidate) => candidate.shell === agent)) {
-      return { deny: `${agent} 未入选 ${lane} 的前二跨级回退候选${hint()}`, note: null }
+      return { deny: `${agent} 未入选 ${lane} 的前二跨级回退候选${hint()}`, note: null, redirect: candidateOf() }
     }
     if (current.chain.some((candidate) => isPrimaryCandidate(lane as import("./types").Lane, baseScoreDynamic(snap.registry?.[candidate.shell]?.modelId ?? "")))) {
-      return { deny: `${agent} 为 ${lane} 的跨级回退候选；当前仍有可用同级模型${hint()}`, note: null }
+      return { deny: `${agent} 为 ${lane} 的跨级回退候选；当前仍有可用同级模型${hint()}`, note: null, redirect: candidateOf() }
     }
   }
   // [2026-08-31]-[去厂商化：删 source=auto 误选按量池的硬 deny——api 计费由 billingBoost 乘积系数
   //  软排序兜底（同 tier 排订阅之后），deny 只保留 META 格式与 review 异族/ro/vision 结构门]
-  return { deny: null, note: null }
+  return { deny: null, note: null, redirect: null }
 }
 
 /** 未注册/非壳名 → fail-open（unknown 内置代理不受路由管辖） */

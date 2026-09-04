@@ -4,6 +4,18 @@
 
 This project follows [Semantic Versioning](https://semver.org/). Release notes describe user-visible behavior; implementation details remain in the technical specification and commit history.
 
+## [Unreleased]
+
+### Added
+
+- **Deny auto-redirect (`dispatch.autoRedirect`, default on)** — wrong-shell dispatches no longer burn retries on deny-and-guess: when a dispatch gate denies, the plugin now rewrites `subagent_type` in-flight to the chain-head candidate the deny message already names (same-snapshot guard re-check, single hop, status-log entry `自动改派 X → Y`), so the first dispatch lands directly on the best available shell. Covers every candidate-bearing deny (quota/circuit/retired/pool-config/semantic gates), the `denyUninjected` path (valid ROUTE_META + chain-head candidate), built-in `explore`/`general` blocking (a synthetic economy/main ROUTE_META line is appended to the prompt), and gate-6 invalid-META on non-review lanes (a per-lane synthetic META is composed; review lanes keep the hard deny — cross-family review needs a real `producer_family`). A target that still fails the guard keeps the original deny. Set `dispatch.autoRedirect:false` in `opencode-switchman.jsonc` to restore deny-and-retry.
+
+- **Image relay for vision-less main models (`relay.image`, default on)** — when the main session model has no vision input, pictures attached by the user used to surface as a host error with no one able to read them. The plugin now intercepts the last user message at request time (`experimental.chat.messages.transform`), decodes `data:` URL images to `~/.config/opencode/opencode-switchman/media/<sessionID>/` and replaces the picture parts with a single text part carrying the on-disk paths plus reading guidance (delegate a vision-lane shell with an image-modality ROUTE_META, or pass the paths to an MCP vision tool). Local paths and http URLs pass through by reference; models with vision metadata (or unknown metadata) are untouched; the hook is fully fail-open so chat streaming can never break.
+
+### Fixed
+
+- `denyUninjected` denies were silently swallowed by the hook's fail-open catch (the callID was never marked as a self-deny), so naming an uninjected shell never actually blocked the dispatch; the deny now propagates.
+
 ## [0.2.6] - 2026-09-04
 
 ### Added

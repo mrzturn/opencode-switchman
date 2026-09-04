@@ -26,6 +26,9 @@ export interface UserConfig {
   context: UserContextConfig
   builtinAgents: { mode: "deny" | "allow" }
   injection: { mode: "chain" | "all" }
+  // [2026-09-04]-[autoRedirect：deny 静默改派开关（默认 true）；relay.image：图片中继开关（默认 true）]
+  dispatch: { autoRedirect: boolean }
+  relay: { image: boolean }
   lanes: Partial<Record<Lane, string[]>>
   extensions: Record<string, unknown>
 }
@@ -35,7 +38,7 @@ export const DEFAULT_CONTEXT_TOKENS = { soft: 60_000, hard: 80_000, force: 100_0
 export const DEFAULT_DELEGATION_FLOOR = 3_000
 
 /** 行为段出厂缺省（fillMissing 基线；类型坏值才回退并报 SWM037） */
-export function defaultBehaviorConfig(): Pick<UserConfig, "quota" | "cost" | "capability" | "matrix" | "banner" | "rules" | "context" | "builtinAgents" | "injection" | "lanes"> {
+export function defaultBehaviorConfig(): Pick<UserConfig, "quota" | "cost" | "capability" | "matrix" | "banner" | "rules" | "context" | "builtinAgents" | "injection" | "dispatch" | "relay" | "lanes"> {
   return {
     quota: { glmFiveHourReservePct: 90, deepseekLowBalanceWarnCny: 10 },
     cost: { enabled: true },
@@ -46,6 +49,8 @@ export function defaultBehaviorConfig(): Pick<UserConfig, "quota" | "cost" | "ca
     context: { gates: true, softTokens: DEFAULT_CONTEXT_TOKENS.soft, hardTokens: DEFAULT_CONTEXT_TOKENS.hard, forceTokens: DEFAULT_CONTEXT_TOKENS.force, autoHandover: true },
     builtinAgents: { mode: "deny" },
     injection: { mode: "chain" },
+    dispatch: { autoRedirect: true },
+    relay: { image: true },
     lanes: {},
   }
 }
@@ -150,7 +155,7 @@ export function validateUserConfig(value: unknown): { config: UserConfig; diagno
   const q = filled.quota
   if (typeof q.glmFiveHourReservePct !== "number" || !(q.glmFiveHourReservePct > 0 && q.glmFiveHourReservePct <= 100)) bad("quota.glmFiveHourReservePct", () => { q.glmFiveHourReservePct = defaults.quota.glmFiveHourReservePct })
   if (typeof q.deepseekLowBalanceWarnCny !== "number" || q.deepseekLowBalanceWarnCny < 0) bad("quota.deepseekLowBalanceWarnCny", () => { q.deepseekLowBalanceWarnCny = defaults.quota.deepseekLowBalanceWarnCny })
-  for (const [section, field] of [["cost", "enabled"], ["banner", "enabled"], ["rules", "enabled"], ["matrix", "watch"], ["capability", "enabled"], ["capability", "lmarenaCheck"]] as const) {
+  for (const [section, field] of [["cost", "enabled"], ["banner", "enabled"], ["rules", "enabled"], ["matrix", "watch"], ["capability", "enabled"], ["capability", "lmarenaCheck"], ["dispatch", "autoRedirect"], ["relay", "image"]] as const) {
     if (typeof (filled[section] as any)[field] !== "boolean") bad(`${section}.${field}`, () => { (filled[section] as any)[field] = (defaults[section] as any)[field] })
   }
   if (!["auto", "app", "tui", "legacy"].includes(filled.matrix.mode)) bad("matrix.mode", () => { filled.matrix.mode = defaults.matrix.mode })
@@ -226,6 +231,9 @@ export function resolveEffectiveOptions(raw: unknown, cfg: UserConfig): { option
     context: has(o, "context") ? { ...cfg.context, ...o.context } : cfg.context,
     builtinAgents: has(o, "builtinAgents") ? { ...cfg.builtinAgents, ...o.builtinAgents } : cfg.builtinAgents,
     injection: has(o, "injection") ? { ...cfg.injection, ...o.injection } : cfg.injection,
+    // [2026-09-04]-[autoRedirect/图片中继开关：jsonc 行为段为基线，元组显式键覆盖（同 builtinAgents 模式）]
+    dispatch: has(o, "dispatch") ? { ...cfg.dispatch, ...o.dispatch } : cfg.dispatch,
+    relay: has(o, "relay") ? { ...cfg.relay, ...o.relay } : cfg.relay,
     lanes: has(o, "lanes") ? o.lanes : cfg.lanes,
     matrix: {
       mode: has(o.matrix, "mode") ? o.matrix!.mode! : cfg.matrix.mode,
@@ -239,7 +247,7 @@ export function resolveEffectiveOptions(raw: unknown, cfg: UserConfig): { option
       lmarenaCheck: has(o.capability, "lmarenaCheck") ? o.capability!.lmarenaCheck! : cfg.capability.lmarenaCheck,
     },
   }
-  for (const section of ["cost", "banner", "rules", "lanes", "matrix", "capability", "context", "builtinAgents", "injection"] as const) if (has(o, section)) legacySections.push(section)
+  for (const section of ["cost", "banner", "rules", "lanes", "matrix", "capability", "context", "builtinAgents", "injection", "dispatch", "relay"] as const) if (has(o, section)) legacySections.push(section)
   return { options, legacySections }
 }
 export function routePolicy(config: UserConfig, legacy?: Partial<Record<Pool, boolean>>): RoutePolicy {
