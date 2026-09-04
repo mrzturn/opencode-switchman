@@ -1,4 +1,5 @@
-// 插件自身更新检查：状态缓存与所有外部调用均 fail-open，绝不影响 OpenCode 启动。
+// [2026-09-04]-[English localization: translate CLI messages and comments; no logic change]
+// Plugin self-update check: state cache and all external calls are fail-open, never affecting OpenCode startup.
 import { execFileSync } from "node:child_process"
 import { mkdirSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
@@ -20,9 +21,9 @@ export interface SelfUpdateState {
 
 const UPDATE_TTL_MS = 24 * 60 * 60 * 1000
 
-// [2026-08-29]-[修复P0：桌面端 opencode 模块加载器不提供 import.meta.dir（bun/CLI 有）——
-//  config 钩子一进 detectLoadMode 即 TypeError split，fail-open 吞掉后零壳注入、派发全灭；
-//  回退 import.meta.url（ESM 规范保证存在）解析目录]-
+// [2026-08-29]-[Fix P0: the desktop opencode module loader does not provide import.meta.dir (bun/CLI does) —
+//  the config hook would TypeError on split right after entering detectLoadMode, fail-open swallows it resulting in zero shell injection and dead dispatch;
+//  fall back to import.meta.url (guaranteed to exist by the ESM spec) to resolve the directory]-
 function moduleDir(): string {
   const meta = import.meta as any
   if (typeof meta.dir === "string" && meta.dir) return meta.dir
@@ -43,7 +44,7 @@ export function detectLoadMode(): LoadMode {
   return modeOfDistPath(moduleDir())
 }
 
-/** 正数表示 latest 较 current 新；预发布标记按规格忽略。 */
+/** Positive means latest is newer than current; prerelease markers are ignored per spec. */
 export function compareSemver(current: string, latest: string): number {
   const parts = (version: string): number[] => version.replace(/^v/, "").split("-")[0]!.split(".")
     .slice(0, 3).map((part) => Number.parseInt(part, 10) || 0)
@@ -76,8 +77,8 @@ function localUpdateState(): SelfUpdateState {
     timeout: 8_000, encoding: "utf8",
   }).trim().split(/\s+/)[0]
   const current = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, timeout: 8_000, encoding: "utf8" }).trim()
-  if (!latest || !current) throw new Error("git 更新检查未返回提交 SHA")
-  return { checked_at: new Date().toISOString(), mode: "local", current, latest: "origin/main 有新提交", outdated: latest !== current }
+  if (!latest || !current) throw new Error("git update check returned no commit SHA")
+  return { checked_at: new Date().toISOString(), mode: "local", current, latest: "origin/main has new commits", outdated: latest !== current }
 }
 
 async function prodUpdateState(): Promise<SelfUpdateState> {
@@ -87,7 +88,7 @@ async function prodUpdateState(): Promise<SelfUpdateState> {
     const response = await fetch("https://registry.npmjs.org/opencode-switchman/latest", { signal: controller.signal })
     if (!response.ok) throw new Error(`npm registry HTTP ${response.status}`)
     const body = await response.json() as { version?: unknown }
-    if (typeof body.version !== "string") throw new Error("npm registry 未返回 version")
+    if (typeof body.version !== "string") throw new Error("npm registry returned no version")
     return {
       checked_at: new Date().toISOString(), mode: "prod", current: PLUGIN_VERSION, latest: body.version,
       outdated: compareSemver(PLUGIN_VERSION, body.version) > 0,
@@ -107,7 +108,7 @@ export async function refreshSelfUpdate(): Promise<SelfUpdateState | null> {
       writeJsonAtomic(path, state)
       return state
     } catch (exc) {
-      appendStatusLog(`自更新检查 fail-open: ${exc}`)
+      appendStatusLog(`self-update check fail-open: ${exc}`)
       return null
     }
   })
@@ -116,22 +117,22 @@ export async function refreshSelfUpdate(): Promise<SelfUpdateState | null> {
 export function bannerTextOf(state: SelfUpdateState | null, now = Date.now(), baseDir?: string): string | null {
   if (!state?.outdated) return null
   const flags = flagSemantics(baseDir)
-  // [2026-08-29]-[升级完成：横幅改显示「已升级待重启」，压过版本提示]-
-  if (flags.upgraded) return `opencode-switchman 已升级（运行中 ${state.current}）——重启 opencode 生效`
-  if (flags.ignored) return null // 本次忽略：会话级，重启后自动恢复提示
+  // [2026-08-29]-[Upgrade complete: the banner shows "upgraded, restart pending", overriding the version hint]-
+  if (flags.upgraded) return `opencode-switchman upgraded (running ${state.current}) — restart opencode to take effect`
+  if (flags.ignored) return null // ignored this time: session-scoped, the hint returns automatically after a restart
   if (state.mode === "prod") {
-    // [2026-08-29]-[一键升级：prod 注册 /switchman-update 与 /switchman-ignore 两个命令入口]-
-    return `opencode-switchman 有新版 ${state.latest}（当前 ${state.current}）——/switchman-update 立即升级（静默，完成后提示重启）；/switchman-ignore 本次忽略`
+    // [2026-08-29]-[One-click upgrade: prod registers the /switchman-update and /switchman-ignore command entries]-
+    return `opencode-switchman has a new version ${state.latest} (current ${state.current}) — /switchman-update to upgrade now (silent; prompts for a restart when done); /switchman-ignore to skip this time`
   }
-  // local 模式只提示不自动升级（规格：自动升级仅针对 npm 正式版），仅提供本次忽略
-  return "本地构建落后 origin/main——需手动更新后重启：git pull && bun run mode:local；/switchman-ignore 本次忽略"
+  // local mode only hints, no auto-upgrade (spec: auto-upgrade covers npm release versions only); offers "ignore this time" only
+  return "Local build is behind origin/main — update manually then restart: git pull && bun run mode:local; /switchman-ignore to skip this time"
 }
 
-// ---- 「按钮」= 自定义命令 + 会话级标记（mtime > 进程启动时间 → 本次会话有效，重启即失效）----
+// ---- A "button" = a custom command + a session-scoped marker (mtime > process start time → valid for this session, expires on restart) ----
 
 const PLUGIN_START = Date.now()
 
-/** 标记语义：mtime 晚于进程启动 = 本次会话生效；重启后自然失效（每次打开重新提示） */
+/** Marker semantics: mtime later than process start = active for this session; naturally expires after restart (re-prompts on each launch) */
 export function flagSemantics(baseDir = join(homedir(), ".config", "opencode", "opencode-switchman"), startMs = PLUGIN_START, now = Date.now()): { upgraded: boolean; ignored: boolean } {
   const active = (name: string): boolean => {
     try {
@@ -144,31 +145,31 @@ export function flagSemantics(baseDir = join(homedir(), ".config", "opencode", "
   return { upgraded: active("upgraded.flag"), ignored: active("update-ignore.flag") }
 }
 
-/** 随包更新器路径（与主产物同目录；build 时由 scripts/update-cli.mjs 复制为 dist/update-cli.js） */
+/** Bundled updater path (same directory as the main build output; copied to dist/update-cli.js by scripts/update-cli.mjs at build time) */
 export function updateCliPath(): string {
   return pluginCliPath("update-cli.js")
 }
 
-/** 随包 CLI 资产路径（switchman-doctor.js / switchman-config.js 等与主产物同目录） */
+/** Bundled CLI asset path (switchman-doctor.js / switchman-config.js etc. live next to the main build output) */
 export function pluginCliPath(name: string): string {
   return join(moduleDir(), name)
 }
 
-// [2026-09-01]-[opencode 1.18.x 插件缓存按 spec 目录钉死，npm install 到 ~/.config/opencode 对实际加载
-//  路径无效——/switchman-update 改为调用随包更新器：改写 plugin 条目为最新精确版本＋清理旧缓存]-
+// [2026-09-01]-[opencode 1.18.x plugin cache is pinned to the spec directory; npm install into ~/.config/opencode has no effect on the actual load
+//  path — /switchman-update now calls the bundled updater: rewrite the plugin entry to the latest exact version + clean old caches]-
 export function upgradeCommandMd(cliPath: string = updateCliPath()): string {
   // JSON quoting yields a shell-safe single argument even when the installation path has spaces.
   const quoted = JSON.stringify(cliPath)
   return [
     "---",
-    "description: 立即升级 opencode-switchman（改写 plugin 为最新精确版本并清理旧缓存）",
+    "description: Upgrade opencode-switchman now (rewrite the plugin entry to the latest exact version and clean old caches)",
     "---",
     "",
     `!\`node ${quoted} 2>/dev/null || bun ${quoted}\``,
     "",
-    "以上是 opencode-switchman 更新器的输出（自动改写 opencode.jsonc/tui.jsonc 的 plugin 条目为精确版本、清理 opencode 插件缓存）。请：",
-    "1. 用一句话报告升级结果（成功/已是最新/失败原因）",
-    "2. 提醒用户重启 opencode（app 退出重开 / tui 重进）后新版本才生效",
+    "Above is the output of the opencode-switchman updater (it automatically rewrites the plugin entries in opencode.jsonc/tui.jsonc to exact versions and cleans the opencode plugin cache). Please:",
+    "1. Report the upgrade result in one sentence (success / already latest / failure reason)",
+    "2. Remind the user to restart opencode (app: quit and relaunch / tui: re-enter) before the new version takes effect",
     "",
   ].join("\n")
 }
@@ -176,22 +177,22 @@ export function upgradeCommandMd(cliPath: string = updateCliPath()): string {
 export function ignoreCommandMd(): string {
   return [
     "---",
-    "description: 忽略本次 opencode-switchman 更新提示（重启后恢复）",
+    "description: Ignore this opencode-switchman update hint (restored after restart)",
     "---",
     "",
     "!`touch \"$HOME/.config/opencode/opencode-switchman/update-ignore.flag\"`",
     "",
-    "以上命令已标记忽略本次更新提示。请用一句话确认：本次会话不再提示，重启 opencode 后会重新提示。",
+    "The command above has marked this update hint as ignored. Please confirm in one sentence: no more prompts this session; opencode will prompt again after a restart.",
     "",
   ].join("\n")
 }
 
-/** [2026-08-29]-[prod 注册「立即升级+本次忽略」两命令；local 只注册「本次忽略」并删除升级命令]-
+/** [2026-08-29]-[prod registers the "upgrade now + ignore this time" commands; local registers only "ignore this time" and removes the upgrade command]-
  *  [fail-open] */
 export function doctorCommandMd(cliPath: string): string {
   // JSON quoting yields a shell-safe single argument even when the installation path has spaces.
   const quoted = JSON.stringify(cliPath)
-  return ["---", "description: 检查 opencode-switchman 用户配置与本地状态", "---", "", `!\`node ${quoted}\``, "", "请完整转述报告；退出码 0=无 error，1=有 warn，2=有 error，非零也必须转述。", ""].join("\n")
+  return ["---", "description: Check the opencode-switchman user config and local state", "---", "", `!\`node ${quoted}\``, "", "Relay the report in full; exit codes: 0=no error, 1=warnings, 2=errors — relay even when non-zero.", ""].join("\n")
 }
 
 export function ensureUpdateCommands(mode: LoadMode, baseDir = resolveOpencodeConfigDir(), cliPath?: string): void {
@@ -210,7 +211,7 @@ export function ensureUpdateCommands(mode: LoadMode, baseDir = resolveOpencodeCo
     }
     write("switchman-doctor.md", doctorCommandMd(cliPath ?? join(moduleDir(), "switchman-doctor.js")))
   } catch (exc) {
-    appendStatusLog(`升级命令资产 fail-open: ${exc}`)
+    appendStatusLog(`upgrade command assets fail-open: ${exc}`)
   }
 }
 

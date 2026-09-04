@@ -1,5 +1,6 @@
-// 模型评分引擎 fixture（bun test）
-// 沙箱：SWITCHMAN_STATE 指向临时目录；baseScore/scoreShell/rankCandidates/logDecision 纯函数直测。
+// [2026-09-04]-[English localization: translate comments; no test-logic change]
+// Model scoring engine fixtures (bun test)
+// Sandbox: SWITCHMAN_STATE points at a temp dir; baseScore/scoreShell/rankCandidates/logDecision tested as pure functions.
 import { describe, test, expect, beforeAll } from "bun:test"
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -7,8 +8,9 @@ import { join } from "node:path"
 
 process.env.SWITCHMAN_STATE = mkdtempSync(join(tmpdir(), "switchman-sc-"))
 
-// [2026-08-31]-[机制测试与能力排名数据解耦：写空壳 capability.json（models={} 有效但无条目）——
-//  磁盘索引独占语义下全部回退策展表，档位断言不随内置快照/实时数据漂移]
+// [2026-08-31]-[mechanism tests decoupled from capability-rank data: write an empty-shell capability.json (models={}
+//  is valid but has no entries) — under the disk-index-exclusive semantics everything falls back to the curated table,
+//  so level assertions do not drift with the bundled snapshot / live data]
 mkdirSync(process.env.SWITCHMAN_STATE, { recursive: true })
 writeFileSync(
   join(process.env.SWITCHMAN_STATE, "capability.json"),
@@ -56,30 +58,30 @@ function scoreInput(over: Partial<ScoreInput> = {}): ScoreInput {
   }
 }
 
-// ================= 1. baseScore 匹配四路 =================
+// ================= 1. baseScore four-way matching =================
 describe("baseScore", () => {
-  test("精确键命中", () => {
+  test("exact key hit", () => {
     expect(baseScore("claude-opus-5")).toEqual({ score: 1.0, tier: "S", source: "exact" })
     expect(baseScore("glm-5.3")).toEqual({ score: 0.85, tier: "A", source: "exact" })
     expect(baseScore("glm-5.3-flash")).toEqual({ score: 0.7, tier: "B", source: "exact" })
     expect(baseScore("glm-4.5-air")).toEqual({ score: 0.55, tier: "C", source: "exact" })
   })
-  test("最长前缀命中（变体）", () => {
+  test("longest-prefix hit (variants)", () => {
     expect(baseScore("gpt-5.6-codex")).toEqual({ score: 1.0, tier: "S", source: "prefix" })
     expect(baseScore("gpt-5.6-luna")).toEqual({ score: 1.0, tier: "S", source: "prefix" })
     expect(baseScore("gemini-3.1-pro-preview")).toEqual({ score: 1.0, tier: "S", source: "prefix" })
     expect(baseScore("deepseek-v4-flash-vision-exp")).toEqual({ score: 0.7, tier: "B", source: "prefix" })
   })
-  test("精确优先于前缀（gpt-5.6-mini 是 A 不是 S）", () => {
+  test("exact beats prefix (gpt-5.6-mini is A, not S)", () => {
     expect(baseScore("gpt-5.6-mini")).toEqual({ score: 0.85, tier: "A", source: "exact" })
   })
-  test("family 中位数（同族未知模型）", () => {
-    const r = baseScore("glm-5.4") // glm 族表内分数中位数 0.7 → B
+  test("family median (unknown model within a known family)", () => {
+    const r = baseScore("glm-5.4") // median of the glm family table scores 0.7 → B
     expect(r.source).toBe("family")
     expect(r.tier).toBe("B")
     expect(r.score).toBe(0.7)
   })
-  test("全局兜底（未知新厂商）", () => {
+  test("global fallback (unknown new vendor)", () => {
     const r = baseScore("mimo-v2.5-free")
     expect(r.source).toBe("global")
     expect(r.score).toBe(GLOBAL_MEDIAN_SCORE)
@@ -87,22 +89,22 @@ describe("baseScore", () => {
   })
 })
 
-// ================= 2. scoreShell 软系数 =================
+// ================= 2. scoreShell soft factors =================
 describe("scoreShell", () => {
-  test("strained 健康系数 0.6（其余系数不变；main 默认 medium 后 high 序位 effortFit=0.9）", () => {
+  test("strained health factor 0.6 (other factors unchanged; main defaults to medium, high ordinal effortFit=0.9)", () => {
     const b = scoreShell(scoreInput({ matrixStatus: "strained" }))
     expect(b.health).toBe(0.6)
     expect(b.effortFit).toBe(0.9)
     expect(b.total).toBeCloseTo(0.85 * 0.9 * 0.6 * 1.0 * 1.0 * 1.0 * 1.0 * 1.0)
     expect(scoreShell(scoreInput()).health).toBe(1.0)
   })
-  test("peakActive 泛化：任意 provider 计费高峰 0.93（不再限 glm 池）", () => {
+  test("peakActive generalization: billing peak 0.93 for any provider (no longer glm-pool-only)", () => {
     expect(scoreShell(scoreInput({ peakActive: true, pool: "glm" })).peak).toBeCloseTo(0.93)
     expect(scoreShell(scoreInput({ peakActive: true, pool: "copilot" })).peak).toBeCloseTo(0.93)
     expect(scoreShell(scoreInput({ peakActive: true, pool: "my-gateway" })).peak).toBeCloseTo(0.93)
     expect(scoreShell(scoreInput({ peakActive: false })).peak).toBe(1.0)
   })
-  test("water：GLM 高水位线性降、Copilot 临期烧积分提升", () => {
+  test("water: GLM linear decay at high watermark, Copilot near-expiry credit burn boost", () => {
     expect(scoreShell(scoreInput({ water: { glmFiveHourPct: 90 } })).water).toBeCloseTo(0.6)
     expect(scoreShell(scoreInput({ water: { glmFiveHourPct: 0 } })).water).toBe(1.0)
     const burn = scoreShell(scoreInput({
@@ -110,29 +112,29 @@ describe("scoreShell", () => {
       water: { copilotRemainingPct: 50, copilotResetDays: 3 },
     }))
     expect(burn.water).toBe(1.0)
-    // 复审P1-1：吃紧（rem<20%）临期不提权，与「吃紧→改 glm」一致
+    // re-review P1-1: tight (rem<20%) near expiry does not boost, consistent with "tight → move to glm"
     const tight = scoreShell(scoreInput({
       pool: "copilot",
       water: { copilotRemainingPct: 5, copilotResetDays: 2 },
     }))
     expect(tight.water).toBeLessThan(1.0)
   })
-  test("billingBoost：subscription=1.0 / api=0.85 / costBias 恒 1.0（池名规则已废除）", () => {
+  test("billingBoost: subscription=1.0 / api=0.85 / costBias always 1.0 (pool-name rules abolished)", () => {
     expect(scoreShell(scoreInput({ pool: "glm", billingBoost: 1.0 })).billingBoost).toBe(1.0)
     expect(scoreShell(scoreInput({ pool: "deepseek", billingBoost: BILLING_API_BOOST })).billingBoost).toBe(0.85)
     expect(scoreShell(scoreInput({ pool: "deepseek", billingBoost: BILLING_API_BOOST })).costBias).toBe(1.0)
     expect(scoreShell(scoreInput({ pool: "copilot" })).costBias).toBe(1.0)
   })
-  test("unknownPenalty：global 兜底模型 0.75、已知（exact/family）模型 1.0", () => {
+  test("unknownPenalty: global-fallback models 0.75, known (exact/family) models 1.0", () => {
     expect(scoreShell(scoreInput({ modelId: "mimo-v2.5-free" })).unknownPenalty).toBe(0.75)
     expect(scoreShell(scoreInput({ modelId: "glm-5.3" })).unknownPenalty).toBe(1.0)
-    expect(scoreShell(scoreInput({ modelId: "glm-5.4" })).unknownPenalty).toBe(1.0) // family 近似归类=已知
+    expect(scoreShell(scoreInput({ modelId: "glm-5.4" })).unknownPenalty).toBe(1.0) // family-level match counts as known
   })
 })
 
 // ================= 3. rankCandidates =================
 describe("rankCandidates", () => {
-  test("同 tier 按原始能力指数排序，而非壳名顺序", () => {
+  test("same tier sorted by raw capability index, not shell-name order", () => {
     try {
       writeFileSync(join(process.env.SWITCHMAN_STATE!, "capability.json"), JSON.stringify({
         source: "artificial-analysis", version: "within-tier", fetched_at: Date.now() / 1000,
@@ -154,7 +156,7 @@ describe("rankCandidates", () => {
       resetCapabilityCache()
     }
   })
-  test("favorites 优先：同 tier 内收藏模型压过更高原始指数；跨 tier 不逆序；immediate 不生效", () => {
+  test("favorites first: a favorited model overtakes a higher raw index within the same tier; no inversion across tiers; no effect under immediate", () => {
     try {
       writeFileSync(join(process.env.SWITCHMAN_STATE!, "capability.json"), JSON.stringify({
         source: "artificial-analysis", version: "preferred", fetched_at: Date.now() / 1000,
@@ -166,16 +168,17 @@ describe("rankCandidates", () => {
         rankable({ key: "luna", modelId: "gpt-5.6-luna", pool: "copilot", family: "gpt" }),
         rankable({ key: "terra", modelId: "gpt-5.6-terra", pool: "copilot", family: "gpt" }),
       ]
-      // 无偏好：luna 原始指数高居前；收藏 terra 后同 tier 反超
+      // No preference: luna's higher raw index leads; after favoriting terra, terra overtakes within the same tier
       expect(rankCandidates(shells, ctx()).ranked.map((s) => s.key)).toEqual(["luna", "terra"])
       expect(rankCandidates(shells, ctx({ preferredModels: new Set(["gpt-5.6-terra"]) })).ranked.map((s) => s.key)).toEqual(["terra", "luna"])
-      // 收藏不越级：等级距离是硬键（回退必须相邻等级），收藏仅在同距内生效——更近等级的非收藏仍领先
+      // Favorites never cross levels: level distance is a hard key (fallback must be adjacent), favorites apply only
+      // within the same distance — a non-favorited model at a nearer level still leads
       const mixed = [
         rankable({ key: "luna", modelId: "gpt-5.6-luna", pool: "copilot", family: "gpt" }),
         rankable({ key: "glm-a", modelId: "glm-5.3" }),
       ]
       expect(rankCandidates(mixed, ctx({ preferredModels: new Set(["glm-5.3"]) })).ranked.map((s) => s.key)).toEqual(["glm-a", "luna"])
-      // immediate 只按延迟，favorites 不生效
+      // immediate orders by latency only; favorites have no effect
       const slow = [
         rankable({ key: "luna", modelId: "gpt-5.6-luna", pool: "copilot", family: "gpt", latencyMs: 900 }),
         rankable({ key: "terra", modelId: "gpt-5.6-terra", pool: "copilot", family: "gpt", latencyMs: 10 }),
@@ -189,7 +192,7 @@ describe("rankCandidates", () => {
       resetCapabilityCache()
     }
   })
-  test("思考档分区：思考档候选领先，off 壳同距下殿后（off＝lane 级兜底）", () => {
+  test("thinking-effort partition: thinking candidates lead, off shells sink at equal distance (off = lane-level fallback)", () => {
     const shells = [
       rankable({ key: "a", modelId: "glm-5.3", effort: "off", matrixStatus: "strained", latencyMs: 999 }),
       rankable({ key: "c", modelId: "glm-4.5-air", effort: "high", pool: "copilot", matrixStatus: "ok", latencyMs: 1 }),
@@ -198,7 +201,7 @@ describe("rankCandidates", () => {
     expect(r.breakdowns.has("c")).toBe(true)
     expect(r.ranked.map((s) => s.key)).toEqual(["c", "a"])
   })
-  test("思考档分区：off 壳整体殿后，immediate 亦然（延迟只在同区内定序）", () => {
+  test("thinking-effort partition: off shells sink as a group, immediate alike (latency orders only within a partition)", () => {
     const shells = [
       rankable({ key: "s-off", modelId: "gpt-5.6", pool: "copilot", family: "gpt", effort: "off", latencyMs: 5 }),
       rankable({ key: "a-high", modelId: "glm-5.3", effort: "high", latencyMs: 100 }),
@@ -208,7 +211,7 @@ describe("rankCandidates", () => {
     const immediate = rankCandidates(shells, ctx({ lane: "hard", immediate: true }))
     expect(immediate.ranked.map((s) => s.key)).toEqual(["a-high", "s-off"])
   })
-  test("immediate 在同级模型中只按 latency 升序，忽略软系数", () => {
+  test("immediate sorts same-level models by latency ascending only, ignoring soft factors", () => {
     const shells = [
       rankable({ key: "slow-s", modelId: "gpt-5.6", pool: "copilot", family: "gpt", latencyMs: 900 }),
       rankable({ key: "fast-b", modelId: "glm-5.3-flash", latencyMs: 10 }),
@@ -216,7 +219,7 @@ describe("rankCandidates", () => {
     const r = rankCandidates(shells, ctx({ immediate: true }))
     expect(r.ranked.map((s) => s.key)).toEqual(["fast-b"])
   })
-  test("硬门：down/熔断/耗尽/退休/隔离全部剔除，strained 参与", () => {
+  test("hard gates: down/breaker/exhausted/retired/isolated all removed, strained still participates", () => {
     const shells = [
       rankable({ key: "down", matrixStatus: "down" }),
       rankable({ key: "breaker" }),
@@ -242,7 +245,7 @@ describe("rankCandidates", () => {
     expect(r.ranked.map((s) => s.key)).toEqual(["strained"])
     expect(r.breakdowns.get("strained")!.health).toBe(0.6)
   })
-  test("端到端小样本：main 没有 B 同级时，优先回退到相邻 A 而非更远 S", () => {
+  test("end-to-end mini sample: when main has no same-level B, fall back to the adjacent A rather than the farther S", () => {
     const shells = [
       rankable({ key: "ds-s", modelId: "deepseek-v4-pro", pool: "deepseek", family: "deepseek", latencyMs: 5 }),
       rankable({ key: "glm-a", modelId: "glm-5.3", latencyMs: 50 }),
@@ -260,7 +263,7 @@ describe("rankCandidates", () => {
     expect(r.breakdowns.get("ds-s")!.tier).toBe("S")
     expect(r.breakdowns.get("ds-s")!.billingBoost).toBe(0.85)
   })
-  test("未知 global 兜底模型固定 L1，不可作为 main 的跨级补位", () => {
+  test("unknown global-fallback model fixed at L1, cannot serve as main's cross-level fill", () => {
     const shells = [
       rankable({ key: "unknown-b", modelId: "totally-new-model", pool: "zen", family: "totally" }),
       rankable({ key: "known-b", modelId: "glm-5.3-flash", latencyMs: 50 }),
@@ -269,7 +272,7 @@ describe("rankCandidates", () => {
     expect(r.ranked.map((s) => s.key)).toEqual(["known-b"])
     expect(r.breakdowns.get("unknown-b")!.unknownPenalty).toBe(0.75)
   })
-  test("review 的 A 前二补位仅在 S 均被硬门剔除后成为首选", () => {
+  test("review's top-two A fill becomes the preferred pick only after all S candidates are hard-gated out", () => {
     const shells = [
       rankable({ key: "s-down", modelId: "gpt-5.6", pool: "copilot", family: "gpt", matrixStatus: "down", capability: "ro" }),
       rankable({ key: "a", modelId: "glm-5.3", family: "glm", capability: "ro" }),
@@ -278,7 +281,7 @@ describe("rankCandidates", () => {
     const r = rankCandidates(shells, ctx({ lane: "review" }))
     expect(r.ranked.map((s) => s.key)).toEqual(["a"])
   })
-  test("economy 有 L1/L2 时不使用 L5，L1/L2 都不可用才向上回退", () => {
+  test("economy with L1/L2 available does not use L5; only when both L1/L2 are unavailable does it fall back upward", () => {
     const shells = [
       rankable({ key: "l1", modelId: "unknown-model", matrixStatus: "ok" }),
       rankable({ key: "l2", modelId: "glm-4.5-air", matrixStatus: "ok" }),
@@ -289,12 +292,12 @@ describe("rankCandidates", () => {
   })
 })
 
-// ================= 4. 决策日志 =================
-describe("决策日志 logDecision", () => {
+// ================= 4. Decision log =================
+describe("decision log logDecision", () => {
   beforeAll(() => {
     mkdirSync(paths().dir, { recursive: true })
   })
-  test("写入 + 环形截断保留最近 200 行", async () => {
+  test("write + ring truncation keeps the most recent 200 lines", async () => {
     const rec = (name: string): DecisionRecord => ({
       at: new Date().toISOString(),
       lane: "main",
@@ -313,7 +316,7 @@ describe("决策日志 logDecision", () => {
 
 // ================= 5. probe strained =================
 describe("probe 429 → strained", () => {
-  test("classifyFailure + classifyProbeStatus（纯函数层）", () => {
+  test("classifyFailure + classifyProbeStatus (pure-function layer)", () => {
     expect(classifyFailure("HTTP 429: rate limited")).toBe("rate_limit")
     expect(classifyProbeStatus({ status: "down", reason: "HTTP 429: too many requests" })).toBe("strained")
     expect(classifyProbeStatus({ status: "down", reason: "HTTP 502 bad gateway" })).toBe("down")

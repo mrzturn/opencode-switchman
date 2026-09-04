@@ -1,5 +1,6 @@
-// 状态层：状态目录、常量、JSON 原子读写、注册表视图装配（清单 × 矩阵 × 凭据）
-// [2026-08-28]-[测试用 SWITCHMAN_STATE 覆盖 state 目录]
+// [2026-09-04]-[English localization: translate runtime messages and comments; no logic change]
+// State layer: state directory, constants, atomic JSON read/write, registry view assembly (manifest × matrix × credentials)
+// [2026-08-28]-[SWITCHMAN_STATE env overrides the state directory for tests]
 import { mkdirSync, readFileSync, writeFileSync, renameSync, statSync, existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -23,39 +24,39 @@ export const paths = () => {
     copilotQuota: join(dir, "copilot-quota.json"),
     dsQuota: join(dir, "ds-balance.json"),
     costs: join(dir, "costs.json"),
-    // [2026-08-31]-[动态能力分级缓存（source/version/fetched_at + 模型指数表；TTL 24h last-good）]
+    // [2026-08-31]-[dynamic capability grading cache (source/version/fetched_at + model index table; TTL 24h last-good)]
     capability: join(dir, "capability.json"),
-    // [2026-09-03]-[用户手动覆盖层（可手改、mtime 热加载）：
-    //  capability-rank.json=手动能力排名（顺序=能力降序，覆盖基础能力分）；
-    //  pool-config.json=任务池选配（lane→参与该任务池的 modelId 清单，同模型可跨池重复；非空才过滤）]
+    // [2026-09-03]-[user manual override layer (hand-editable, mtime hot-reload):
+    //  capability-rank.json = manual capability ranks (order = descending capability, overrides base capability score);
+    //  pool-config.json = task-pool selection (lane → list of modelIds joining that pool; one model may join several pools; non-empty filters)]
     capabilityRank: join(dir, "capability-rank.json"),
     poolConfig: join(dir, "pool-config.json"),
-    // [2026-08-29]-[动态矩阵 v1.3 新增状态文件]
+    // [2026-08-29]-[dynamic matrix v1.3 new state files]
     modelCatalog: join(dir, "model-catalog.json"),
-    // [2026-09-01]-[对齐 opencode 内置 github-copilot/models.ts：Copilot /models 真实 capabilities.supports
-    //  （messagesApi/reasoning_effort/adaptive_thinking/max_thinking_budget）缓存，TTL 24h；
-    //  取代 probe.ts/shells.ts 原先按 modelId 前缀猜测的固定 thinking 参数表]
+    // [2026-09-01]-[aligned with opencode built-in github-copilot/models.ts: cache of Copilot /models real capabilities.supports
+    //  (messagesApi/reasoning_effort/adaptive_thinking/max_thinking_budget), TTL 24h;
+    //  replaces the fixed thinking-parameter table probe.ts/shells.ts previously guessed by modelId prefix]
     copilotThinking: join(dir, "copilot-thinking.json"),
     shellSuperset: join(dir, "shell-superset.json"),
-    // [2026-09-01]-[provider.list 结果跨重启缓存：仅在真实探测成功（非回退）时写入，下次启动直接
-    //  用缓存建壳，免去每次重启都要重新等 provider.list 网络竞态——新 provider 由后台探测发现后
-    //  才提示重启，不再"启动即等、进来又提示重启"]
+    // [2026-09-01]-[provider.list result cached across restarts: written only on real probe success (not fallback), so next
+    //  startup builds shells straight from cache and no longer waits out the provider.list network race on every restart —
+    //  new providers are discovered by the background probe, only then is a restart hinted]
     providerCache: join(dir, "provider-cache.json"),
     activeMatrix: join(dir, "active-matrix.json"),
-    // [2026-08-29]-[评分引擎决策日志（环形截断 200 行，JSONL）]
+    // [2026-08-29]-[scoring engine decision log (ring-truncated 200 lines, JSONL)]
     decisions: join(dir, "routing-decisions.jsonl"),
     selfupdate: join(dir, "selfupdate.json"),
     doctorSnapshot: join(dir, "doctor-snapshot.json"),
-    // [2026-08-31]-[TUI 侧边栏实时状态：横幅内容改落盘，供 tui.tsx 轮询渲染而非刷屏 stderr]
+    // [2026-08-31]-[TUI sidebar live status: banner content persisted to disk, polled and rendered by tui.tsx instead of flooding stderr]
     statusLog: join(dir, "status-log.json"),
-    // [2026-09-01]-[TUI 侧边栏新增「各任务档位实时最佳候选」面板：横幅重建时同步落盘，供 tui.tsx 轮询渲染]
+    // [2026-09-01]-[TUI sidebar new "best candidate per task lane" panel: persisted on each banner rebuild, polled by tui.tsx]
     routeSnapshot: join(dir, "route-snapshot.json"),
-    // [2026-09-01]-[TUI 侧边栏新增「provider 水位/峰值」面板：与 [水位] 横幅同源、常态可见，供 tui.tsx 轮询渲染]
+    // [2026-09-01]-[TUI sidebar new "provider watermark/peak" panel: same source as the [WATERMARK] banner, always visible, polled by tui.tsx]
     quotaBrief: join(dir, "quota-brief.json"),
   }
 }
 
-// [2026-08-31]-[TUI 侧边栏实时状态环形日志：最多保留 STATUS_LOG_MAX 条，供 tui.tsx 轮询读取]
+// [2026-08-31]-[TUI sidebar live status ring log: keeps at most STATUS_LOG_MAX entries, polled by tui.tsx]
 export const STATUS_LOG_MAX = 20
 export type StatusLogEntry = { ts: string; text: string }
 export function appendStatusLog(text: string): void {
@@ -64,30 +65,30 @@ export function appendStatusLog(text: string): void {
     const prev = readJson<StatusLogEntry[]>(p) ?? []
     const next = [...prev, { ts: nowIso(), text }].slice(-STATUS_LOG_MAX)
     writeJsonAtomic(p, next)
-  } catch { /* fail-open：状态日志失败不影响主流程 */ }
+  } catch { /* fail-open: status log failure never blocks the main flow */ }
 }
 
-// [2026-09-01]-[各任务档位（lane）实时最佳候选快照：整体覆盖写入（非环形追加），供侧边栏「最佳模型」面板渲染]
+// [2026-09-01]-[per-lane live best-candidate snapshot: whole overwrite (not ring-append), renders the sidebar "best model" panel]
 export type RouteSnapshotEntry = { lane: string; best: string | null; degraded: boolean }
 export function writeRouteSnapshot(entries: RouteSnapshotEntry[]): void {
   try {
     writeJsonAtomic(paths().routeSnapshot, { ts: nowIso(), entries })
-  } catch { /* fail-open：快照写入失败不影响主流程 */ }
+  } catch { /* fail-open: snapshot write failure never blocks the main flow */ }
 }
 
-// [2026-09-01]-[provider 水位/峰值快照：整体覆盖写入，供侧边栏「水位」面板渲染；结构与 banner.ts
-//  providerStatusEntries 同源（observe=false 的 provider 已在调用方过滤，不出现在此文件里）。
-//  [2026-09-02]-[v2：一 provider 一条目块＋rows 子行（进度条/重置时间），替代单行 text]]
+// [2026-09-01]-[provider watermark/peak snapshot: whole overwrite, renders the sidebar "watermark" panel; shape shares the same
+//  source as banner.ts providerStatusEntries (providers with observe=false are filtered by the caller and never appear here).
+//  [2026-09-02]-[v2: one entry block per provider + rows sub-rows (progress bar/reset time), replacing the single-line text]]
 export type QuotaBriefRow = { label: string; text: string; usedPct: number | null; tail?: string }
 export type QuotaBriefEntry = { pool: string; label: string; rows: QuotaBriefRow[]; observeOnly: boolean; peakActive: boolean; stale: boolean }
 export function writeQuotaBrief(entries: QuotaBriefEntry[]): void {
   try {
     writeJsonAtomic(paths().quotaBrief, { ts: nowIso(), entries })
-  } catch { /* fail-open：快照写入失败不影响主流程 */ }
+  } catch { /* fail-open: snapshot write failure never blocks the main flow */ }
 }
 
 
-// ---- 常量 ----
+// ---- constants ----
 export const FAIL_WINDOW = 600
 export const FAIL_THRESHOLD = 2
 export const DOWN_TTL = 600
@@ -114,7 +115,7 @@ export function readJson<T>(path: string): T | null {
   }
 }
 
-// [2026-08-29]-[修复复审P1-写入竞态：临时文件名唯一化（pid+计数器），并发写不得互踩 tmp 再 rename 错文件]
+// [2026-08-29]-[re-review P1 fix — write race: unique temp file names (pid+counter); concurrent writes must not stomp each other's tmp before renaming the wrong file]
 let tmpCounter = 0
 export function writeJsonAtomic(path: string, obj: unknown): void {
   try {
@@ -125,16 +126,16 @@ export function writeJsonAtomic(path: string, obj: unknown): void {
     writeFileSync(tmp, JSON.stringify(obj, null, 2))
     renameSync(tmp, path)
   } catch (exc) {
-    // [2026-08-29]-[复审P2-写失败静默无痕：调用方无法感知未落盘，统一在此留痕]-[不改变 fail-open 语义]
-    console.error(`[opencode-switchman] 原子写失败（fail-open）: ${path}: ${exc}`)
+    // [2026-08-29]-[re-review P2 — silent write failure left no trace: callers could not tell the write never landed; log here uniformly]-[fail-open semantics unchanged]
+    console.error(`[opencode-switchman] atomic write failed (fail-open): ${path}: ${exc}`)
   }
 }
 
-// [2026-08-29]-[修复复审P1-写入竞态：同文件异步读改写串行化（简单互斥队列），并发不丢更新]
+// [2026-08-29]-[re-review P1 fix — write race: serialize async read-modify-write on the same file (simple mutex queue), concurrent updates are not lost]
 const pathLocks = new Map<string, Promise<unknown>>()
 export function withPathLock<T>(path: string, fn: () => T | Promise<T>): Promise<T> {
   const prev = pathLocks.get(path) ?? Promise.resolve()
-  const run = prev.then(fn, fn) // 前序失败不阻断后续
+  const run = prev.then(fn, fn) // earlier failure does not block later ones
   pathLocks.set(path, run.then(() => undefined, () => undefined))
   return run
 }
@@ -147,7 +148,7 @@ export function fileMtime(path: string): number {
   }
 }
 
-// ---- 壳清单与注册表视图 ----
+// ---- shell manifest and registry view ----
 export function loadManifest(): { shells: ShellManifestEntry[]; lanes: Record<string, string[]> } {
   const p = join(stateDir(), "shells.json")
   const custom = readJson<{ shells?: ShellManifestEntry[]; lanes?: Record<string, string[]> }>(p)
@@ -187,7 +188,7 @@ export function loadMatrix(): Matrix | null {
   return m
 }
 
-/** 清除过期熔断项，返回被清除键列表 */
+/** Purge expired breaker entries, return the purged keys */
 export function cleanExpired(routing: Routing, now = Date.now() / 1000): string[] {
   const dead: string[] = []
   for (const [k, t] of Object.entries(routing.down_expiry)) {
@@ -200,7 +201,7 @@ export function cleanExpired(routing: Routing, now = Date.now() / 1000): string[
   return dead
 }
 
-/** 注册表视图：清单 × 矩阵 ×（copilot 凭据在场）。status≠enabled 只降级不丢壳——六闸按矩阵致因区分。 */
+/** Registry view: manifest × matrix × (copilot credential present). status≠enabled downgrades without dropping the shell — the six gates distinguish by matrix cause. */
 export function buildRegistry(
   ctx: Pick<RuntimeContext, "manifest" | "matrix" | "credentials">,
 ): Record<string, ShellRegEntry> {
@@ -210,8 +211,8 @@ export function buildRegistry(
   for (const s of ctx.manifest.shells) {
     const entry: ShellRegEntry = { ...s, status: "enabled", comboKey: s.matrixKey }
     if (s.pool === "copilot" && copilotCredMissing) {
-      // [v1.1] Copilot 凭据缺失＝池级 unknown（不硬拦）：状态置 enabled 由矩阵/熔断闸兜底，
-      // 探针对该池标 unknown reason 提示。此处不做 disabled（fail-open 原则）。
+      // [v1.1] Copilot credential missing = pool-level unknown (no hard block): status stays enabled so the matrix/breaker gates catch it,
+      // the probe marks that pool unknown with a reason. Not disabled here (fail-open principle).
       entry.status = "enabled"
     } else if (combos) {
       const st = combos[s.matrixKey]
@@ -225,7 +226,7 @@ export function buildRegistry(
   return out
 }
 
-/** 运行时上下文装配（文件读全部在此，纯函数层不碰 IO；manifestOverride=动态超集清单视图） */
+/** Runtime context assembly (all file reads here; the pure-function layer touches no IO; manifestOverride = dynamic superset manifest view) */
 export function loadContext(
   options: SwitchmanOptions,
   credentials: RuntimeContext["credentials"],
@@ -252,14 +253,14 @@ export function laneShells(ctx: RuntimeContext, lane: string): string[] {
   return Array.isArray(l) ? l : []
 }
 
-/** 动态超集清单（config 钩子落盘 shell-superset.json；缺失/坏=null） */
+/** Dynamic superset manifest (config hook persists shell-superset.json; missing/broken = null) */
 export function loadSupersetShells(): { shells: ShellManifestEntry[]; generated_at?: string } | null {
   const data = readJson<{ shells?: unknown; generated_at?: string }>(paths().shellSuperset)
   if (!data || !Array.isArray(data.shells) || data.shells.length === 0) return null
   return { shells: data.shells as ShellManifestEntry[], generated_at: data.generated_at }
 }
 
-// [2026-09-01]-[跨重启 provider.list 缓存：models/providers 均为纯字符串数组，读坏/缺失=null（调用方回退阻塞探测）]
+// [2026-09-01]-[provider.list cache across restarts: models/providers are plain string arrays; broken/missing = null (caller falls back to blocking probe)]
 export interface ProviderCache { at: string; models: string[]; providers: string[] }
 export function loadProviderCache(): ProviderCache | null {
   const data = readJson<ProviderCache>(paths().providerCache)

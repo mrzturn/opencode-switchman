@@ -1,9 +1,11 @@
 #!/usr/bin/env node
-// opencode-switchman 一键安装/更新器（自包含零依赖；node>=18 或 bun 直接运行）
-// [2026-09-01]-[opencode 1.18.x 插件缓存按 spec 目录钉死：裸包名/`@latest` 首次装入后不再查 npm 新版
-//  （实测 ~/.cache/opencode/packages/opencode-switchman 恒为旧版）——唯一可靠更新路径＝把 plugin 条目
-//  改写为精确版本 opencode-switchman@x.y.z（每版本独立缓存目录）并清理旧缓存目录]-
-// 用法：update-cli.mjs [--version x.y.z] [--dry-run]
+// [2026-09-04]-[English localization: translate user-facing messages; no logic change]
+// opencode-switchman one-shot installer/updater (self-contained, zero-dependency; runs directly on node>=18 or bun)
+// [2026-09-01]-[opencode 1.18.x pins the plugin cache to the spec directory: after a bare package name/`@latest`
+//  is installed once, npm is no longer checked for newer versions (verified: ~/.cache/opencode/packages/opencode-switchman
+//  always stays on the old version)] - the only reliable update path = rewrite the plugin entry to the exact
+//  version opencode-switchman@x.y.z (each version gets its own cache directory) and prune stale cache directories
+// Usage: update-cli.mjs [--version x.y.z] [--dry-run]
 import { execFileSync } from "node:child_process"
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
@@ -27,15 +29,15 @@ export function cachePackagesDirOf(env = process.env, home = homedir()) {
 }
 
 /**
- * 把 opencode/tui 配置（JSONC）里的本插件条目改写为精确版本 spec。
- * 行级手术保留注释与既有内容（同 scripts/plugin-mode.ts 风格）。
- * 返回 { text, action, previous? }；action ∈ replaced|uncommented|inserted|created|noop|file-ref|unparseable。
+ * Rewrite the plugin entry for this package in the opencode/tui config (JSONC) to an exact-version spec.
+ * Line-level surgery preserves comments and existing content (same style as scripts/plugin-mode.ts).
+ * Returns { text, action, previous? }; action ∈ replaced|uncommented|inserted|created|noop|file-ref|unparseable.
  */
 export function rewriteSpec(text, spec, pkg = PKG) {
   const lines = text.split("\n")
   const specRe = new RegExp(`"(${pkg}(?:@[0-9A-Za-z.+~^*-]+)?)"`)
 
-  // 1) 已有激活条目：原位替换引号内 spec（元组 ["pkg",{...}] 只动第一项）
+  // 1) Active entry exists: replace the spec inside the quotes in place (for a tuple ["pkg",{...}] only the first item is touched)
   const activeIdx = lines.findIndex((l) => specRe.test(l) && !l.trim().startsWith("//"))
   if (activeIdx >= 0) {
     const line = lines[activeIdx]
@@ -46,39 +48,39 @@ export function rewriteSpec(text, spec, pkg = PKG) {
     return { text: lines.join("\n"), action: "replaced", previous }
   }
 
-  // 2) 只有被注释的条目：取消注释并改写（file:// 的注释行不动）
+  // 2) Only a commented-out entry exists: uncomment and rewrite (commented file:// lines are left alone)
   const commentedIdx = lines.findIndex((l) => !l.includes("file://") && new RegExp(`^\\s*//\\s*"${pkg}`).test(l.trim()))
   if (commentedIdx >= 0) {
     lines[commentedIdx] = lines[commentedIdx].replace(/^\s*\/\//, "").replace(specRe, `"${spec}"`)
     return { text: lines.join("\n"), action: "uncommented", previous: null }
   }
 
-  // 2.5) 激活的 file:// 源码引用（spec 不含引号包裹的裸包名，上面分支探测不到）→ 不改写，交给 mode 脚本管理
+  // 2.5) Active file:// source reference (its spec has no quoted bare package name, so the branch above cannot see it) → no rewrite; left to the mode scripts
   if (lines.some((l) => !l.trim().startsWith("//") && new RegExp(`"file://[^"]*${pkg}`).test(l))) {
     return { text, action: "file-ref", previous: null }
   }
 
-  // 3) 无条目：插入 plugin 数组（首元素带尾逗号＝对任意既有元素都合法）
+  // 3) No entry: insert into the plugin array (first element with a trailing comma = valid regardless of existing elements)
   const pluginIdx = lines.findIndex((l) => /"plugin"\s*:\s*\[/.test(l))
   if (pluginIdx >= 0) {
     const line = lines[pluginIdx]
     const open = line.indexOf("[")
     const close = line.indexOf("]", open)
     if (close >= 0) {
-      // 同行闭合的内联数组："plugin": [] 或 ["a","b"]
+      // Inline array closed on the same line: "plugin": [] or ["a","b"]
       const inner = line.slice(open + 1, close).trim()
       lines[pluginIdx] = inner
         ? line.slice(0, close) + `, "${spec}"` + line.slice(close)
         : line.slice(0, open) + `["${spec}"]` + line.slice(close + 1)
     } else {
-      // 多行数组：插入为首元素
+      // Multi-line array: insert as the first element
       const indent = line.match(/^\s*/)[0]
       lines.splice(pluginIdx + 1, 0, `${indent}  "${spec}",`)
     }
     return { text: lines.join("\n"), action: "inserted", previous: null }
   }
 
-  // 4) 文件为空 → 生成最小配置；文件存在但无法定位 plugin 数组 → 报错不写（绝不覆盖用户配置）
+  // 4) Empty file → generate a minimal config; file exists but the plugin array cannot be located → error without writing (never overwrite user config)
   if (text.trim() === "") {
     return {
       text: `{\n  "$schema": "https://opencode.ai/config.json",\n  "plugin": ["${spec}"]\n}\n`,
@@ -94,7 +96,7 @@ export function rewriteSpec(text, spec, pkg = PKG) {
   return { text, action: "unparseable", previous: null }
 }
 
-/** 清理 opencode 插件缓存里本包的全部目录（裸名与 @任意版本）；返回被删目录名 */
+/** Prune all directories of this package in the opencode plugin cache (bare name and @any-version); returns the removed directory names */
 export function pruneCaches(packagesDir, pkg = PKG) {
   if (!existsSync(packagesDir)) return []
   const removed = []
@@ -106,7 +108,7 @@ export function pruneCaches(packagesDir, pkg = PKG) {
   return removed
 }
 
-/** npm registry 最新版本号；node<18 无 fetch 时回退 curl */
+/** Latest version from the npm registry; falls back to curl when fetch is unavailable (node<18) */
 export async function latestVersion(fetchImpl = globalThis.fetch) {
   if (typeof fetchImpl === "function") {
     const ctl = new AbortController()
@@ -116,14 +118,14 @@ export async function latestVersion(fetchImpl = globalThis.fetch) {
       if (!res.ok) throw new Error(`npm registry HTTP ${res.status}`)
       const body = await res.json()
       if (typeof body.version === "string" && body.version) return body.version
-      throw new Error("npm registry 未返回 version")
+      throw new Error("npm registry did not return a version")
     } finally {
       clearTimeout(timer)
     }
   }
   const raw = execFileSync("curl", ["-fsSL", REGISTRY_LATEST], { encoding: "utf8", timeout: 10_000 })
   const hit = /"version"\s*:\s*"([^"]+)"/.exec(raw)
-  if (!hit) throw new Error("npm registry 响应不含 version")
+  if (!hit) throw new Error("npm registry response contains no version")
   return hit[1]
 }
 
@@ -136,8 +138,8 @@ function firstExisting(dir, names) {
 }
 
 /**
- * 执行安装/更新：改写 opencode 与 tui 配置条目 → 清理旧缓存 → 升级场景标记已升级待重启。
- * 返回 { spec, actions }；--dry-run 只打印计划不写盘。
+ * Perform install/update: rewrite the opencode and tui config entries → prune stale caches → on upgrade, mark upgraded-pending-restart.
+ * Returns { spec, actions }; --dry-run only prints the plan without writing to disk.
  */
 export async function run(argv = process.argv.slice(2), io = {}) {
   const env = io.env ?? process.env
@@ -146,13 +148,14 @@ export async function run(argv = process.argv.slice(2), io = {}) {
   const dry = argv.includes("--dry-run")
   const vi = argv.indexOf("--version")
   const version = vi >= 0 ? String(argv[vi + 1] ?? "") : await latestVersion()
-  if (!/^\d+\.\d+\.\d+/.test(version)) throw new Error(`无效版本号: ${version}`)
+  if (!/^\d+\.\d+\.\d+/.test(version)) throw new Error(`Invalid version: ${version}`)
   const spec = `${PKG}@${version}`
 
   const cfgDir = configDirOf(env, home)
   const mainPath = firstExisting(cfgDir, ["opencode.jsonc", "opencode.json"]) ?? join(cfgDir, "opencode.jsonc")
-  // [2026-09-01]-[升级场景（有 opencode 配置、tui 缺失）时 tui 被静默跳过，与 README create-if-missing 承诺不符]-
-  //  改为缺失即补建（侧边栏面板），与 plugin-mode.ts 口径一致
+  // [2026-09-01]-[In the upgrade scenario (opencode config present, tui missing) the tui was silently skipped,
+  //  contradicting the README create-if-missing promise] - now create it when missing (sidebar panel),
+  //  consistent with plugin-mode.ts
   const tuiPath = firstExisting(cfgDir, ["tui.jsonc", "tui.json"]) ?? join(cfgDir, "tui.jsonc")
   const targets = [{ path: mainPath, text: existsSync(mainPath) ? readFileSync(mainPath, "utf8") : "" }]
   if (tuiPath) targets.push({ path: tuiPath, text: existsSync(tuiPath) ? readFileSync(tuiPath, "utf8") : '{\n  "$schema": "https://opencode.ai/tui.json",\n  "plugin": []\n}\n' })
@@ -161,16 +164,16 @@ export async function run(argv = process.argv.slice(2), io = {}) {
   for (const t of targets) {
     const r = rewriteSpec(t.text, spec)
     actions.push({ file: t.path, action: r.action, previous: r.previous ?? null })
-    if (r.action === "unparseable") throw new Error(`${t.path} 中无法定位 plugin 数组，请手动编辑后重试`)
+    if (r.action === "unparseable") throw new Error(`Cannot locate the plugin array in ${t.path}; edit it manually and retry`)
     if (r.action === "file-ref") {
-      log(`[switchman] 跳过 ${t.path}：当前是 file:// 源码引用，请用 bun run mode:prod / mode:local 管理，不做改写`)
+      log(`[switchman] Skipped ${t.path}: it is a file:// source reference; manage it with bun run mode:prod / mode:local, no rewrite`)
       continue
     }
     if (r.action === "noop") {
-      log(`[switchman] ${t.path} 已是 ${spec}`)
+      log(`[switchman] ${t.path} is already ${spec}`)
       continue
     }
-    log(`[switchman] ${dry ? "将改写" : "已改写"} ${t.path}: ${r.previous ? `${r.previous} → ` : ""}${spec}（${r.action}）`)
+    log(`[switchman] ${dry ? "Will rewrite" : "Rewrote"} ${t.path}: ${r.previous ? `${r.previous} → ` : ""}${spec} (${r.action})`)
     if (!dry) {
       mkdirSync(cfgDir, { recursive: true })
       writeFileSync(t.path, r.text)
@@ -180,28 +183,29 @@ export async function run(argv = process.argv.slice(2), io = {}) {
   let pruned = []
   if (!dry) {
     pruned = pruneCaches(cachePackagesDirOf(env, home))
-    if (pruned.length > 0) log(`[switchman] 已清理 opencode 插件缓存: ${pruned.join("、")}`)
+    if (pruned.length > 0) log(`[switchman] Pruned opencode plugin caches: ${pruned.join(", ")}`)
     const mainAct = actions.find((a) => a.file === mainPath)?.action
     if (mainAct === "replaced" || mainAct === "uncommented") {
-      // 升级语义：标记「已升级待重启」横幅（重启后自然失效）
+      // Upgrade semantics: mark the "upgraded, pending restart" banner (expires naturally after restart)
       const stDir = stateDirOf(env, home)
       mkdirSync(stDir, { recursive: true })
       writeFileSync(join(stDir, "upgraded.flag"), "")
     }
   } else {
-    log("[switchman] dry-run：未写入任何文件、未清理缓存")
+    log("[switchman] dry-run: no files written, no caches pruned")
   }
-  log(`[switchman] 完成（${spec}）。重启 opencode（app 退出重开 / tui 重进）后新版本生效。`)
+  log(`[switchman] Done (${spec}). Restart opencode (quit and relaunch the app / re-enter the tui) for the new version to take effect.`)
   return { spec, actions }
 }
 
-// [2026-09-01]-[macOS /var/folders→/private/var/folders 符号链接致 import.meta.url(realpath) 与
-//  pathToFileURL(argv[1])(原样) 永不相等，脚本静默空转 exit 0]-[入口判定改为对 argv[1] 取 realpath]
+// [2026-09-01]-[On macOS the /var/folders→/private/var/folders symlink makes import.meta.url (realpath) and
+//  pathToFileURL(argv[1]) (as-is) never equal, so the script silently no-ops with exit 0] - the entry check
+//  now takes the realpath of argv[1]
 let entryUrl = null
 try { entryUrl = pathToFileURL(realpathSync(process.argv[1] ?? "")).href } catch {}
 if (import.meta.url === entryUrl) {
   run().catch((exc) => {
-    console.error(`[switchman] 更新失败: ${exc?.message ?? exc}`)
+    console.error(`[switchman] Update failed: ${exc?.message ?? exc}`)
     process.exit(1)
   })
 }

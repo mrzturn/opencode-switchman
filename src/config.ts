@@ -6,10 +6,11 @@ import type { PeakRange, ProviderKey, ProviderUserConfig } from "./provider-conf
 import type { CapabilityTierThresholds, Lane, Pool, RoutePolicy, SwitchmanOptions } from "./types"
 
 export interface ConfigDiagnostic { code: string; level: "error" | "warn" | "info"; path?: string; hint?: string }
-// [2026-08-31]-[去厂商化：providers 开放化——任意 provider 键合法（opencode 官方/自定义），
-//  billing 显式配置驱动订阅系数；内置三键仅作出厂缺省与配额池映射]
-// [2026-09-01]-[配置面统一：行为段（quota 阈值/cost/capability/matrix/banner/rules/lanes）迁入本文件；
-//  plugin 元组同名 options 降级为兼容 shim（显式值优先一代，doctor 报 SWM044）]
+// [2026-09-04]-[English localization: translate CLI messages and comments; no logic change]
+// [2026-08-31]-[De-vendoring: providers opened up — any provider key is legal (opencode official/custom);
+//  billing explicit config drives the subscription coefficient; the three builtin keys serve only as factory defaults and quota-pool mapping]
+// [2026-09-01]-[Unified config surface: behavior sections (quota thresholds/cost/capability/matrix/banner/rules/lanes) moved into this file;
+//  the plugin tuple's same-name options are demoted to a compatibility shim (explicit values win over gen-1, doctor reports SWM044)]
 export interface UserQuotaConfig { glmFiveHourReservePct: number; deepseekLowBalanceWarnCny: number }
 export interface UserCapabilityConfig { enabled: boolean; source: "auto" | "artificial-analysis" | "openrouter"; apiKey?: string; tierThresholds?: CapabilityTierThresholds | "quantile"; lmarenaCheck: boolean }
 export interface UserMatrixConfig { mode: "auto" | "app" | "tui" | "legacy"; watch: boolean }
@@ -26,7 +27,7 @@ export interface UserConfig {
   context: UserContextConfig
   builtinAgents: { mode: "deny" | "allow" }
   injection: { mode: "chain" | "all" }
-  // [2026-09-04]-[autoRedirect：deny 静默改派开关（默认 true）；relay.image：图片中继开关（默认 true）]
+  // [2026-09-04]-[autoRedirect: silent-redirect-on-deny switch (default true); relay.image: image relay switch (default true)]
   dispatch: { autoRedirect: boolean }
   relay: { image: boolean }
   lanes: Partial<Record<Lane, string[]>>
@@ -37,7 +38,7 @@ export interface LoadedUserConfig { path: string; config: UserConfig; diagnostic
 export const DEFAULT_CONTEXT_TOKENS = { soft: 60_000, hard: 80_000, force: 100_000 } as const
 export const DEFAULT_DELEGATION_FLOOR = 3_000
 
-/** 行为段出厂缺省（fillMissing 基线；类型坏值才回退并报 SWM037） */
+/** Factory defaults for behavior sections (fillMissing baseline; only bad-typed values fall back and report SWM037) */
 export function defaultBehaviorConfig(): Pick<UserConfig, "quota" | "cost" | "capability" | "matrix" | "banner" | "rules" | "context" | "builtinAgents" | "injection" | "dispatch" | "relay" | "lanes"> {
   return {
     quota: { glmFiveHourReservePct: 90, deepseekLowBalanceWarnCny: 10 },
@@ -60,7 +61,7 @@ export function resolveOpencodeConfigDir(env: Record<string, string | undefined>
   return join(env.XDG_CONFIG_HOME || join(home, ".config"), "opencode")
 }
 
-/** JSONC 仅移除注释和尾逗号，字符串/转义状态不参与剥离。 */
+/** JSONC only strips comments and trailing commas; string/escape states are excluded from stripping. */
 export function parseJsonc(text: string): { value: unknown } | { error: { line: number; col: number; message: string } } {
   let out = "", i = 0, str = false, quote = "", line = 1, col = 1
   const put = (c: string) => { out += c; if (c === "\n") { line++; col = 1 } else col++ }
@@ -90,7 +91,7 @@ export function parseJsonc(text: string): { value: unknown } | { error: { line: 
   try { return { value: JSON.parse(out) } } catch (e) {
     const m = /position (\d+)/.exec(String(e)); const fallback = /:\s*[,}\]]/.exec(out)
     const pos = m ? Number(m[1]) : fallback ? fallback.index + fallback[0].length - 1 : 0
-    const before = out.slice(0, pos); return { error: { line: before.split("\n").length, col: pos - before.lastIndexOf("\n"), message: "JSONC 解析失败" } }
+    const before = out.slice(0, pos); return { error: { line: before.split("\n").length, col: pos - before.lastIndexOf("\n"), message: "JSONC parse failed" } }
   }
 }
 
@@ -128,8 +129,8 @@ export function validateUserConfig(value: unknown): { config: UserConfig; diagno
   const defaults = { version: 1, providers: defaultProviderConfig(), extensions: {} as Record<string, unknown>, ...structuredClone(defaultBehaviorConfig()) }
   const filled = plain(fillMissing(value, defaults)) ? fillMissing(value, defaults) : structuredClone(defaults); const ds: ConfigDiagnostic[] = []
   if (!plain(filled.providers)) filled.providers = structuredClone(defaults.providers)
-  // [2026-08-31]-[去厂商化：逐键校验扩展到任意 provider 键；内置键用规格缺省，自定义键用通用缺省（billing 默认 api）。
-  //  字段缺省（undefined）=内存补齐不报错（自定义键最小配置友好）；类型坏值才给诊断并回退]
+  // [2026-08-31]-[De-vendoring: per-key validation extended to any provider key; builtin keys use spec defaults, custom keys use generic defaults (billing default api).
+  //  Missing fields (undefined) = filled in memory without diagnostics (friendly to minimal custom-key config); only bad-typed values get a diagnostic and fall back]
   const keys = [...new Set([...PROVIDER_KEYS, ...Object.keys(filled.providers)])]
   for (const key of keys) {
     const canonical = canonicalKeyOf(key)
@@ -140,7 +141,7 @@ export function validateUserConfig(value: unknown): { config: UserConfig; diagno
       if (p[field] === undefined) { p[field] = def[field]; continue }
       if (typeof p[field] !== "boolean") { ds.push({ code: "SWM030", level: "error", path: `providers.${key}.${field}` }); p[field] = def[field] }
     }
-    // [2026-08-31]-[billing 字段：subscription|api 显式声明；非法值内存回退出厂缺省（SWM036）]
+    // [2026-08-31]-[billing field: subscription|api declared explicitly; illegal values fall back in memory to the factory default (SWM036)]
     if (p.billing === undefined) p.billing = def.billing
     else if (p.billing !== "subscription" && p.billing !== "api") { ds.push({ code: "SWM036", level: "error", path: `providers.${key}.billing` }); p.billing = def.billing }
     if (p.peak === undefined) p.peak = structuredClone(def.peak)
@@ -150,7 +151,7 @@ export function validateUserConfig(value: unknown): { config: UserConfig; diagno
       if (code) { ds.push({ code, level: "error", path: `providers.${key}.peak.ranges` }); p.peak.ranges = structuredClone(def.peak.ranges) }
     }
   }
-  // [2026-09-01]-[行为段轻校验：类型坏值→SWM037 回退缺省；fillMissing 已补缺省，此处只兜坏值]
+  // [2026-09-01]-[Behavior-section light validation: bad-typed values → SWM037 fallback to defaults; fillMissing already fills defaults, this only catches bad values]
   const bad = (path: string, fix: () => void) => { ds.push({ code: "SWM037", level: "error", path }); fix() }
   const q = filled.quota
   if (typeof q.glmFiveHourReservePct !== "number" || !(q.glmFiveHourReservePct > 0 && q.glmFiveHourReservePct <= 100)) bad("quota.glmFiveHourReservePct", () => { q.glmFiveHourReservePct = defaults.quota.glmFiveHourReservePct })
@@ -159,20 +160,20 @@ export function validateUserConfig(value: unknown): { config: UserConfig; diagno
     if (typeof (filled[section] as any)[field] !== "boolean") bad(`${section}.${field}`, () => { (filled[section] as any)[field] = (defaults[section] as any)[field] })
   }
   if (!["auto", "app", "tui", "legacy"].includes(filled.matrix.mode)) bad("matrix.mode", () => { filled.matrix.mode = defaults.matrix.mode })
-  // [2026-09-04]-[新行为段校验：rules.delegationFloor 正数；context 三水位正整数且 soft<hard<force
-  //  （违序整段回退缺省）；builtinAgents/injection 枚举（默认 deny/chain）]
+  // [2026-09-04]-[New behavior-section validation: rules.delegationFloor non-negative; context three watermarks positive integers with soft<hard<force
+  //  (out-of-order falls back to defaults as a whole); builtinAgents/injection enums (default deny/chain)]
   if (typeof filled.rules.delegationFloor !== "number" || !(filled.rules.delegationFloor >= 0)) bad("rules.delegationFloor", () => { filled.rules.delegationFloor = defaults.rules.delegationFloor })
   const tk = filled.context
   const tokensOk = [tk.softTokens, tk.hardTokens, tk.forceTokens].every((n) => Number.isInteger(n) && n > 0) && tk.softTokens < tk.hardTokens && tk.hardTokens < tk.forceTokens
-  if (!tokensOk) bad("context（soft<hard<force 需为正整数）", () => { filled.context = structuredClone(defaults.context) })
+  if (!tokensOk) bad("context (soft<hard<force must be positive integers)", () => { filled.context = structuredClone(defaults.context) })
   if (typeof tk.gates !== "boolean") bad("context.gates", () => { filled.context.gates = defaults.context.gates })
-  // [2026-09-04]-[auto-handover 开关：超强制压缩水位后 tool.execute.after 自动 /handover（默认 true）]
+  // [2026-09-04]-[auto-handover switch: after exceeding the force-compaction watermark, tool.execute.after auto-triggers /handover (default true)]
   if (typeof tk.autoHandover !== "boolean") bad("context.autoHandover", () => { filled.context.autoHandover = defaults.context.autoHandover })
   if (filled.builtinAgents.mode !== "deny" && filled.builtinAgents.mode !== "allow") bad("builtinAgents.mode", () => { filled.builtinAgents.mode = defaults.builtinAgents.mode })
   if (filled.injection.mode !== "chain" && filled.injection.mode !== "all") bad("injection.mode", () => { filled.injection.mode = defaults.injection.mode })
   if (!["auto", "artificial-analysis", "openrouter"].includes(filled.capability.source)) bad("capability.source", () => { filled.capability.source = defaults.capability.source })
   if (filled.capability.apiKey !== undefined && typeof filled.capability.apiKey !== "string") bad("capability.apiKey", () => { filled.capability.apiKey = undefined })
-  // lanes：每条值须为 string[]；单条坏值只回退该 lane（其余保留）
+  // lanes: each value must be string[]; a single bad value only falls back that lane (rest kept)
   if (!plain(filled.lanes)) bad("lanes", () => { filled.lanes = structuredClone(defaults.lanes) })
   else for (const lane of Object.keys(filled.lanes) as Lane[]) {
     const v = filled.lanes[lane]
@@ -196,17 +197,17 @@ export function loadUserConfig(ctx: { env?: Record<string, string | undefined>; 
   if (!existsSync(path)) { try { mkdirSync(dir, { recursive: true }) } catch {}; const release = lock(path); let generated = false; try { if (!existsSync(path) && release) generated = writeTemplate(path) } finally { release?.() }; if (generated) diagnostics.push({ code: "SWM002", level: "info", path }) }
   let raw: unknown = {}; let bad = false
   try { if (statSync(path).size > 256 * 1024) { diagnostics.push({ code: "SWM003", level: "error", path }); bad = true } else { const parsed = parseJsonc(readFileSync(path, "utf8")); if ("error" in parsed) { diagnostics.push({ code: "SWM001", level: "error", path }); bad = true } else raw = parsed.value } } catch { bad = true }
-  // 超限文件不得移动或覆盖；这是保护未知/误放入内容的 fail-open 边界。
+  // Over-limit files must not be moved or overwritten; this is the fail-open boundary protecting unknown/misplaced content.
   if (bad && existsSync(path) && !diagnostics.some((d) => d.code === "SWM003")) {
-    try { if (!lstatSync(path).isSymbolicLink()) { const backup = `${path}.invalid-${Date.now()}-${process.pid}.bak`; renameSync(path, backup); if (writeTemplate(path)) diagnostics.push({ code: "SWM002", level: "info", path }) } } catch { /* 原文件必须保留 */ }
+    try { if (!lstatSync(path).isSymbolicLink()) { const backup = `${path}.invalid-${Date.now()}-${process.pid}.bak`; renameSync(path, backup); if (writeTemplate(path)) diagnostics.push({ code: "SWM002", level: "info", path }) } } catch { /* the original file must be preserved */ }
     raw = {}
   }
   const checked = validateUserConfig(raw); diagnostics.push(...checked.diagnostics)
   return { path, config: checked.config, diagnostics, generated: diagnostics.some((d) => d.code === "SWM002") }
 }
 
-/** [2026-09-01]-[有效 options 合成：jsonc 行为段为基线，plugin 元组显式键覆盖（兼容一代，doctor 报 SWM044）；
- *  quota.*.enabled / billingWindow 维持既有 SWM042/043 口径，不在此清点 */
+/** [2026-09-01]-[Effective options composition: jsonc behavior sections are the baseline, plugin tuple explicit keys override (gen-1 compatible, doctor reports SWM044);
+ *  quota.*.enabled / billingWindow keep the existing SWM042/043 semantics, not inventoried here */
 export function resolveEffectiveOptions(raw: unknown, cfg: UserConfig): { options: SwitchmanOptions; legacySections: string[] } {
   const o = (raw ?? {}) as SwitchmanOptions
   const has = (obj: unknown, key: string) => plain(obj) && Object.prototype.hasOwnProperty.call(obj, key)
@@ -231,7 +232,7 @@ export function resolveEffectiveOptions(raw: unknown, cfg: UserConfig): { option
     context: has(o, "context") ? { ...cfg.context, ...o.context } : cfg.context,
     builtinAgents: has(o, "builtinAgents") ? { ...cfg.builtinAgents, ...o.builtinAgents } : cfg.builtinAgents,
     injection: has(o, "injection") ? { ...cfg.injection, ...o.injection } : cfg.injection,
-    // [2026-09-04]-[autoRedirect/图片中继开关：jsonc 行为段为基线，元组显式键覆盖（同 builtinAgents 模式）]
+    // [2026-09-04]-[autoRedirect/image-relay switches: jsonc behavior sections are the baseline, tuple explicit keys override (same pattern as builtinAgents)]
     dispatch: has(o, "dispatch") ? { ...cfg.dispatch, ...o.dispatch } : cfg.dispatch,
     relay: has(o, "relay") ? { ...cfg.relay, ...o.relay } : cfg.relay,
     lanes: has(o, "lanes") ? o.lanes : cfg.lanes,
@@ -256,8 +257,8 @@ export function routePolicy(config: UserConfig, legacy?: Partial<Record<Pool, bo
   return out
 }
 
-/** [2026-08-31]-[去厂商化：任意 provider 的有效配置解析——精确键→别名/前缀归一键→通用缺省；
- *  自定义键缺省＝不参与路由、可观察、api 计费、无高峰（内存补缺，不写回）] */
+/** [2026-08-31]-[De-vendoring: effective config resolution for any provider — exact key → alias/prefix canonical key → generic defaults;
+ *  custom-key defaults = no routing, observable, api billing, no peak (filled in memory, not written back)] */
 export function providerEntry(config: UserConfig, providerId: string): ProviderUserConfig {
   const direct = config.providers[providerId]
   if (direct && plain(direct)) {
@@ -268,7 +269,7 @@ export function providerEntry(config: UserConfig, providerId: string): ProviderU
   return structuredClone(genericProviderDefaults())
 }
 
-/** provider 计费结构（subscription|api）；唯一来源是用户 jsonc 显式声明（含出厂缺省） */
+/** provider billing structure (subscription|api); the only source is the user jsonc explicit declaration (including factory defaults) */
 export function billingOfProvider(config: UserConfig, providerId: string): "subscription" | "api" {
   return providerEntry(config, providerId).billing
 }
@@ -279,13 +280,13 @@ function peakEntryActive(now: Date, peak: ProviderUserConfig["peak"]): boolean {
   return peak.ranges.some((r) => r.days.some((d) => { const a = minute(r.start), b = minute(r.end); return a < b ? d === parts.wd && nowMin >= a && nowMin < b : (d === parts.wd && nowMin >= a) || (d % 7 + 1 === parts.wd && nowMin < b) }))
 }
 
-/** 任意 provider 的高峰窗口是否活跃（事实口径：只看时刻表，不看 enabled；展示用） */
+/** Whether any provider's peak window is active (factual semantics: schedule only, ignores enabled; for display) */
 export function providerPeakActive(now: Date, cfg: UserConfig, providerId: string): boolean {
   return peakEntryActive(now, providerEntry(cfg, providerId).peak)
 }
 
-/** [2026-08-31]-[终审P1-1：路由口径高峰——enabled:false 的 provider 高峰/水位不参与排序（与
- *  模板注释「水位/高峰/耗尽是否参与路由排序与硬拦」一致）；展示口径用 providerPeakActive] */
+/** [2026-08-31]-[Final review P1-1: routing-semantics peak — providers with enabled:false have their peak/watermark excluded from
+ *  ranking (consistent with the template comment "whether watermark/peak/exhaustion participates in routing rank and hard block"); use providerPeakActive for display] */
 export function routingPeakActive(now: Date, cfg: UserConfig, providerId: string): boolean {
   const entry = providerEntry(cfg, providerId)
   return entry.enabled && peakEntryActive(now, entry.peak)

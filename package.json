@@ -1,7 +1,7 @@
 {
   "name": "opencode-switchman",
   "version": "0.2.7",
-  "description": "OpenCode 编排插件：六档壳矩阵调度（ROUTE_META 硬校验 / 熔断自愈 / 探针 / 三池配额感知 / 成本感知 tiebreaker）",
+  "description": "OpenCode orchestration plugin: six-lane shell matrix dispatch (hard ROUTE_META validation / breaker self-healing / probes / three-pool quota awareness / cost-aware tiebreaker)",
   "license": "MIT",
   "repository": {
     "type": "git",

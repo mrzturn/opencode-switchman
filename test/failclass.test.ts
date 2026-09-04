@@ -1,4 +1,5 @@
-// 厂商无关失败分类层 + 模型退休 fixture（bun test）
+// [2026-09-04]-[English localization: translate comments and expectation strings; no test-logic change]
+// Vendor-agnostic failure classification layer + model retirement fixtures (bun test)
 import { describe, test, expect, beforeAll } from "bun:test"
 import { mkdtempSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -28,77 +29,78 @@ function shell(provider = "p", modelId = "model"): ShellRegEntry {
   } as ShellRegEntry
 }
 
-// ================= 1. classifyFailure 判定表 =================
-describe("失败分类 classifyFailure", () => {
-  test("not_found：404 与模型名失效/下线", () => {
+// ================= 1. classifyFailure verdict table =================
+describe("failure classification classifyFailure", () => {
+  test("not_found: 404 and stale/decommissioned model names", () => {
     expect(classifyFailure("HTTP 404: model not found")).toBe("not_found")
     expect(classifyFailure("Model unknown model or decommissioned")).toBe("not_found")
-    expect(classifyFailure("已下线")).toBe("not_found")
+    expect(classifyFailure("已下线")).toBe("not_found") // fixture: Chinese sentinel emitted by local probe
   })
-  test("rate_limit：429 与限流字样", () => {
+  test("rate_limit: 429 and throttling wording", () => {
     expect(classifyFailure("HTTP 429: rate limited")).toBe("rate_limit")
     expect(classifyFailure("too many requests, throttled")).toBe("rate_limit")
   })
-  test("quota：402/余额/配额与 403-quota 特例", () => {
+  test("quota: 402/balance/quota and the 403-quota special case", () => {
     expect(classifyFailure("HTTP 402: payment required")).toBe("quota")
     expect(classifyFailure("insufficient balance")).toBe("quota")
     expect(classifyFailure("HTTP 403: monthly quota exceeded")).toBe("quota")
     expect(classifyFailure("HTTP 403: credit limit reached")).toBe("quota")
   })
-  test("auth：401/密钥与 403-forbidden 归 auth", () => {
+  test("auth: 401/api key and 403-forbidden classified as auth", () => {
     expect(classifyFailure("HTTP 401: unauthorized")).toBe("auth")
     expect(classifyFailure("invalid api key")).toBe("auth")
     expect(classifyFailure("HTTP 403: Forbidden")).toBe("auth")
   })
-  test("server：5xx 与过载", () => {
+  test("server: 5xx and overload", () => {
     expect(classifyFailure("HTTP 500")).toBe("server")
     expect(classifyFailure("HTTP 502 bad gateway")).toBe("server")
   })
-  test("network：超时与连接层", () => {
+  test("network: timeouts and connection-layer errors", () => {
     expect(classifyFailure("TimeoutError")).toBe("network")
     expect(classifyFailure("ECONNREFUSED")).toBe("network")
   })
-  test("兜底 unknown", () => {
+  test("fallback unknown", () => {
     expect(classifyFailure("some random gibberish")).toBe("unknown")
   })
-  // [2026-09-01]-[配置层失败分离：调度层（壳未注册）不毒化探针 ok 的模型；端点不兼容＝永久配置错误]
-  test("shell_injection：未注册壳名（调度层失败）", () => {
+  // [2026-09-01]-[config-layer failures separated: dispatch-layer (shell unregistered) does not poison probe-ok models;
+  //  incompatible endpoint = permanent config error]
+  test("shell_injection: unregistered shell name (dispatch-layer failure)", () => {
     expect(classifyFailure("Unknown agent type: copilot-mx-x-high is not a valid agent type")).toBe("shell_injection")
     expect(classifyFailure("Error: no such agent: foo")).toBe("shell_injection")
   })
-  test("endpoint：端点/形态不兼容（永久配置错误）", () => {
+  test("endpoint: incompatible endpoint/shape (permanent config error)", () => {
     expect(classifyFailure('model "m" is not accessible via the /chat/completions endpoint')).toBe("endpoint")
     expect(classifyFailure("responses API does not support this model")).toBe("endpoint")
     expect(classifyFailure("unsupported endpoint")).toBe("endpoint")
   })
 })
 
-// ================= 2. rate_limit 短 TTL vs 默认长 TTL =================
-describe("实调失败 TTL 分离", () => {
-  test("限流短标记在 10 分钟后过期，真失败长标记仍在", () => {
+// ================= 2. rate_limit short TTL vs default long TTL =================
+describe("real-call failure TTL separation", () => {
+  test("rate-limit short mark expires after 10 minutes, real-failure long mark persists", () => {
     const now = Date.now()
     markRealFailure("rl|combo", now, RATE_LIMIT_TTL_MS)
     markRealFailure("lf|combo", now)
     expect(isRealFailedCombo("rl|combo", now)).toBe(true)
     expect(isRealFailedCombo("lf|combo", now)).toBe(true)
-    // 过了短 TTL：限流过期、长标记仍有效
+    // After the short TTL: the rate-limit mark expired, the long-lived mark still holds
     expect(isRealFailedCombo("rl|combo", now + RATE_LIMIT_TTL_MS + 1)).toBe(false)
     expect(isRealFailedCombo("lf|combo", now + RATE_LIMIT_TTL_MS + 1)).toBe(true)
-    // 过了长 TTL：两者都过期
+    // After the long TTL: both expired
     expect(isRealFailedCombo("lf|combo", now + REAL_FAIL_TTL_MS + 1)).toBe(false)
   })
-  // [2026-09-01]-[endpoint 6h 长 TTL；剩余毫秒查询（横幅 TTL 展示）]
-  test("endpoint 长 TTL 与 realFailedRemainingMs", () => {
+  // [2026-09-01]-[endpoint 6h long TTL; remaining-ms query (banner TTL display)]
+  test("endpoint long TTL and realFailedRemainingMs", () => {
     const now = Date.now()
     markRealFailure("ep|combo", now, ENDPOINT_TTL_MS)
-    expect(isRealFailedCombo("ep|combo", now + REAL_FAIL_TTL_MS + 1)).toBe(true) // 30m 后仍在
-    expect(isRealFailedCombo("ep|combo", now + ENDPOINT_TTL_MS + 1)).toBe(false) // 6h 后过期
+    expect(isRealFailedCombo("ep|combo", now + REAL_FAIL_TTL_MS + 1)).toBe(true) // still held after 30m
+    expect(isRealFailedCombo("ep|combo", now + ENDPOINT_TTL_MS + 1)).toBe(false) // expired after 6h
     markRealFailure("rem|combo", now, 60_000)
     expect(realFailedRemainingMs("rem|combo", now + 20_000)).toBe(40_000)
     expect(realFailedRemainingMs("rem|combo", now + 61_000)).toBeNull()
     expect(realFailedRemainingMs("absent", now)).toBeNull()
   })
-  test("recordIsolation/recordInjection 落盘 kind 条目且不进熔断计数", () => {
+  test("recordIsolation/recordInjection persist kind entries without entering the breaker count", () => {
     recordIsolation("iso-agent", "p|iso-model|high", "endpoint", ENDPOINT_TTL_MS, "boom")
     recordInjection("inj-agent", "Unknown agent type: inj-agent is not a valid agent type")
     const lines = readFileSync(join(process.env.SWITCHMAN_STATE!, "failures.log"), "utf8").trim().split("\n")
@@ -108,35 +110,36 @@ describe("实调失败 TTL 分离", () => {
     expect(iso.key).toBe("p|iso-model|high")
     expect(iso.reason).toContain("endpoint")
     expect(inj.kind).toBe("injection")
-    // kind 条目不计入熔断窗口：同一 key 连续 2 条 isolated 后，1 次真实失败不触发熔断（阈值 2）
+    // kind entries do not count into the breaker window: after 2 consecutive isolated entries for the same key,
+    // 1 real failure must not trip the breaker (threshold 2)
     recordIsolation("cnt-agent", "cnt-key", "server", 600_000, "x")
     recordIsolation("cnt-agent", "cnt-key", "server", 600_000, "x")
     const rec = recordFailure("cnt-key", "real failure one", null)
     expect(rec.tripped).toBe(false)
     const rec2 = recordFailure("cnt-key", "real failure two", null)
-    expect(rec2.tripped).toBe(true) // 真实失败计 2 次才触发
+    expect(rec2.tripped).toBe(true) // 2 real failures are required to trip
   })
 })
 
-// ================= 3. 模型退休（连续 404） =================
-describe("模型退休 noteModelNotFound", () => {
-  test("1h 窗内累计 3 次触发退休，返回恰好触发", () => {
+// ================= 3. Model retirement (consecutive 404s) =================
+describe("model retirement noteModelNotFound", () => {
+  test("3 hits within the 1h window trigger retirement, returning true exactly at the trigger", () => {
     const now = Date.now()
     expect(noteModelNotFound("p/retire-me", now)).toBe(false)
     expect(noteModelNotFound("p/retire-me", now + 1)).toBe(false)
-    expect(noteModelNotFound("p/retire-me", now + 2)).toBe(true) // 第三次恰好触发
+    expect(noteModelNotFound("p/retire-me", now + 2)).toBe(true) // third hit triggers exactly
     expect(isModelRetired("p/retire-me")).toBe(true)
     expect(retiredModelKeys()).toContain("p/retire-me")
-    // 已退休后再记不再触发
+    // Already retired: further notes do not re-trigger
     expect(noteModelNotFound("p/retire-me", now + 3)).toBe(false)
   })
-  test("不足 3 次不退休", () => {
+  test("fewer than 3 hits does not retire", () => {
     const now = Date.now()
     noteModelNotFound("p/not-yet", now)
     noteModelNotFound("p/not-yet", now + 1)
     expect(isModelRetired("p/not-yet")).toBe(false)
   })
-  test("filterRetiredShells 滤掉已退休模型壳", () => {
+  test("filterRetiredShells filters out retired-model shells", () => {
     noteModelNotFound("p/filtered", Date.now())
     noteModelNotFound("p/filtered", Date.now() + 1)
     noteModelNotFound("p/filtered", Date.now() + 2)
@@ -148,9 +151,9 @@ describe("模型退休 noteModelNotFound", () => {
   })
 })
 
-// ================= 4. 退休闸 deny =================
-describe("退休闸 checkShell deny", () => {
-  test("retiredModels 命中 provider/modelId → deny 含「已下线」", () => {
+// ================= 4. Retirement gate deny =================
+describe("retirement gate checkShell deny", () => {
+  test("retiredModels hit on provider/modelId → deny carries the retired-model mark", () => {
     const s = shell("p", "retired-gate")
     const r = checkShell(s.name, s, META, {
       registry: { [s.name]: s },
@@ -160,9 +163,9 @@ describe("退休闸 checkShell deny", () => {
       retiredModels: new Set(["p/retired-gate"]),
       lanes: { main: [s.name] },
     })
-    expect(r.deny).toContain("已下线")
+    expect(r.deny).toContain("model retired")
   })
-  test("未命中退休集 → 不拦（fail-open）", () => {
+  test("no hit on the retired set → not blocked (fail-open)", () => {
     const s = shell("p", "glm-5.3-flash")
     const r = checkShell(s.name, s, META, {
       registry: { [s.name]: s },
@@ -176,48 +179,49 @@ describe("退休闸 checkShell deny", () => {
   })
 })
 
-// ================= 5. 横幅 [限制] 含「已下线」 =================
-describe("横幅退休标注", () => {
-  test("retiredModels>0 时 [限制] 行含「已下线」", () => {
+// ================= 5. Banner [LIMITS] carries retired marks =================
+describe("banner retired marks", () => {
+  test("with retiredModels>0 the [LIMITS] line carries the retired mark", () => {
     const lines = buildBanner({
       lanes: null, down: [],
       quota: { glm: null, copilot: null },
       states: {}, billing: billingWindow(),
       matrixInfo: { mode: "desktop", configStatus: "ok", watch: true, retiredModels: 3 },
     })
-    expect(lines[2]).toContain("3 模型已下线")
+    expect(lines[2]).toContain("3 models retired")
   })
-  test("retiredModels=0 时不追加", () => {
+  test("with retiredModels=0 nothing is appended", () => {
     const lines = buildBanner({
       lanes: null, down: [],
       quota: { glm: null, copilot: null },
       states: {}, billing: billingWindow(),
       matrixInfo: { mode: "desktop", configStatus: "ok", watch: true, retiredModels: 0 },
     })
-    expect(lines[2]).not.toContain("已下线")
+    expect(lines[2]).not.toContain("retired")
   })
-  // [2026-09-01]-[down 来源标注：Map 形态逐名展示来源（熔断/实调隔离·剩余时长），Set/数组形态保持原样]
-  test("down Map 标注来源与剩余时长", () => {
+  // [2026-09-01]-[down source annotation: Map form shows the source per name (breaker / real-fail isolation·time left),
+  //  Set/array form stays as-is; source labels mirror index.ts/banner.ts wording]
+  test("down Map annotates source and remaining time", () => {
     const lines = buildBanner({
       lanes: null,
       down: new Map<string, string>([
-        ["github-copilot|gpt-5.6-luna|high", "实调隔离·剩12m"],
-        ["other-pool|some-model|low", "熔断"],
+        ["github-copilot|gpt-5.6-luna|high", "real-fail isolation·12m left"],
+        ["other-pool|some-model|low", "breaker"],
       ]),
       quota: { glm: null, copilot: null },
       states: {}, billing: billingWindow(),
     })
-    expect(lines[2]).toContain("github-copilot|gpt-5.6-luna|high（实调隔离·剩12m）")
-    expect(lines[2]).toContain("other-pool|some-model|low（熔断）")
-    expect(lines[2]).toContain("不可派发")
+    expect(lines[2]).toContain("github-copilot|gpt-5.6-luna|high (real-fail isolation·12m left)")
+    expect(lines[2]).toContain("other-pool|some-model|low (breaker)")
+    expect(lines[2]).toContain("not dispatchable")
   })
-  test("down 数组形态无标注（向后兼容）", () => {
+  test("down array form has no annotation (backward compatible)", () => {
     const lines = buildBanner({
       lanes: null, down: ["p|m|high"],
       quota: { glm: null, copilot: null },
       states: {}, billing: billingWindow(),
     })
-    expect(lines[2]).toContain("p|m|high（不可派发")
-    expect(lines[2]).not.toContain("熔断")
+    expect(lines[2]).toContain("p|m|high (not dispatchable")
+    expect(lines[2]).not.toContain("breaker")
   })
 })

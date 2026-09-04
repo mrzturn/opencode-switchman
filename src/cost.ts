@@ -1,9 +1,10 @@
-// 成本感知（v1.1 新增）：models.dev 计价快照 → costScore（compute_lane 水位同分 tiebreaker）
-// [TTL 24h＋last-good 缓存；拉取失败 fail-open 降级为无成本信号（tiebreaker 自动失效，不影响排序正确性）]
+// [2026-09-04]-[English localization: translate comments and status messages; no logic change]
+// Cost awareness (added in v1.1): models.dev pricing snapshot -> costScore (tiebreaker for equal compute_lane watermark scores)
+// [TTL 24h + last-good cache; fetch failure fail-open degrades to no cost signal (tiebreaker auto-disables, ordering correctness unaffected)]
 import { COSTS_TTL, paths, readJson, writeJsonAtomic, appendStatusLog } from "./state"
 
 export interface CostIndex {
-  scores: Record<string, number> // key=modelId（跨池基本唯一）；值=(input+output)/2，$/1M tokens
+  scores: Record<string, number> // key=modelId (mostly unique across pools); value=(input+output)/2, $/1M tokens
   fetched_at: number
 }
 
@@ -16,7 +17,7 @@ export function loadCosts(): CostIndex | null {
     cached = disk
     return cached
   }
-  return disk // 过期也先返回 last-good，后台刷新后替换
+  return disk // return last-good even when expired; replaced after the background refresh
 }
 
 export async function refreshCosts(): Promise<void> {
@@ -33,18 +34,18 @@ export async function refreshCosts(): Promise<void> {
         const cost = (m as any)?.cost
         if (cost && typeof cost.input === "number" && typeof cost.output === "number") {
           const score = (cost.input + cost.output) / 2
-          if (!(mid in scores) || score < scores[mid]) scores[mid] = score // 同名取便宜者
+          if (!(mid in scores) || score < scores[mid]) scores[mid] = score // for duplicates keep the cheaper one
         }
       }
     }
     cached = { scores, fetched_at: Date.now() / 1000 }
     writeJsonAtomic(paths().costs, cached)
   } catch (exc) {
-    appendStatusLog(`成本快照刷新失败（沿用旧数据）: ${exc}`)
+    appendStatusLog(`cost snapshot refresh failed (keeping stale data): ${exc}`)
   }
 }
 
-/** lane costs 回调：无数据返回 null（tiebreaker 失效，排序退回水位主序） */
+/** lane costs callback: null when no data (tiebreaker disabled, ordering falls back to the watermark primary order) */
 export function costOf(modelId: string): number | null {
   const idx = loadCosts()
   const v = idx?.scores[modelId]

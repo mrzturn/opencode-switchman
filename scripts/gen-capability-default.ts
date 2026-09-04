@@ -1,8 +1,11 @@
-// 生成随包内置的「官方能力排名默认快照」src/capability-default.json
-// [2026-08-31]-[离线/拉取失败时的默认能力排名：实时链（capability.json）缺失时回退此快照；
-//  随版本手动迭代——每次发版前重跑 `bun run gen:capability` 刷新（有 AA key 时自动优先 AA 绝对指数口径）]
-// 数据口径：主源 Artificial Analysis（ARTIFICIAL_ANALYSIS_API_KEY 环境变量，绝对指数）；
-//           备源 OpenRouter /api/v1/models?sort=coding-high-to-low（公开，coding 序位派生 rank 分）。
+// [2026-09-04]-[English localization: translate comments and messages; no logic change]
+// Generates the bundled "official capability-rank default snapshot" src/capability-default.json
+// [2026-08-31]-[Default capability rank for offline/fetch-failure: the runtime chain (capability.json)
+//  falls back to this snapshot when missing; iterated manually per release — re-run
+//  `bun run gen:capability` before each release to refresh (with an AA key, the AA absolute-index
+//  source automatically takes priority)]
+// Data sources: primary Artificial Analysis (ARTIFICIAL_ANALYSIS_API_KEY env var, absolute index);
+//                fallback OpenRouter /api/v1/models?sort=coding-high-to-low (public, rank score derived from coding position).
 import { writeFileSync } from "node:fs"
 import { parseAaModels, parseOpenRouterModels, resolveThresholds } from "../src/capability"
 import type { CapabilityIndex } from "../src/capability"
@@ -28,9 +31,9 @@ if (aaKey) {
     parsed = parseAaModels(await fetchJson("https://artificialanalysis.ai/api/v2/data/llms/models", { "x-api-key": aaKey }))
     source = "artificial-analysis"
     version = `bundled-aa-${parsed.versionHint ?? new Date().toISOString().slice(0, 10)}`
-    console.log(`主源 AA 解析成功：${Object.keys(parsed.models).length} 模型`)
+    console.log(`primary source AA parsed: ${Object.keys(parsed.models).length} models`)
   } catch (exc) {
-    console.error(`主源 AA 失败（${exc}）→ 转备源 OpenRouter`)
+    console.error(`primary source AA failed (${exc}) → switching to fallback OpenRouter`)
   }
 }
 if (!parsed) {
@@ -38,7 +41,7 @@ if (!parsed) {
   parsed = parseOpenRouterModels(json)
   version = `bundled-or-${parsed.versionHint ?? new Date().toISOString().slice(0, 10)}`
 }
-if (Object.keys(parsed.models).length === 0) throw new Error("解析为空，拒绝生成空快照")
+if (Object.keys(parsed.models).length === 0) throw new Error("parsed result is empty; refusing to generate an empty snapshot")
 
 const scores = Object.values(parsed.models).map((e) => e.score)
 const idx: CapabilityIndex & { bundled: true; _meta: Record<string, string> } = {
@@ -46,9 +49,9 @@ const idx: CapabilityIndex & { bundled: true; _meta: Record<string, string> } = 
     generated_at: new Date().toISOString(),
     generator: "bun run gen:capability",
     upstream: source === "artificial-analysis"
-      ? "artificialanalysis.ai /api/v2/data/llms/models（绝对指数）"
-      : "openrouter.ai /api/v1/models?sort=coding-high-to-low（coding 序位 rank 分）",
-    note: "离线/拉取失败的随包默认能力排名；随版本手动迭代（重跑 gen:capability 刷新）",
+      ? "artificialanalysis.ai /api/v2/data/llms/models (absolute index)"
+      : "openrouter.ai /api/v1/models?sort=coding-high-to-low (rank score from coding position)",
+    note: "Bundled default capability rank for offline/fetch-failure; iterated manually per release (re-run gen:capability to refresh)",
   },
   bundled: true,
   source,
@@ -61,4 +64,4 @@ const idx: CapabilityIndex & { bundled: true; _meta: Record<string, string> } = 
 }
 
 writeFileSync(new URL("../src/capability-default.json", import.meta.url).pathname, `${JSON.stringify(idx, null, 2)}\n`)
-console.log(`已生成 src/capability-default.json：${source} ${scores.length} 模型（score_kind=${parsed.scoreKind}，version=${version}）`)
+console.log(`generated src/capability-default.json: ${source} ${scores.length} models (score_kind=${parsed.scoreKind}, version=${version})`)

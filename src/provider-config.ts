@@ -1,7 +1,8 @@
-// 用户配置的稳定策略别名；不把 OpenCode provider ID 泄漏进配置文件。
-// [2026-08-31]-[去厂商化编排：内置表降级为「配额抓取基础设施＋出厂配置数据」，不再承载排序规则；
-//  providers 接受任意键（opencode 官方/用户自定义 provider），billing 显式配置驱动订阅计分系数，
-//  池（Pool）概念仅保留给配额抓取（有抓取器的 provider 才有水位数据）]
+// [2026-09-04]-[English localization: translate CLI messages and comments; no logic change]
+// Stable policy aliases for user config; OpenCode provider IDs are never leaked into the config file.
+// [2026-08-31]-[De-vendoring orchestration: the builtin table is demoted to "quota-scraping infrastructure + factory config data" and no longer carries ranking rules;
+//  providers accept any key (opencode official/user-defined providers), billing explicit config drives the subscription scoring coefficient,
+//  and the pool (Pool) concept is reserved only for quota scraping (only providers with scrapers have watermark data)]
 import type { Pool } from "./types"
 
 export type ProviderKey = "deepseek" | "zhipuai-coding-plan" | "github-copilot"
@@ -10,8 +11,8 @@ export interface PeakRange { days: number[]; start: string; end: string }
 export interface ProviderUserConfig { enabled: boolean; observe: boolean; billing: BillingKind; peak: { timezone: string; ranges: PeakRange[] } }
 
 const SPECS: Array<{ key: ProviderKey; pool: Pool; aliases: string[]; defaults: ProviderUserConfig }> = [
-  // billing 是出厂配置数据（同 peak 高峰表性质），不是编排规则：订阅计费的两家出厂即标 subscription，
-  // 用户可在 jsonc 里改；自定义 provider 一律默认 api。
+  // billing is factory config data (same nature as the peak table), not an orchestration rule: the two subscription-billed vendors ship marked subscription,
+  //  users can change it in jsonc; custom providers default to api.
   { key: "deepseek", pool: "deepseek", aliases: ["deepseek", "deepseek-api"], defaults: { enabled: false, observe: true, billing: "api", peak: { timezone: "local", ranges: [{ days: [1, 2, 3, 4, 5], start: "09:00", end: "12:00" }, { days: [1, 2, 3, 4, 5], start: "14:00", end: "18:00" }] } } },
   { key: "zhipuai-coding-plan", pool: "glm", aliases: ["zhipuai-coding-plan", "glm-coding-plan-cn", "glm", "zai"], defaults: { enabled: false, observe: true, billing: "subscription", peak: { timezone: "local", ranges: [{ days: [1, 2, 3, 4, 5], start: "14:00", end: "18:00" }] } } },
   { key: "github-copilot", pool: "copilot", aliases: ["github-copilot", "github-copilot-oauth", "copilot"], defaults: { enabled: false, observe: true, billing: "subscription", peak: { timezone: "local", ranges: [] } } },
@@ -26,7 +27,7 @@ export function poolForProviderId(id: string): Pool | null {
 
 export function providerKeyForPool(pool: Pool): ProviderKey { return SPECS.find((s) => s.pool === pool)!.key }
 
-/** 配置键归一：命中内置别名/前缀返回内置规范键，否则原样返回（自定义 provider 键合法） */
+/** Config key canonicalization: builtin alias/prefix hits return the builtin canonical key, otherwise the input is returned as-is (custom provider keys are legal) */
 export function resolveProviderKey(id: string): ProviderKey | string {
   const exact = SPECS.find((x) => x.aliases.includes(id))
   if (exact) return exact.key
@@ -35,18 +36,18 @@ export function resolveProviderKey(id: string): ProviderKey | string {
   return id
 }
 
-/** 内置规范键集合（用于近似拼写建议） */
+/** Builtin canonical key set (for near-spelling suggestions) */
 export function canonicalKeyOf(id: string): ProviderKey | null {
   const resolved = resolveProviderKey(id)
   return PROVIDER_KEYS.includes(resolved as ProviderKey) ? resolved as ProviderKey : null
 }
 
-/** 自定义 provider 出厂缺省：不参与路由、可观察、api 计费、无高峰窗口 */
+/** Custom provider factory defaults: no routing, observable, api billing, no peak windows */
 export function genericProviderDefaults(): ProviderUserConfig {
   return { enabled: false, observe: true, billing: "api", peak: { timezone: "local", ranges: [] } }
 }
 
-/** 出厂 billing（gen-shells 生成期无用户配置时的 billing 系数来源） */
+/** Factory billing (source of the billing coefficient in gen-shells when no user config exists) */
 export function defaultBillingOf(providerId: string): BillingKind {
   const key = canonicalKeyOf(providerId)
   return key ? SPECS.find((s) => s.key === key)!.defaults.billing : "api"
@@ -56,26 +57,26 @@ export function defaultProviderConfig(): Record<ProviderKey, ProviderUserConfig>
   return Object.fromEntries(SPECS.map((s) => [s.key, structuredClone(s.defaults)])) as Record<ProviderKey, ProviderUserConfig>
 }
 
-/** 生成文件的稳定正文，注释是用户配置体验的一部分。 */
+/** Stable body of the generated file; its comments are part of the user config experience. */
 export function renderDefaultConfigJsonc(): string {
   return `{
-  // JSON Schema 仅用于编辑器提示；插件自身做 fail-open 校验。
+  // JSON Schema is for editor hints only; the plugin itself does fail-open validation.
   "$schema": "https://raw.githubusercontent.com/mrzturn/opencode-switchman/main/schema/opencode-switchman-v1.schema.json",
-  // 配置语义版本（当前 1）；升级时插件仅在内存逐级迁移。
+  // Config semantic version (currently 1); on upgrade the plugin only migrates stepwise in memory.
   "version": 1,
   "providers": {
-    // 任意 opencode 官方/自定义 provider 键均合法（未命中内置表按自定义处理，billing 默认 api）。
+    // Any opencode official/custom provider key is legal (keys not matching the builtin table are treated as custom, billing defaults to api).
     "deepseek": {
-      // 水位/高峰/耗尽是否参与路由排序与硬拦；false 不影响查询与展示。
+      // Whether watermark/peak/exhaustion participate in routing rank and hard block; false does not affect queries or display.
       "enabled": false,
-      // 是否后台查询用量/余额并展示在横幅。
+      // Whether to query usage/balance in the background and show it in the banner.
       "observe": true,
-      // 计费结构：subscription（订阅，评分系数 1.0）/ api（按量，系数 0.85 排序靠后）；仅此处显式声明生效。
+      // Billing structure: subscription (rating coefficient 1.0) / api (pay-as-you-go, coefficient 0.85, ranks lower); only an explicit declaration here takes effect.
       "billing": "api",
       "peak": {
-        // "local" 或 IANA 时区（如 "Asia/Shanghai"）。
+        // "local" or an IANA time zone (e.g. "Asia/Shanghai").
         "timezone": "local",
-        // days 用 ISO 周：1=周一…7=周日；区间 [start,end)；start>end 表示跨到次日。
+        // days uses ISO weeks: 1=Mon … 7=Sun; ranges are [start,end); start>end means crossing into the next day.
         "ranges": [
           { "days": [1,2,3,4,5], "start": "09:00", "end": "12:00" },
           { "days": [1,2,3,4,5], "start": "14:00", "end": "18:00" }
@@ -99,36 +100,36 @@ export function renderDefaultConfigJsonc(): string {
       "billing": "subscription",
       "peak": {
         "timezone": "local",
-        // 保留结构供后续扩展；当前不参与评分与展示。
+        // Structure kept for future extension; currently not part of scoring or display.
         "ranges": []
       }
     }
   },
-  // ---- 行为段：除插件安装（opencode 配置的 plugin 数组）外，全部插件配置都在本文件 ----
+  // ---- Behavior sections: everything except plugin installation (the plugin array in the opencode config) lives in this file ----
   "quota": {
-    // GLM 5 小时窗预留水位（%）：达到即硬拦 GLM 壳（避免 429）；周额度仍只认 100%。
+    // GLM 5-hour window reserve watermark (%): reaching it hard-blocks GLM shells (avoids 429); the weekly quota still only recognizes 100%.
     "glmFiveHourReservePct": 90,
-    // DeepSeek 余额预警阈值（CNY 元）：低于该值在横幅 [水位] 提示；仅预警不硬拦（按量计费）。
+    // DeepSeek low-balance warning threshold (CNY): below it the banner [WATERMARK] shows a hint; warning only, no hard block (pay-as-you-go).
     "deepseekLowBalanceWarnCny": 10
   },
-  // models.dev 价格快照是否作为加权评分系数之一。
+  // Whether the models.dev price snapshot is one of the weighted scoring coefficients.
   "cost": { "enabled": true },
-  // 动态能力分级：auto=有 apiKey 先 AA、失败/无 key 转 OpenRouter；tierThresholds 缺省走内置分位映射。
+  // Dynamic capability tiers: auto=with apiKey try AA first, fall back to OpenRouter on failure/no key; tierThresholds default uses the builtin quantile mapping.
   "capability": {
     "enabled": true,
     "source": "auto",
-    // Artificial Analysis Data API key（也可走环境变量 ARTIFICIAL_ANALYSIS_API_KEY）；无 key 自动转 OpenRouter 公开源。
+    // Artificial Analysis Data API key (or via the ARTIFICIAL_ANALYSIS_API_KEY env var); with no key it falls back to OpenRouter's public source.
     // "apiKey": "aa_xxx",
     "lmarenaCheck": false
   },
-  // 激活矩阵：auto=按客户端判定 desktop/cli；legacy=静态 shells.json；watch=监听配置面变化实时重算（改 watch 需重启）。
+  // Activation matrix: auto=detect desktop/cli by client; legacy=static shells.json; watch=watch config-surface changes and recompute in real time (changing watch requires a restart).
   "matrix": { "mode": "auto", "watch": true },
-  // 四行路由横幅 / 调度员规程（AGENTS.md）系统提示注入。
+  // Four-line routing banner / dispatcher protocol (AGENTS.md) system-prompt injection.
   "banner": { "enabled": true },
   "rules": { "enabled": true },
-  // 自定义六档候选链（覆盖内置偏好序）；键=economy/mechanical/main/hard/vision/review，值为壳名数组。
+  // Custom six-lane candidate chains (override builtin preference order); keys=economy/mechanical/main/hard/vision/review, values are arrays of shell names.
   "lanes": {},
-  // 第三方/未来扩展数据放命名空间键，不进 providers。
+  // Third-party/future extension data goes under namespace keys, not into providers.
   "extensions": {}
 }
 `

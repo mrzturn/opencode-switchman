@@ -1,4 +1,5 @@
-// 四行横幅（[路由][水位][限制][更新]，逐行可解析端口契约）
+// [2026-09-04]-[English localization: translate runtime messages and comments; no logic change]
+// Four-line banner ([ROUTES][WATERMARK][LIMITS][UPDATE], line-parseable port contract)
 import { LANE_ORDER } from "./types"
 import type { Lane, LaneResult, PoolStateKind } from "./types"
 import type { BillingWindow } from "./types"
@@ -15,7 +16,7 @@ export function shortName(name: string): string {
 
 export interface BannerInput {
   lanes: Record<string, LaneResult> | null
-  /** down 集合；Map 形态携带来源标注（如「熔断」「实调隔离·剩12m」），横幅逐名展示 */
+  /** down set; Map form carries source annotations (e.g. "breaker", "real-fail isolation·12m left"), shown per name in the banner */
   down: Set<string> | string[] | Map<string, string>
   quota: { glm: GlmQuota | null; copilot: CopilotQuota | null; deepseek?: DeepseekQuota | null }
   states?: Record<string, { state?: PoolStateKind } & Record<string, unknown>> | null
@@ -25,9 +26,9 @@ export interface BannerInput {
   dsLowWarnCny?: number
   providerPolicy?: Partial<Record<"glm" | "copilot" | "deepseek", { observe: boolean; routing: boolean }>>
   doctorSummary?: string | null
-  /** [2026-08-29]-[动态矩阵：[限制] 行追加 模式/watch/configStatus、restartRequired、models.dev 降级标注；缺省=legacy 原样] */
+  /** [2026-08-29]-[dynamic matrix: [LIMITS] line appends mode/watch/configStatus, restartRequired, models.dev downgrade marks; absent = legacy as-is] */
   matrixInfo?: { mode: string; configStatus: string; watch: boolean; restartRequired?: string[]; invalidConfigured?: string[]; degradedModels?: number; retiredModels?: number } | null
-  /** [2026-09-03]-[用户手动覆盖层标注（capability-rank.json/pool-config.json 生效条数；0=未配置不显示）] */
+  /** [2026-09-03]-[user manual override annotations (effective entries in capability-rank.json/pool-config.json; 0 = unconfigured, not shown)] */
   overrides?: { rankModels: number; poolLanes: number } | null
 }
 
@@ -36,51 +37,51 @@ function routeLine(lanes: Record<string, LaneResult> | null): string {
   for (const lane of LANE_ORDER) {
     const r = lanes?.[lane]
     if (!r) {
-      segs.push(`${lane}:?（route-state 不可用）`)
+      segs.push(`${lane}:? (route-state unavailable)`)
       continue
     }
     const names = r.chain.length > 0
       ? r.chain.slice(0, 3).map((c) => shortName(c.shell)).join("→")
-      : "全不可用→终端失败协议"
+      : "all unavailable→terminal failure protocol"
     segs.push(`${lane}: ${names}${r.status.endsWith("*") ? "*" : ""}`)
   }
-  return `[路由] ${segs.join(" | ")}`
+  return `[ROUTES] ${segs.join(" | ")}`
 }
 
-/** GLM 重置时间（秒级 epoch → MM-DD HH:mm；缺失=稍后），横幅与侧边栏同款格式 */
+/** GLM reset time (second-level epoch → MM-DD HH:mm; missing = later), same format as banner and sidebar */
 function fmtResetMdHm(reset: number | null | undefined): string {
   const p = resetParts(reset)
-  return p ? `${p.md} ${p.hm}` : "稍后"
+  return p ? `${p.md} ${p.hm}` : "later"
 }
 
 function glmBrief(data: GlmQuota | null): string | null {
   if (!data || data.status !== "ok") return null
   const parts = ["GLM"]
-  if (data.five_hour && typeof data.five_hour.used_pct === "number") parts.push(`5h窗 ${data.five_hour.used_pct}%`)
+  if (data.five_hour && typeof data.five_hour.used_pct === "number") parts.push(`5h ${data.five_hour.used_pct}%`)
   if (data.weekly && typeof data.weekly.used_pct === "number") {
-    parts.push(`周 ${data.weekly.used_pct}%(${fmtResetMdHm(data.weekly.reset_at)}刷新)`)
+    parts.push(`weekly ${data.weekly.used_pct}% (refreshed ${fmtResetMdHm(data.weekly.reset_at)})`)
   }
-  if (data.stale) parts.push("数据滞后")
+  if (data.stale) parts.push("data stale")
   return parts.length > 1 ? parts.join(" ") : null
 }
 
 function copilotBrief(data: CopilotQuota | null): string | null {
   if (!data || data.status !== "ok") return null
   const p = data.premium
-  if (data.gateway_exhausted) return `Copilot 月度池已耗尽(${data.reset_date ?? "?"}恢复)` // [v1.1 坑位] 网关真值源优先于快照
+  if (data.gateway_exhausted) return `Copilot monthly pool exhausted (resets ${data.reset_date ?? "?"})` // [v1.1 pitfall] gateway ground truth wins over snapshot
   if (!p) return null
   if (p.unlimited) {
-    // unlimited:true 时展示 used 与 reset_date，不显示误导性百分比
-    const used = typeof p.used === "number" ? ` 已用${p.used}` : ""
-    return `Copilot 积分不限量${used}(${data.reset_date ?? "?"}刷新)`
+    // unlimited:true shows used and reset_date, hides the misleading percentage
+    const used = typeof p.used === "number" ? `, used ${p.used}` : ""
+    return `Copilot credits unlimited${used} (refreshes ${data.reset_date ?? "?"})`
   }
   const pct = p.percent_remaining
-  let body = `积分剩${pct ?? "?"}%(${data.reset_date ?? "?"}刷新)`
+  let body = `credits ${pct ?? "?"}% left (refreshes ${data.reset_date ?? "?"})`
   if (typeof pct === "number" && pct <= 0 && p.overage_permitted) {
-    body = `积分已耗尽·超额计费中(${data.reset_date ?? "?"}刷新)`
+    body = `credits exhausted·overage billing (refreshes ${data.reset_date ?? "?"})`
   }
-  if (data.gateway_exhausted) body = `月度池已耗尽(${data.reset_date ?? "?"}恢复)`
-  if (data.stale) body += "·数据滞后"
+  if (data.gateway_exhausted) body = `monthly pool exhausted (resets ${data.reset_date ?? "?"})`
+  if (data.stale) body += "·data stale"
   return `Copilot ${body}`
 }
 
@@ -102,27 +103,27 @@ function dsBalanceCny(data: DeepseekQuota | null): number | null {
 
 function dsBrief(data: DeepseekQuota | null, lowWarnCny?: number): string | null {
   if (!data || data.status !== "ok") return null
-  if (data.exhausted) return "DeepSeek 余额已耗尽"
-  // [2026-08-28]-[余额预警：低于阈值横幅提示，仅预警不硬拦（按量计费）]
+  if (data.exhausted) return "DeepSeek balance exhausted"
+  // [2026-08-28]-[low-balance warning: banner hint below threshold, warn only, no hard block (pay-as-you-go)]
   const cny = dsBalanceCny(data)
   const thr = typeof lowWarnCny === "number" && lowWarnCny >= 0 ? lowWarnCny : 10
   if (typeof cny === "number" && cny < thr) {
-    return `DeepSeek 余额 ¥${cny.toFixed(2)}（<¥${thr} 预警）`
+    return `DeepSeek balance ¥${cny.toFixed(2)} (<¥${thr} warn)`
   }
-  return null // 按量正常不打扰
+  return null // pay-as-you-go healthy: stay quiet
 }
 
-// [2026-09-02]-[侧边栏「水位/峰值」面板数据结构 v2：一个 provider 一个条目块，明细拆 rows 子行
-//  （GLM=5h/周/MCP，Copilot=积分/刷新，DeepSeek=余额）——头部行渲染 label+状态标注，子行缩进带进度条，
-//  修复此前 GLM 拆两块、标注逐行重复、窄边栏换行错乱的显示问题；observe=false 不产出该条目]
+// [2026-09-02]-[sidebar "watermark/peak" panel data shape v2: one entry block per provider, details split into rows sub-rows
+//  (GLM=5h/weekly/MCP, Copilot=credits/refresh, DeepSeek=balance) — the header row renders label+status marks, sub-rows are indented with a progress bar,
+//  fixing the earlier display issues of GLM split into two blocks, per-line repeated marks, and broken wrapping on narrow sidebars; observe=false produces no entry]
 export interface ProviderStatusRow {
-  /** 行首短标签（5h/周/MCP/积分/刷新/余额；空=占位整行文本） */
+  /** short label at row head (5h/week/MCP/credits/refresh/balance; empty = placeholder full-line text) */
   label: string
-  /** 主体文本（进度条+百分比/数值），TUI 按 usedPct 渐变着色 */
+  /** body text (progress bar + percentage/value), TUI colors it green→red by usedPct */
   text: string
-  /** 0-100 用于绿→红渐变；null=中性色 */
+  /** 0-100 for the green→red gradient; null = neutral color */
   usedPct: number | null
-  /** 行尾弱化补充（重置/刷新时间、预警） */
+  /** weakened tail supplement (reset/refresh time, warning) */
   tail?: string
 }
 
@@ -130,11 +131,11 @@ export interface ProviderStatusEntry {
   pool: "glm" | "copilot" | "deepseek"
   label: string
   rows: ProviderStatusRow[]
-  /** 仅观察（routing=false，不参与派发排序） */
+  /** observe only (routing=false, not part of dispatch ranking) */
   observeOnly: boolean
-  /** 该 provider 计费高峰是否活跃 */
+  /** whether this provider's billing peak is active */
   peakActive: boolean
-  /** 配额快照滞后（缓存超 TTL 进入 stale_ok 宽限），头部行一次性标注 */
+  /** quota snapshot stale (cache past TTL in stale_ok grace), one-time mark on the header row */
   stale: boolean
 }
 
@@ -143,7 +144,7 @@ const POOL_PROVIDER_ID: Record<"glm" | "copilot" | "deepseek", string> = {
   glm: "zhipuai-coding-plan", copilot: "github-copilot", deepseek: "deepseek",
 }
 
-/** 8 格进度条（█ 已用 + ░ 余量），pct=null 返回空串（该行无数值概念时不画条） */
+/** 8-cell progress bar (█ used + ░ left), pct=null returns empty string (no bar when the row has no numeric concept) */
 function bar8(pct: number | null | undefined): string {
   if (typeof pct !== "number" || Number.isNaN(pct)) return ""
   const p = Math.max(0, Math.min(100, pct))
@@ -158,63 +159,63 @@ function resetParts(reset: number | null | undefined): { md: string; hm: string 
   return { md: `${pad(d.getMonth() + 1)}-${pad(d.getDate())}`, hm: `${pad(d.getHours())}:${pad(d.getMinutes())}` }
 }
 
-// ---- 侧边栏 rows 产出（[水位] 横幅 glmBrief/copilotBrief/dsBrief 紧凑单行口径不变）----
+// ---- sidebar rows output ([WATERMARK] banner glmBrief/copilotBrief/dsBrief compact single-line format unchanged)----
 
-const NO_DATA_ROW: ProviderStatusRow[] = [{ label: "", text: "查询中/暂无数据", usedPct: null }]
+const NO_DATA_ROW: ProviderStatusRow[] = [{ label: "", text: "querying/no data", usedPct: null }]
 
 function glmRows(data: GlmQuota | null): ProviderStatusRow[] {
   if (!data || data.status !== "ok") return NO_DATA_ROW
   const rows: ProviderStatusRow[] = []
   const push = (label: string, pct: number, reset: number | null | undefined, mode: "hm" | "mdhm" | "md") => {
     const parts = resetParts(reset)
-    const tail = !parts ? "→稍后" : mode === "hm" ? `→${parts.hm}` : mode === "md" ? `→${parts.md}` : `→${parts.md} ${parts.hm}`
+    const tail = !parts ? "→later" : mode === "hm" ? `→${parts.hm}` : mode === "md" ? `→${parts.md}` : `→${parts.md} ${parts.hm}`
     rows.push({ label, text: `${bar8(pct)} ${pct}%`, usedPct: pct, tail })
   }
-  // 5h 窗重置必在 5 小时内 → 只显 HH:mm；周窗跨天 → MM-DD HH:mm；MCP 月度 → MM-DD
+  // 5h window always resets within 5 hours → HH:mm only; weekly window spans days → MM-DD HH:mm; MCP monthly → MM-DD
   if (typeof data.five_hour?.used_pct === "number") push("5h", data.five_hour.used_pct, data.five_hour.reset_at, "hm")
-  if (typeof data.weekly?.used_pct === "number") push("周", data.weekly.used_pct, data.weekly.reset_at, "mdhm")
+  if (typeof data.weekly?.used_pct === "number") push("week", data.weekly.used_pct, data.weekly.reset_at, "mdhm")
   const mcp = data.mcp_monthly
   if (mcp && typeof mcp.used_pct === "number") push("MCP", mcp.used_pct, mcp.reset_at, "md")
-  if (rows.length === 0) return [{ label: "", text: "无配额数据", usedPct: null }]
+  if (rows.length === 0) return [{ label: "", text: "no quota data", usedPct: null }]
   return rows
 }
 
 function copilotRows(data: CopilotQuota | null): ProviderStatusRow[] {
   if (!data || data.status !== "ok") return NO_DATA_ROW
-  const refresh: ProviderStatusRow = { label: "刷新", text: data.reset_date ?? "?", usedPct: null }
-  if (data.gateway_exhausted) return [{ label: "积分", text: "月度池已耗尽", usedPct: 100 }, refresh]
+  const refresh: ProviderStatusRow = { label: "refresh", text: data.reset_date ?? "?", usedPct: null }
+  if (data.gateway_exhausted) return [{ label: "credits", text: "monthly pool exhausted", usedPct: 100 }, refresh]
   const p = data.premium
-  if (!p) return [{ label: "", text: "无配额数据", usedPct: null }]
+  if (!p) return [{ label: "", text: "no quota data", usedPct: null }]
   if (p.unlimited) {
-    const used = typeof p.used === "number" ? ` 已用${p.used}` : ""
-    return [{ label: "积分", text: `不限量${used}`, usedPct: null }, refresh]
+    const used = typeof p.used === "number" ? `, used ${p.used}` : ""
+    return [{ label: "credits", text: `unlimited${used}`, usedPct: null }, refresh]
   }
   const pct = p.percent_remaining
   const usedPct = typeof pct === "number" ? Math.max(0, Math.min(100, 100 - pct)) : null
   const quotaTxt = typeof p.used === "number" && typeof p.entitlement === "number" ? ` ${p.used}/${p.entitlement}` : ""
   if (typeof pct === "number" && pct <= 0 && p.overage_permitted) {
-    return [{ label: "积分", text: `已耗尽·超额计费中${quotaTxt}`, usedPct: 100 }, refresh]
+    return [{ label: "credits", text: `exhausted·overage billing${quotaTxt}`, usedPct: 100 }, refresh]
   }
   const pctTxt = typeof pct === "number" ? (Number.isInteger(pct) ? pct : pct.toFixed(1)) : "?"
-  return [{ label: "积分", text: `${bar8(usedPct)} 剩${pctTxt}%${quotaTxt}`, usedPct }, refresh]
+  return [{ label: "credits", text: `${bar8(usedPct)} ${pctTxt}% left${quotaTxt}`, usedPct }, refresh]
 }
 
 function dsRows(data: DeepseekQuota | null, lowWarnCny?: number): ProviderStatusRow[] {
   if (!data || data.status !== "ok") return NO_DATA_ROW
-  if (data.exhausted) return [{ label: "余额", text: "已耗尽", usedPct: 100 }]
+  if (data.exhausted) return [{ label: "balance", text: "exhausted", usedPct: 100 }]
   const cny = dsBalanceCny(data)
-  if (cny === null) return [{ label: "余额", text: "未知（按量计费）", usedPct: null }]
+  if (cny === null) return [{ label: "balance", text: "unknown (pay-as-you-go)", usedPct: null }]
   const thr = typeof lowWarnCny === "number" && lowWarnCny >= 0 ? lowWarnCny : 10
-  // 按量计费无「总额」概念：以预警阈值 3 倍作为「余量充裕」锚点做相对渐变，仅用于着色不作为精确指标
+  // pay-as-you-go has no "total" concept: use 3× the warning threshold as the "ample balance" anchor for a relative gradient, coloring only, not a precise metric
   const usedPct = Math.max(0, Math.min(100, 100 - (cny / (thr * 3)) * 100))
-  return [{ label: "余额", text: `${bar8(usedPct)} ¥${cny.toFixed(2)}`, usedPct, tail: cny < thr ? ` <¥${thr} 预警` : undefined }]
+  return [{ label: "balance", text: `${bar8(usedPct)} ¥${cny.toFixed(2)}`, usedPct, tail: cny < thr ? ` (<¥${thr} warn)` : undefined }]
 }
 
 export interface ProviderStatusInput {
   quota: BannerInput["quota"]
   providerPolicy?: BannerInput["providerPolicy"]
   dsLowWarnCny?: number
-  /** 去厂商化：任意 provider 的计费高峰活跃求值（config.ts billingWindowForConfig 同源） */
+  /** vendor-neutral: billing-peak-active evaluation for any provider (same source as config.ts billingWindowForConfig) */
   peakOf?: (providerId: string) => boolean
 }
 
@@ -222,7 +223,7 @@ export function providerStatusEntries(input: ProviderStatusInput): ProviderStatu
   const out: ProviderStatusEntry[] = []
   for (const pool of ["glm", "copilot", "deepseek"] as const) {
     const policy = input.providerPolicy?.[pool]
-    if (policy?.observe === false) continue // observe:false → 不显示该块
+    if (policy?.observe === false) continue // observe:false → skip this block
     let rows: ProviderStatusRow[]
     let stale = false
     if (pool === "glm") {
@@ -257,62 +258,62 @@ function levelLine(input: BannerInput): string {
   if (ds) segs.push(ds)
   for (const pool of ["glm", "copilot", "deepseek"] as const) {
     const policy = input.providerPolicy?.[pool]
-    if (policy?.observe === false) segs.push(`${pool === "glm" ? "GLM" : pool === "copilot" ? "Copilot" : "DeepSeek"} 查询关闭`)
-    else if (policy && !policy.routing) segs.push(`${pool === "glm" ? "GLM" : pool === "copilot" ? "Copilot" : "DeepSeek"} 仅观察`)
+    if (policy?.observe === false) segs.push(`${pool === "glm" ? "GLM" : pool === "copilot" ? "Copilot" : "DeepSeek"} query off`)
+    else if (policy && !policy.routing) segs.push(`${pool === "glm" ? "GLM" : pool === "copilot" ? "Copilot" : "DeepSeek"} observe-only`)
   }
-  if (input.quota.glm === null && input.quota.copilot === null && !input.providerPolicy) segs.push("配额未知(查询关闭或不可用)")
+  if (input.quota.glm === null && input.quota.copilot === null && !input.providerPolicy) segs.push("quota unknown (query off or unavailable)")
   segs.push(`${input.billing.glmLabel} · ${input.billing.dsLabel}`)
-  if (input.advice) segs.push(`建议: ${input.advice}`)
-  return `[水位] ${segs.join(" | ")}`
+  if (input.advice) segs.push(`advice: ${input.advice}`)
+  return `[WATERMARK] ${segs.join(" | ")}`
 }
 
 function limitLine(down: Set<string> | string[] | Map<string, string>, unknownCount?: number, matrixInfo?: BannerInput["matrixInfo"], doctorSummary?: string | null, overrides?: BannerInput["overrides"]): string {
-  // [2026-09-01]-[down 来源标注：Map 值＝来源（熔断/实调隔离·剩余时长），排查时可直接区分探针结论与内存隔离]
+  // [2026-09-01]-[down source annotation: Map value = source (breaker / real-fail isolation·time left), troubleshooting can directly tell probe verdicts from in-memory isolation]
   const pairs: [string, string][] = down instanceof Map
     ? [...down.entries()]
     : (Array.isArray(down) ? down : [...down]).map((n) => [n, ""] as [string, string])
   const names = pairs
-    .map(([n, note]) => `${n.includes("-mx-") ? shortName(n) : n}${note ? `（${note}）` : ""}`)
+    .map(([n, note]) => `${n.includes("-mx-") ? shortName(n) : n}${note ? ` (${note})` : ""}`)
     .sort()
-  const downTxt = names.length === 0 ? "无" : `${names.join("、")}（不可派发，deny 会附改派）`
-  // [2026-08-31]-[去厂商化：删「DeepSeek 仅链尾兜底」池名商务语义——api/未知组由计费系数沉底]
-  let line = `[限制] down: ${downTxt} | reviewer 须异族（producer family ≠ 壳 family，ROUTE_META 校验） | api 计费与未知模型按系数沉底（billing=subscription 显式配置优先）`
-  if (unknownCount && unknownCount > 0) line += ` | ${unknownCount} 个组合状态未知（不拦截）`
+  const downTxt = names.length === 0 ? "none" : `${names.join(", ")} (not dispatchable; deny carries a redirect)`
+  // [2026-08-31]-[vendor-neutral: dropped the "DeepSeek tail-fallback only" pool-name business semantics — api/unknown groups sink by billing coefficient]
+  let line = `[LIMITS] down: ${downTxt} | reviewer must be cross-family (producer family ≠ shell family, ROUTE_META enforced) | api-billed & unknown models sink by coefficient (explicit billing=subscription wins)`
+  if (unknownCount && unknownCount > 0) line += ` | ${unknownCount} combos unknown (not blocked)`
   if (matrixInfo) {
-    line += ` | 矩阵: ${matrixInfo.mode}${matrixInfo.watch ? "·watch" : ""}/${matrixInfo.configStatus}`
+    line += ` | matrix: ${matrixInfo.mode}${matrixInfo.watch ? "·watch" : ""}/${matrixInfo.configStatus}`
     if (matrixInfo.restartRequired && matrixInfo.restartRequired.length > 0) {
-      line += ` | 新 provider ${matrixInfo.restartRequired.join("、")} 待重启注册`
+      line += ` | new provider(s) ${matrixInfo.restartRequired.join(", ")} pending restart to register`
     }
     if (matrixInfo.invalidConfigured && matrixInfo.invalidConfigured.length > 0) {
-      // [2026-09-01]-[加固：收藏/可见集里有 provider 已知但 modelId 不存在的脏数据，
-      // 直接提示而非静默不生效，方便用户定位是收藏配错而非路由算法 bug]
-      line += ` | 收藏含无效模型 ${matrixInfo.invalidConfigured.join("、")}（请检查 favorites）`
+      // [2026-09-01]-[hardening: dirty data where favorites/visible set contain a provider that exists but the modelId does not —
+      //  hint directly instead of silently no-op, so users can locate a mis-configured favorite rather than suspect a routing bug]
+      line += ` | favorites contain invalid models ${matrixInfo.invalidConfigured.join(", ")} (check favorites)`
     }
     if (matrixInfo.degradedModels && matrixInfo.degradedModels > 0) {
-      line += ` | models.dev 缺元数据：${matrixInfo.degradedModels} 模型降级单档 off`
+      line += ` | models.dev metadata missing: ${matrixInfo.degradedModels} models degraded one effort off`
     }
     if (matrixInfo.retiredModels && matrixInfo.retiredModels > 0) {
-      line += `、${matrixInfo.retiredModels} 模型已下线`
+      line += `, ${matrixInfo.retiredModels} models retired`
     }
   }
   if (doctorSummary) line += ` | ${doctorSummary}`
   if (overrides && (overrides.rankModels > 0 || overrides.poolLanes > 0)) {
     const parts: string[] = []
-    if (overrides.rankModels > 0) parts.push(`手动能力排名 ${overrides.rankModels} 模型`)
-    if (overrides.poolLanes > 0) parts.push(`任务池选配 ${overrides.poolLanes} 池`)
-    line += ` | ${parts.join("、")}生效（/modelRank /poolConfig 可调）`
+    if (overrides.rankModels > 0) parts.push(`manual capability rank: ${overrides.rankModels} models`)
+    if (overrides.poolLanes > 0) parts.push(`task-pool selection: ${overrides.poolLanes} pools`)
+    line += ` | ${parts.join(", ")} active (/modelRank /poolConfig to adjust)`
   }
   return line
 }
 
-/** 四行横幅（逐行可解析端口契约） */
+/** Four-line banner (line-parseable port contract) */
 export function buildBanner(input: BannerInput): string[] {
   const lines = [
     routeLine(input.lanes),
     levelLine(input),
     limitLine(input.down, input.states ? countUnknown(input) : undefined, input.matrixInfo ?? undefined, input.doctorSummary, input.overrides ?? undefined),
   ]
-  if (input.update) lines.push(`[更新] ${input.update}`)
+  if (input.update) lines.push(`[UPDATE] ${input.update}`)
   return lines
 }
 

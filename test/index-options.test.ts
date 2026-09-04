@@ -1,3 +1,4 @@
+// [2026-09-04]-[English localization: translate titles/comments; no logic change]
 import { expect, test } from "bun:test"
 import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -9,7 +10,7 @@ writeFileSync(join(process.env.SWITCHMAN_STATE, "model-catalog.json"), JSON.stri
 
 import { SwitchmanPlugin } from "../src/index"
 
-test("插件声明无 options 时 config 钩子仍注入壳", async () => {
+test("config hook still injects shells when the plugin is declared without options", async () => {
   const hooks = await SwitchmanPlugin({ client: { provider: { list: async () => [] } } } as any, undefined as any)
   const cfg: Record<string, unknown> = {}
   await hooks.config!(cfg as any)

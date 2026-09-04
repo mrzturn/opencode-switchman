@@ -1,5 +1,6 @@
-// 六闸判定（顺序即优先级，任一命中即 deny）
-// 纯函数：全部状态由 GateSnapshot 注入；deny=返回 reason（index.ts 层转 throw Error 阻断）。
+// [2026-09-04]-[English localization: translate comments and deny/hint messages; no logic change]
+// Six-gate checks (order = priority; any hit denies)
+// Pure functions: all state injected via GateSnapshot; deny = return a reason (index.ts layer turns it into a thrown Error to block).
 import { META_LEGAL } from "./types"
 import type { GateSnapshot, Meta, ShellRegEntry } from "./types"
 import { metaErrorHint, parseRouteMeta } from "./meta"
@@ -7,8 +8,10 @@ import { computeLane, firstCandidate, laneOfShell } from "./lane"
 import { baseScoreDynamic, normalizeModelKey } from "./capability"
 import { isFallbackCandidate, isPrimaryCandidate } from "./lane-policy"
 
-// [2026-09-04]-[autoRedirect：deny 附言候选同步透出 redirect（index 层零重试静默改派用）；
-//  deny 文案一字不改（存量 fixture 锁死），不可改派类（同名冲突/链已尽无候选/闸6 meta）保持 null]
+// [2026-09-04]-[autoRedirect: the deny-note candidate is also exposed as redirect (consumed by the index layer for
+//  zero-retry silent redirection); non-redirectable classes (same-name conflict / chain exhausted with no candidate / gate-6 meta) stay null]
+// [2026-09-04]-[English localization: deny copy is now English — the earlier "deny copy frozen verbatim (locked by
+//  legacy fixtures)" constraint is lifted as of 2026-09-04; test fixtures updated in sync]
 export interface GateResult { deny: string | null; note: string | null; redirect: string | null }
 
 function matrixStatus(shell: ShellRegEntry, mcombos: GateSnapshot["matrix"]): [string, string] {
@@ -53,22 +56,22 @@ export function checkShell(
         routing: snap.routing,
         quotaExhausted: snap.quotaExhausted,
         routePolicy: snap.routePolicy,
-      // [2026-08-31]-[去厂商化：deny 附言候选排序与横幅同源（billing/peak 系数）]
+      // [2026-08-31]-[de-vendorization: deny-note candidate ordering shares one source with the banner (billing/peak factors)]
       billingBoostOf: snap.billingBoostOf,
       peakOf: snap.peakOf,
-      // [2026-08-31]-[终审P1-3：deny 附言候选补足 water/costs/glmPeak/states 运行期输入]
+      // [2026-08-31]-[final-review P1-3: deny-note candidates get the runtime inputs water/costs/glmPeak/states]
       costs: snap.costs,
       water: snap.water,
       glmPeak: snap.glmPeak,
       states: snap.states,
-      // [2026-09-03]-[deny 附言候选与任务池选配清单同源：hint 不推荐未入选模型]
+      // [2026-09-03]-[deny-note candidates share the task-pool selection list: the hint never recommends a model that missed the list]
       poolConfig: snap.poolConfig,
       ...metaKw,
       _lane: laneOverride,
     }
   }
 
-  // [2026-09-04]-[autoRedirect：候选壳名计算与 hint 文案拆分复用（deny 文案不变），redirect 同值透出]
+  // [2026-09-04]-[autoRedirect: candidate shell-name computation split out and reused by the hint copy; redirect exposes the same value]
   const candidateOf = (laneOverride?: string): string | null => {
     try {
       const p = buildParams() as any
@@ -80,26 +83,26 @@ export function checkShell(
   }
   const hint = (laneOverride?: string): string => {
     const cand = candidateOf(laneOverride)
-    return cand ? `，请改派 ${cand}` : "，降级链已尽：向用户声明原因并给 2 个可选项"
+    return cand ? `, redirect to ${cand}` : ", downgrade chain exhausted: tell the user why and offer 2 options"
   }
 
-  // 闸1 注册表三态：enabled 唯一可派发；discovered=未探测面 deny；
-  // disabled 按矩阵致因区分（down 才 deny，unknown/missing fail-open 放行+提示）
-  // [2026-08-29]-[动态矩阵闸1 拆三层：同名冲突/未激活在本层 deny（未注入层由 index.ts denyUninjected）]
+  // Gate 1 registry three states: enabled is the only dispatchable state; discovered = unprobed face → deny;
+  // disabled is distinguished by matrix cause (only down denies; unknown/missing fail-open with a note)
+  // [2026-08-29]-[dynamic-matrix gate 1 split into three layers: same-name conflict / not activated deny here (the uninjected layer is handled by index.ts denyUninjected)]
   const act = snap.activation
   if (act && act.enabled) {
     if (act.conflicts && act.conflicts.has(agent)) {
-      // 不可改派类：同名冲突须用户处理
-      return { deny: `${agent} 与用户自定义同名 agent 冲突，不可派发（请改名或删除自定义 agent）${hint()}`, note: null, redirect: null }
+      // Non-redirectable class: same-name conflict requires user action
+      return { deny: `${agent} conflicts with a user-defined agent of the same name, not dispatchable (rename or delete the custom agent)${hint()}`, note: null, redirect: null }
     }
     if (act.activeShells && !act.activeShells.has(agent)) {
       const restart = act.restartRequired.length > 0
-        ? `；新 provider（${act.restartRequired.join("、")}）壳注册需重启 opencode`
+        ? `; new provider(s) (${act.restartRequired.join(", ")}) require an opencode restart to register their shells`
         : ""
       const cand = candidateOf()
       return {
-        // [2026-08-29]-[修复复审P2-文案口径：「实时」→「下一请求生效」（激活面变化对派发闸在下一次 tool 派发生效）]
-        deny: `${agent} 未激活（模型不在当前激活矩阵：在模型管理设为可见/加入 favorites/主会话切到该模型即可激活，下一请求生效${restart}）${hint()}`,
+        // [2026-08-29]-[re-review P2 wording fix: "realtime" → "takes effect on the next request" (activation-face changes reach the dispatch gate on the next tool delegation)]
+        deny: `${agent} not activated (model not in the current activation matrix: set it visible in model management / add it to favorites / switch the main session to this model to activate; takes effect on the next request${restart})${hint()}`,
         note: null,
         redirect: cand,
       }
@@ -111,129 +114,130 @@ export function checkShell(
     if (status === "disabled" && snap.matrix !== null && mstat !== "down") {
       return {
         deny: null,
-        note: `[opencode-switchman] ${agent} registry=disabled 但矩阵状态=${mstat || "missing"}（非 down）：fail-open 放行，探针下轮刷新后自动纠正`,
+        note: `[opencode-switchman] ${agent} registry=disabled but matrix status=${mstat || "missing"} (not down): fail-open, auto-corrected after the next probe refresh`,
         redirect: null,
       }
     }
     const cand = candidateOf()
     return {
-      deny: `${agent} 不可派发（registry status=${status}${snap.matrix !== null && mstat === "down" ? `，矩阵 ${mstat}：${mreason}` : ""}）${hint()}`,
+      deny: `${agent} not dispatchable (registry status=${status}${snap.matrix !== null && mstat === "down" ? `, matrix ${mstat}: ${mreason}` : ""})${hint()}`,
       note: null,
       redirect: cand,
     }
   }
 
-  // 闸2 矩阵：只拦明确 down；unknown/缺项 fail-open 放行+提示
+  // Gate 2 matrix: only blocks an explicit down; unknown/missing fail-open with a note
   if (snap.matrix !== null) {
     const [mstat, mreason] = matrixStatus(shell, snap.matrix)
     if (mstat === "down") {
-      return { deny: `${agent} 不可用（矩阵 down，${mreason}）${hint()}`, note: null, redirect: candidateOf() }
+      return { deny: `${agent} unavailable (matrix down, ${mreason})${hint()}`, note: null, redirect: candidateOf() }
     }
     if (mstat === "unknown" || mstat === "missing" || mstat === "unprobed") {
-      return { deny: null, note: `[opencode-switchman] ${agent} 矩阵状态=${mstat}（非 down）：不拦截，探针下轮刷新`, redirect: null }
+      return { deny: null, note: `[opencode-switchman] ${agent} matrix status=${mstat} (not down): not blocked, probe refreshes next round`, redirect: null }
     }
   }
 
-  // 闸2.5：模型已退休（连续 404 永久移出候选，重启清空；仅 dynamic 注入 retiredModels）
-  // [2026-08-29]-[失败分类：厂商无关，provider/modelId 命中即 deny，不再依赖池硬编码]
+  // Gate 2.5: model retired (consecutive 404s remove it from candidates permanently; cleared on restart; only the dynamic matrix injects retiredModels)
+  // [2026-08-29]-[failure classification: vendor-agnostic; deny on provider/modelId hit, no pool hardcoding]
   if (snap.retiredModels?.has(`${shell.provider}/${shell.modelId}`)) {
-    return { deny: `${agent} 不可用（模型已下线：连续 404，请改派其他候选）${hint()}`, note: null, redirect: candidateOf() }
+    return { deny: `${agent} unavailable (model retired: consecutive 404s, redirect to another candidate)${hint()}`, note: null, redirect: candidateOf() }
   }
 
-  // 闸3：探针可用但实调失败的进程内隔离（不落盘，30 分钟/重启后恢复）
+  // Gate 3: in-process isolation for probe-ok but real-call failures (not persisted; recovers after 30 minutes or on restart)
   if (shell.comboKey && snap.realFailedCombos?.has(shell.comboKey)) {
-    return { deny: `${agent} 暂不可用（探针可用但实际委派失败，30 分钟后自动解锁或重启 opencode 恢复）${hint()}`, note: null, redirect: candidateOf() }
+    return { deny: `${agent} temporarily unavailable (probe ok but actual delegation failed; auto-unlocks after 30 minutes or restart opencode)${hint()}`, note: null, redirect: candidateOf() }
   }
 
-  // 闸4 熔断：down_agents 命中壳名或 comboKey（600s 窗 × 2 次）
+  // Gate 4 breaker: down_agents hit by shell name or comboKey (600s window × 2 failures)
   const down = snap.routing?.down_agents
   if (down && ((agent in down) || (shell.comboKey && shell.comboKey in down))) {
-    return { deny: `${agent} 暂不可用（连续失败熔断中，约 10 分钟自动恢复）${hint()}`, note: null, redirect: candidateOf() }
+    return { deny: `${agent} temporarily unavailable (breaker tripped after consecutive failures; auto-recovers in about 10 minutes)${hint()}`, note: null, redirect: candidateOf() }
   }
 
-  // 闸5 池耗尽（只认调用必失败；unknown/高水位不拦）
+  // Gate 5 pool exhaustion (only blocks when calls are certain to fail; unknown/high watermark does not block)
   const pool = shell.pool
   if (snap.quotaExhausted?.[pool] && snap.routePolicy?.[pool]?.routing !== false) {
     const why = pool === "glm"
-      ? "GLM 套餐已用尽"
-      : pool === "copilot" ? "Copilot 积分已耗尽" : "DeepSeek 余额已耗尽"
-    return { deny: `${agent} 暂不可用（${why}）${hint()}`, note: null, redirect: candidateOf() }
+      ? "GLM plan exhausted"
+      : pool === "copilot" ? "Copilot credits exhausted" : "DeepSeek balance exhausted"
+    return { deny: `${agent} temporarily unavailable (${why})${hint()}`, note: null, redirect: candidateOf() }
   }
 
-  // 闸5.5 任务池选配（pool-config.json 手动配置）：lane→参与模型清单，清单存在且非空即压过
-  // 系统默认候选集（同模型可重复进驻多个 lane）；未配置=fail-open 放行（该 lane 走系统默认）
+  // Gate 5.5 task-pool selection (manual pool-config.json): lane → participating-model list; a non-empty list overrides
+  // the system default candidate set (the same model may join several lanes); unconfigured = fail-open (the lane falls back to the system default)
   {
     const allow = snap.poolConfig?.[lane]
     if (allow && allow.size > 0 && !allow.has(normalizeModelKey(shell.modelId))) {
-      return { deny: `${agent} 不在 ${lane} 任务池选配清单（/poolConfig 可调整各任务池参与模型，或改派其他候选）${hint()}`, note: null, redirect: candidateOf() }
+      return { deny: `${agent} not in the ${lane} task-pool selection list (use /poolConfig to adjust participating models per task pool, or redirect to another candidate)${hint()}`, note: null, redirect: candidateOf() }
     }
   }
 
-  // 闸6 ROUTE_META 硬闸：行缺失/格式坏/字段非法/安全字段缺失一律 deny 附样例+实时候选
+  // Gate 6 ROUTE_META hard gate: missing line / malformed / invalid field / missing required field all deny with a sample + live candidate
   if (metaErr !== null) {
     const fallbackLane = laneForCheck(agent, null, snap.lanes)
     let fallback: string
     try {
       const c = firstCandidate(fallbackLane as import("./types").Lane, snap.lanes[fallbackLane] ?? [], buildParams() as any, agent)
-      fallback = c ? `，请改派 ${c}` : "，降级链已尽：向用户声明原因并给 2 个可选项"
+      fallback = c ? `, redirect to ${c}` : ", downgrade chain exhausted: tell the user why and offer 2 options"
     } catch {
-      fallback = "，降级链已尽：向用户声明原因并给 2 个可选项"
+      fallback = ", downgrade chain exhausted: tell the user why and offer 2 options"
     }
     return {
-      deny: `${agent} 为壳名派发，ROUTE_META 无效：${metaErrorHint(metaErr)}${fallback}`,
+      deny: `${agent} dispatched to a shell name, invalid ROUTE_META: ${metaErrorHint(metaErr)}${fallback}`,
       note: null,
-      // 改派在 index.ts 做（需改 prompt 合成 META），此处保持 null
+      // redirection happens in index.ts (the prompt must be rewritten to synthesize META); stays null here
       redirect: null,
     }
   }
   const role = meta!.role
 
-  // 闸7 语义校验
+  // Gate 7 semantic checks
   if (role === "reviewer") {
     const pf = meta!.producer_family
     if (pf && pf === String(shell.family)) {
-      return { deny: `${agent} 与 producer 同 family（${pf}），复审须异族视角${hint("review")}`, note: null, redirect: candidateOf("review") }
+      return { deny: `${agent} same family as producer (${pf}); re-review requires a cross-family perspective${hint("review")}`, note: null, redirect: candidateOf("review") }
     }
   }
   if (meta!.capability === "rw" && String(shell.capability) === "ro") {
-    return { deny: `${agent} 为只读壳（ro），不接 rw 写任务${hint()}`, note: null, redirect: candidateOf() }
+    return { deny: `${agent} is a read-only shell (ro) and cannot take rw write tasks${hint()}`, note: null, redirect: candidateOf() }
   }
   if ((meta!.modality === "image" || meta!.modality === "vision") && !shell.vision) {
-    return { deny: `${agent} 非视觉壳，不能承接 modality=${meta!.modality} 任务${hint("vision")}`, note: null, redirect: candidateOf("vision") }
+    return { deny: `${agent} is not a vision shell and cannot take modality=${meta!.modality} tasks${hint("vision")}`, note: null, redirect: candidateOf("vision") }
   }
   if (lane === "vision" && meta!.modality === "text") {
-    return { deny: `${agent} lane=vision 必须声明 image/vision modality${hint("vision")}`, note: null, redirect: candidateOf("vision") }
+    return { deny: `${agent} lane=vision requires declaring an image/vision modality${hint("vision")}`, note: null, redirect: candidateOf("vision") }
   }
   const capability = baseScoreDynamic(shell.modelId)
   if (!isPrimaryCandidate(lane as import("./types").Lane, capability) && !isFallbackCandidate(lane as import("./types").Lane, capability)) {
-    return { deny: `${agent} 能力等级不足，不能承接 ${lane} 任务${hint()}`, note: null, redirect: candidateOf() }
+    return { deny: `${agent} capability level too low to take ${lane} tasks${hint()}`, note: null, redirect: candidateOf() }
   }
   if (isFallbackCandidate(lane as import("./types").Lane, capability) && meta!.source !== "user") {
     let current
     try {
       current = computeLane(lane as import("./types").Lane, snap.lanes[lane] ?? base, buildParams() as any)
     } catch {
-      return { deny: `${agent} 无法确认 ${lane} 跨级补位资格，为避免错误降级拒绝派发${hint()}`, note: null, redirect: candidateOf() }
+      return { deny: `${agent} cannot confirm cross-level fallback eligibility for ${lane}; dispatch denied to avoid an unintended downgrade${hint()}`, note: null, redirect: candidateOf() }
     }
     if (!current.chain.some((candidate) => candidate.shell === agent)) {
-      return { deny: `${agent} 未入选 ${lane} 的前二跨级回退候选${hint()}`, note: null, redirect: candidateOf() }
+      return { deny: `${agent} not among the top-2 cross-level fallback candidates for ${lane}${hint()}`, note: null, redirect: candidateOf() }
     }
     if (current.chain.some((candidate) => isPrimaryCandidate(lane as import("./types").Lane, baseScoreDynamic(snap.registry?.[candidate.shell]?.modelId ?? "")))) {
-      return { deny: `${agent} 为 ${lane} 的跨级回退候选；当前仍有可用同级模型${hint()}`, note: null, redirect: candidateOf() }
+      return { deny: `${agent} is a cross-level fallback candidate for ${lane}; same-level models are still available${hint()}`, note: null, redirect: candidateOf() }
     }
   }
-  // [2026-08-31]-[去厂商化：删 source=auto 误选按量池的硬 deny——api 计费由 billingBoost 乘积系数
-  //  软排序兜底（同 tier 排订阅之后），deny 只保留 META 格式与 review 异族/ro/vision 结构门]
+  // [2026-08-31]-[de-vendorization: removed the hard deny for source=auto mis-picking pay-as-you-go pools — api billing is
+  //  soft-sorted by the billingBoost product factor (after subscription within the same tier); deny now keeps only the META
+  //  format gate and the review cross-family / ro / vision structural gates]
   return { deny: null, note: null, redirect: null }
 }
 
-/** 未注册/非壳名 → fail-open（unknown 内置代理不受路由管辖） */
+/** Unregistered / non-shell name → fail-open (unknown built-in agents are not governed by routing) */
 export function noteUnknownAgent(agent: string): string {
-  return `[opencode-switchman] unknown subagent_type='${agent}'：放行（不在壳清单，内置代理不受路由管辖）`
+  return `[opencode-switchman] unknown subagent_type='${agent}': allowed (not in the shell list; built-in agents are not governed by routing)`
 }
 
-/** [2026-09-04]-[内置 subagent 封堵：explore/general 与壳路由同场竞争且原 fail-open 放行，
- *  主模型探索任务被核心工具描述引去内置 agent；默认 deny 附 economy/main 改派建议] */
+/** [2026-09-04]-[built-in subagent block: explore/general competed with shell routing while being fail-open by default,
+ *  and the main model's exploration tasks were drawn to the built-in agents by core tool descriptions; default deny with an economy/main redirect hint] */
 export const BUILTIN_SUBAGENTS: Readonly<Record<string, import("./types").Lane>> = {
   explore: "economy",
   general: "main",
@@ -249,22 +253,22 @@ export function builtinAgentDeny(
   if (!lane) return null
   const cand = laneHead(lane)
   const role = lane === "economy" ? "scouter" : "generic"
-  const target = cand ? `，请改派 ${cand}（ROUTE_META role=${role}）` : "，请按横幅 [路由] 链首选壳派发"
-  return `[opencode-switchman] 内置代理 '${agent}' 不参与壳路由（统一走壳派发保住配额感知/异族复审/水位闸）${target}；确需内置代理：opencode-switchman.jsonc 设 builtinAgents.mode="allow" 后重启`
+  const target = cand ? `, redirect to ${cand} (ROUTE_META role=${role})` : ", dispatch to the first shell on the [ROUTES] chain in the banner"
+  return `[opencode-switchman] built-in agent '${agent}' does not participate in shell routing (shell delegation is enforced to preserve quota awareness / cross-family re-review / watermark gates)${target}; if a built-in agent is truly needed: set builtinAgents.mode="allow" in opencode-switchman.jsonc and restart`
 }
 
-/** 壳命名形态判定（仅用于「未注入超集」deny 的形态识别；isShell 判定一律走注册表，禁启发式） */
+/** Shell-name shape check (only for shape recognition in the "uninjected superset" deny; isShell always goes through the registry, heuristics forbidden) */
 export function shellLikeName(agent: string): boolean {
   return /^[a-z][a-z0-9]*-mx-[a-z0-9]+-[a-z]+(-ro)?$/.test(agent)
 }
 
-/** [2026-08-29]-[动态矩阵闸1 第一层：壳名形态但未注入超集 → deny（模型未开/无凭证/新增 provider 需重启）]
- *  [2026-09-02]-[注入面改为六档链精选（selectInjectableDefs），文案补「未入选精选」情形避免误导排查方向]
- *  [2026-09-02 修复]-[注入面语义改为「可用全集∪链精选」：可用模型已全量注入，未注入=provider 未连接/
- *  无凭证/非对话类，文案不再提「未入选精选」避免误导] */
+/** [2026-08-29]-[dynamic-matrix gate 1, layer 1: shell-shaped name but not injected into the superset → deny (model disabled / no credentials / new provider needs a restart)]
+ *  [2026-09-02]-[the injection face became the six-lane chain selection (selectInjectableDefs); copy added a "missed the selection" case to avoid misleading troubleshooting]
+ *  [2026-09-02 fix]-[injection-face semantics became "available superset ∪ chain selection": available models are all injected, so uninjected = provider
+ *  not connected / no credentials / non-chat model; the copy no longer mentions "missed the selection" to avoid misleading] */
 export function denyUninjected(agent: string, restartRequired: string[], hint: string | null): string {
   const restart = restartRequired.length > 0
-    ? `检测到超集外 provider（${restartRequired.join("、")}）：新增 provider 的壳注册需重启 opencode`
-    : "若为新增 provider，壳注册需重启 opencode"
-  return `${agent} 未注入壳超集（provider 未连接/无凭证/非对话模型；新增 provider 需重启 opencode）${restart}${hint ? `，${hint}` : ""}`
+    ? `provider(s) outside the superset detected (${restartRequired.join(", ")}): new providers require an opencode restart to register their shells`
+    : "if this is a new provider, an opencode restart is required to register its shells"
+  return `${agent} not injected into the shell superset (provider not connected / no credentials / non-chat model; new providers require an opencode restart)${restart}${hint ? `, ${hint}` : ""}`
 }

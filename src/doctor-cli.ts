@@ -1,7 +1,8 @@
+// [2026-09-04]-[English localization: translate CLI messages and comments; no logic change]
 import { loadUserConfig } from "./config"
 import { formatDoctorReport, runDoctor } from "./doctor"
 if (process.argv.slice(2).some((arg) => arg === "--help" || arg === "-h")) {
-  console.log("用法：switchman-doctor 检查 opencode-switchman 配置；环境变量 OPENCODE_CONFIG_DIR 可指定配置目录；退出码 0=无问题、1=警告、2=错误")
+  console.log("Usage: switchman-doctor checks the opencode-switchman config; the OPENCODE_CONFIG_DIR env var selects the config directory; exit codes 0=no issues, 1=warnings, 2=errors")
 } else {
 const config = loadUserConfig()
 const result = runDoctor({ configPath: config.path, diagnostics: config.diagnostics, env: process.env })

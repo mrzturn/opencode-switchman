@@ -1,16 +1,17 @@
-// 动态矩阵管理器（v1.3）：会话注册表、state 目录 watch、重算编排、探针差集
-// [2026-08-29]-[修复复审P1-首轮时序：system.transform 早于 chat.params（opencode session/llm/request.ts:69-73 vs 114-121），
-// 首轮注册表为空 → 壳子代理被误注入调度员规程。修=监听 session.created 预注册（agent 名记录）+
-// 分类只按 agent 名：注入壳名集合∪内部代理，不依赖注册表时序]
+// [2026-09-04]-[English localization: translate comments and status messages; no logic change]
+// Dynamic matrix manager (v1.3): session registry, state dir watch, recompute orchestration, probe diff
+// [2026-08-29]-[fix review-P1 first-turn ordering: system.transform runs before chat.params (opencode session/llm/request.ts:69-73 vs 114-121);
+// the first-turn registry is empty -> shell subagents got the dispatcher protocol wrongly injected. fix=listen to session.created
+// pre-registration (record the agent name) + classify only by agent name: injected shell names union internal agents, independent of registry timing]
 import { watch, statSync, type FSWatcher } from "node:fs"
 import { readJson, writeJsonAtomic, paths, nowIso, appendStatusLog } from "./state"
 import { readConfigured, computeActivation, sameActivation, sortUnique, desktopDatPath, tuiModelPath, watchDirs } from "./activation"
 import type { ActivationState, MatrixRunMode, ModelKey } from "./types"
 import type { ShellDefinition } from "./catalog"
 
-// 内部代理（title/compaction/summary）：有 agent 字段但不计入会话模型
+// Internal agents (title/compaction/summary): have an agent field but do not count as session models
 export const INTERNAL_AGENTS = new Set(["title", "compaction", "summary"])
-/** 监听的目标文件名（watchDirs[0]=global.dat 目录；watchDirs[1]=stateRoot） */
+/** Watched target filenames (watchDirs[0]=global.dat dir; watchDirs[1]=stateRoot) */
 const WATCH_FILENAMES = new Set(["opencode.global.dat", "model.json"])
 
 export interface SessionInfo {
@@ -24,25 +25,25 @@ export interface MatrixManagerOptions {
   stateRoot: string
   mode: Exclude<MatrixRunMode, "legacy">
   superset: readonly ShellDefinition[]
-  /** config 钩子成功注入的壳名集合（isShell 判定唯一真源，禁启发式） */
+  /** Shell names successfully injected by the config hook (sole source of truth for isShell; heuristics forbidden) */
   injectedNames: ReadonlySet<string>
-  /** 超集内已知 provider（超集外→restartRequired） */
+  /** Providers known within the superset (outside the superset -> restartRequired) */
   knownProviders: ReadonlySet<string>
   watchEnabled?: boolean
   debounceMs?: number
   pollMs?: number
-  /** 重算回调：清横幅缓存＋提交探针差集；source 区分触发面（config=可见集/favorites 变化） */
+  /** Recompute callback: clear the banner cache + submit the probe diff; source distinguishes the trigger (config=visible set/favorites change) */
   onRecompute?: (state: ActivationState, newTargets: string[], source: RecomputeSource) => void
 }
 
-/** 重算触发源：config=配置面文件变化（desktop 可见集开关/TUI favorites 增删）；
- *  session=会话模型切换/删除；startup=config 钩子直调首轮 */
+/** Recompute trigger sources: config=config-surface file change (desktop visible-set toggles/TUI favorites add-remove);
+ *  session=session model switch/delete; startup=config hook direct first-turn call */
 export type RecomputeSource = "config" | "session" | "startup"
 
 export const WATCH_DEBOUNCE_MS = 500
-// [2026-09-02]-[30s→2s：实测 fs.watch 事件在 opencode 宿主进程内不投递（独立 Bun 脚本同目录正常，
-// 插件内真实 favorites 变更 22s 后才被 30s 轮询兜住），mtime 轮询是实际生效路径；statSync×2/2s 成本
-// 可忽略，2s 轮询+500ms debounce ≈ favorites 变更 2.5s 内生效]-[favorites/可见集变更即时可见]
+// [2026-09-02]-[30s->2s: measured fs.watch events are not delivered inside the opencode host process (a standalone Bun script
+// in the same dir works; a real in-plugin favorites change took 22s to be caught by the 30s poll), so mtime polling is the
+// actually effective path; statSync x2 per 2s is negligible, 2s poll+500ms debounce ~= favorites changes effective within 2.5s]-[favorites/visible-set changes visible immediately]
 export const WATCH_POLL_MS = 2_000
 const PARSE_RETRY_MS = 150
 const PARSE_RETRIES = 2
@@ -60,8 +61,9 @@ export class MatrixManager {
   private lastMtimes: [number, number] = [0, 0]
   private stopped = false
   private pendingSource: RecomputeSource = "startup"
-  // [2026-09-02]-[config 源净零反馈节流：favorites 增删复原/仅 recent 变更时 mtime 变化会触发重算，
-  // 但激活集无变化＝完全静默，用户以为监听失效；10s 节流防连续开关刷屏]
+  // [2026-09-02]-[config-source net-zero feedback throttle: restored favorites/only-recent changes still bump mtime and trigger
+  // recompute, but an unchanged activation set = total silence, so users think watching is broken; 10s throttle prevents spam
+  // from rapid toggling]
   private lastConfigNoopNoticeMs = 0
 
   constructor(options: MatrixManagerOptions) {
@@ -80,7 +82,7 @@ export class MatrixManager {
     })
   }
 
-  /** session.created 预注册：事件先于首轮 chat.params/transform，保证 transform 首轮即可按 agent 名分类 */
+  /** session.created pre-registration: the event precedes first-turn chat.params/transform, so transform can classify by agent name from the first turn */
   noteSessionCreated(sessionID: string | undefined, agent: string | undefined): boolean {
     if (this.stopped || !sessionID || !agent) return false
     if (this.sessions.has(sessionID)) return false
@@ -88,26 +90,26 @@ export class MatrixManager {
     return true
   }
 
-  /** chat.params 分类（agent 名唯一真源）：注入壳名集合→isShell；title/compaction/summary→忽略；
-   *  其余（含用户自定义 subagent）→按主会话注册。返回是否影响激活矩阵 */
+  /** chat.params classification (agent name sole source of truth): injected shell names -> isShell; title/compaction/summary -> ignore;
+   *  the rest (incl. user-defined subagents) -> registered as main sessions. Returns whether the activation matrix is affected */
   noteChatParams(sessionID: string | undefined, agent: string | undefined, modelKey: ModelKey | null): boolean {
     if (this.stopped || !sessionID || !agent) return false
     if (INTERNAL_AGENTS.has(agent)) return false
     const isShell = this.opts.injectedNames.has(agent)
     const prev = this.sessions.get(sessionID)
     this.sessions.set(sessionID, { agent, modelKey, isShell, updatedAt: Date.now() })
-    // 壳会话不进激活矩阵；只有非壳会话模型变化才需重算
+    // Shell sessions do not enter the activation matrix; only non-shell session model changes need a recompute
     return !isShell && modelKey !== null && (prev?.modelKey ?? null) !== modelKey
   }
 
-  /** session.deleted：删除会话注册表项。返回是否有非壳模型被移除（需重算） */
+  /** session.deleted: remove the session registry entry. Returns whether a non-shell model was removed (needs recompute) */
   noteSessionDeleted(sessionID: string): boolean {
     const prev = this.sessions.get(sessionID)
     this.sessions.delete(sessionID)
     return Boolean(prev && !prev.isShell && prev.modelKey)
   }
 
-  /** 非壳会话模型并集（即时快照） */
+  /** Union of non-shell session models (instant snapshot) */
   sessionModelKeys(): ModelKey[] {
     const out = new Set<string>()
     for (const s of this.sessions.values()) {
@@ -120,8 +122,8 @@ export class MatrixManager {
     return this.sessions.get(sessionID)?.isShell ?? false
   }
 
-  /** transform 阶段系统注入跳过判定：壳会话 ∪ 内部代理（title/compaction/summary）——
-   *  按预注册/注册表中的 agent 名分类，首轮（session.created 预注册）即生效 */
+  /** transform-phase system-injection skip check: shell sessions union internal agents (title/compaction/summary) --
+   *  classified by the agent name in pre-registration/registry, effective from the first turn (session.created pre-registration) */
   skipSystemInjection(sessionID: string): boolean {
     const s = this.sessions.get(sessionID)
     return Boolean(s && (s.isShell || INTERNAL_AGENTS.has(s.agent)))
@@ -131,7 +133,7 @@ export class MatrixManager {
     return this.current_
   }
 
-  /** 当前激活组合 matrixKey 集（-ro 别名与 rw 共享 key，天然去重） */
+  /** Current active combo matrixKey set (-ro aliases share keys with rw, naturally deduped) */
   activeMatrixKeys(): string[] {
     const out = new Set<string>()
     for (const name of this.current_.activeShells) {
@@ -141,12 +143,13 @@ export class MatrixManager {
     return [...out].sort()
   }
 
-  /** 同步重算：读配置面→并集→落盘；状态等价短路（不 bump generation/不清缓存）
-   *  [2026-08-29]-[修复复审P1-写入竞态：本方法全同步（读-算-写无 await）→进程内天然原子；
-   *  model-matrix.json 读改写同步完成（进程内原子）；探针异步写经 withPathLock 串行＋完成时代数校验丢弃，
-   *  二者交错由代数校验兜底；跨进程靠唯一 tmp+rename 不损坏文件]-
-   *  [2026-08-29]-[触发源透传：watch/轮询=config、chat.params/session.deleted=session、直调=startup；
-   *  供 onRecompute 按源决定探针范围（config→全量激活组合，其余→仅新增）] */
+  /** Synchronous recompute: read config surface -> union -> persist; state-equivalence short-circuit (no generation bump/no cache clear)
+   *  [2026-08-29]-[fix review-P1 write race: this method is fully synchronous (read-compute-write without await) -> naturally
+   *  atomic in-process; the model-matrix.json read-modify-write completes synchronously (in-process atomic); async probe writes
+   *  serialize via withPathLock plus a generation check on completion that discards stale rounds; interleaving of the two is
+   *  guarded by the generation check; cross-process safety relies on unique tmp+rename so files are never corrupted]-
+   *  [2026-08-29]-[trigger source pass-through: watch/poll=config, chat.params/session.deleted=session, direct call=startup;
+   *  lets onRecompute pick the probe scope by source (config->all active combos, others->only new ones)] */
   recompute(configured?: { configStatus: ActivationState["configStatus"]; models: ModelKey[] }, source: RecomputeSource = "startup"): ActivationState {
     const read = configured ?? readConfigured(this.opts.stateRoot, this.opts.mode)
     const next = computeActivation({
@@ -159,19 +162,21 @@ export class MatrixManager {
       knownProviders: this.opts.knownProviders,
     })
     if (sameActivation(this.current_, next)) {
-      // [2026-09-02]-[配置面净零变更反馈：mtime 变了但 favorites/可见集内容与激活集无变化时，
-      // 此前无 gen bump/无通知/无侧栏重写＝用户视角的"没反应"；config 源时给一条节流状态日志，
-      // 任何收藏区操作都有可感知回执；session/startup 源属内部调度保持静默]
+      // [2026-09-02]-[config-surface net-zero change feedback: mtime changed but favorites/visible-set content and the activation
+      // set are unchanged -- previously no gen bump/no notice/no sidebar rewrite = "no reaction" from the user's view; for the
+      // config source emit one throttled status log so any favorites-area operation gets a perceivable receipt; session/startup
+      // sources are internal scheduling and stay silent]
       if (source === "config" && Date.now() - this.lastConfigNoopNoticeMs > 10_000) {
         this.lastConfigNoopNoticeMs = Date.now()
-        appendStatusLog(`favorites/可见集已扫描：激活集无变化（gen=${this.current_.generation}，未重算未重探）`)
+        appendStatusLog(`favorites/visible set scanned: activation unchanged (gen=${this.current_.generation}; no recompute, no re-probe)`)
       }
       return this.current_
     }
     if (next.invalidConfigured.length > 0) {
-      // [2026-09-01]-[加固：favorites/可见集里存在 provider 已知但 modelId 查无壳的脏数据（如手滑收藏
-      // "provider/not-a-model"），此前静默丢弃无处诊断；sameActivation 已短路去重，此处只在真变化时记一次，不刷屏]
-      appendStatusLog(`可见集/收藏含无效模型（provider 已知但无此 modelId，未生成壳）：${next.invalidConfigured.join("、")}`)
+      // [2026-09-01]-[hardening: dirty data in favorites/visible set where the provider is known but no shell exists for the
+      // modelId (e.g. accidentally favoriting "provider/not-a-model") was silently dropped with no diagnosis; sameActivation
+      // already short-circuits dedup, so log once only on a real change, no spam]
+      appendStatusLog(`visible set/favorites contain invalid models (provider known but no such modelId, no shell generated): ${next.invalidConfigured.join(", ")}`)
     }
     const prevKeys = new Set(this.lastActiveKeys)
     const activeKeys = new Set(this.activeMatrixKeysOf(next))
@@ -180,16 +185,16 @@ export class MatrixManager {
     this.current_ = next
     try {
       writeJsonAtomic(paths().activeMatrix, { ...next, updated_at: nowIso() })
-      // model-matrix.json 增 active_keys/target_generation（同步读改写保探针字段；探针完成后按代数校验丢弃）
+      // model-matrix.json gains active_keys/target_generation (synchronous read-modify-write preserves the probe fields; stale probe rounds are discarded by the generation check)
       const m = readJson<Record<string, unknown>>(paths().matrix)
       writeJsonAtomic(paths().matrix, { ...(m ?? {}), active_keys: [...activeKeys], target_generation: next.generation })
     } catch (exc) {
-      appendStatusLog(`激活矩阵落盘 fail-open: ${exc}`)
+      appendStatusLog(`activation matrix persist fail-open: ${exc}`)
     }
     try {
       this.opts.onRecompute?.(next, newTargets, source)
     } catch (exc) {
-      appendStatusLog(`激活矩阵回调 fail-open: ${exc}`)
+      appendStatusLog(`activation matrix callback fail-open: ${exc}`)
     }
     return next
   }
@@ -203,7 +208,7 @@ export class MatrixManager {
     return [...out]
   }
 
-  /** 异步重算（watch/轮询/会话触发）：unreadable 带短重试（原子 rename 竞态兜底） */
+  /** Async recompute (watch/poll/session triggered): short retry on unreadable (guards atomic rename races) */
   async recomputeWithRetry(): Promise<ActivationState> {
     let read = this.readConfiguredSafe()
     for (let i = 0; i < PARSE_RETRIES && read.configStatus === "unreadable"; i++) {
@@ -217,20 +222,20 @@ export class MatrixManager {
     try {
       return readConfigured(this.opts.stateRoot, this.opts.mode)
     } catch (exc) {
-      appendStatusLog(`配置面读取 fail-open（视为 empty）: ${exc}`)
+      appendStatusLog(`config surface read fail-open (treated as empty): ${exc}`)
       return { configStatus: "empty", models: [] }
     }
   }
 
   private targetFiles(): [string, string] {
-    // [2026-08-29]-[修复复审P1-双根路径：global.dat 在 stateRoot 父目录（userData），model.json 在 stateRoot]
+    // [2026-08-29]-[fix review-P1 dual-root paths: global.dat lives in stateRoot's parent dir (userData), model.json in stateRoot]
     return [desktopDatPath(this.opts.stateRoot), tuiModelPath(this.opts.stateRoot)]
   }
 
-  /** 启动 watch（两目录级，缺失目录静默跳过）＋mtime 轮询兜底 */
+  /** Start watch (two dir levels, silently skip missing dirs) + mtime polling fallback */
   start(): void {
     if (this.stopped || !this.opts.watchEnabled) return
-    // [2026-08-29]-[修复复审P1-双根路径：拆分 watch stateRoot 父目录（global.dat）与 stateRoot（model.json）]
+    // [2026-08-29]-[fix review-P1 dual-root paths: watch stateRoot's parent dir (global.dat) and stateRoot (model.json) separately]
     const dirs = watchDirs(this.opts.stateRoot)
     for (const dir of dirs) {
       try {
@@ -238,14 +243,14 @@ export class MatrixManager {
           if (!filename) return this.scheduleRecompute()
           if (WATCH_FILENAMES.has(String(filename))) this.scheduleRecompute()
         })
-        // [2026-09-02]-[运行异常落日志：此前纯静默吞掉，宿主内 fs.watch 不投递时无从诊断]-[可观测性]
-        w.on("error", (exc) => appendStatusLog(`fs.watch(${dir}) 异常，mtime 轮询兜底: ${exc}`))
+        // [2026-09-02]-[log runtime errors: previously swallowed in pure silence, undiagnosable when fs.watch does not deliver inside the host]-[observability]
+        w.on("error", (exc) => appendStatusLog(`fs.watch(${dir}) errored, falling back to mtime polling: ${exc}`))
         this.watchers.push(w)
       } catch (exc) {
-        // 目录缺失（另一端形态天然无此文件）→静默跳过轮询兜底；目录存在却启动失败（如 fd 耗尽）→落日志
+        // Dir missing (the other host form naturally lacks this file) -> silently skip with the polling fallback; dir exists but watch failed to start (e.g. fd exhaustion) -> log
         try {
-          if (statSync(dir).isDirectory()) appendStatusLog(`fs.watch(${dir}) 启动失败，mtime 轮询兜底: ${exc}`)
-        } catch { /* 目录缺失：预期内静默 */ }
+          if (statSync(dir).isDirectory()) appendStatusLog(`fs.watch(${dir}) failed to start, falling back to mtime polling: ${exc}`)
+        } catch { /* dir missing: expected, silent */ }
       }
     }
     this.refreshMtimes()
@@ -267,15 +272,15 @@ export class MatrixManager {
     this.lastMtimes = [fileMtimeOf(a), fileMtimeOf(b)]
   }
 
-  /** [2026-08-29]-[触发源参数：watch/轮询默认 config（可见集开关/favorites 增删→全量重探）；
-   *  会话源由 chat.params/session.deleted 显式传 session（只探新增）] */
+  /** [2026-08-29]-[trigger source parameter: watch/poll defaults to config (visible-set toggles/favorites add-remove -> full
+   *  re-probe); session sources are passed explicitly by chat.params/session.deleted (probe only new combos)] */
   scheduleRecompute(delay?: number, source: RecomputeSource = "config"): void {
     if (this.stopped) return
     this.pendingSource = source
     if (this.debounceTimer) clearTimeout(this.debounceTimer)
     this.debounceTimer = setTimeout(() => {
       this.debounceTimer = null
-      this.recomputeWithRetry().catch((exc) => appendStatusLog(`重算 fail-open: ${exc}`))
+      this.recomputeWithRetry().catch((exc) => appendStatusLog(`recompute fail-open: ${exc}`))
       this.refreshMtimes()
     }, delay ?? this.opts.debounceMs)
     unref(this.debounceTimer)

@@ -1,10 +1,11 @@
-// opencode-switchman 插件入口——唯一 OpenCode API 适配层（v1.2）
-// 钩子面：config(壳注入+凭证收集) / chat.params(会话→agent 映射) /
-//         experimental.chat.system.transform(调度员规程＋横幅注入，壳子代理跳过) /
-//         tool.execute.before(六闸 deny) / tool.execute.after(auto-handover：force 水位自动备份压缩) / event(失败记账→熔断)
-// [2026-09-04]-[/handover 改为 TUI 直接执行（fork 备份+当前会话压缩，不经 AI），主插件不再注册
-//  会话式命令与 handover 工具（见 src/tui.tsx runHandoverBackup）]
-// [fail-open 铁律：任何钩子异常只写 stderr，绝不阻塞主流程；核心逻辑全部在纯函数层]
+// opencode-switchman plugin entry — the only OpenCode API adaptation layer (v1.2)
+// Hook surface: config (shell injection + credential collection) / chat.params (session→agent mapping) /
+//         experimental.chat.system.transform (dispatcher rules + banner injection, shell subagents skipped) /
+//         tool.execute.before (six-gate deny) / tool.execute.after (auto-handover: auto backup+compact at force watermark) / event (failure accounting → breaker)
+// [2026-09-04]-[/handover moved to direct TUI execution (fork backup + current-session compaction, no AI in the loop); the main plugin
+//  no longer registers the conversational command or the handover tool (see src/tui.tsx runHandoverBackup)]
+// [fail-open iron rule: any hook exception only writes stderr, never blocks the main flow; all core logic lives in the pure-function layer]
+// [2026-09-04]-[English localization: translate runtime messages and comments; no logic change]
 import type { Plugin } from "@opencode-ai/plugin"
 import { watch, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
@@ -50,8 +51,8 @@ import { LANE_ORDER } from "./types"
 import type { SwitchmanOptions, Lane, LaneResult, Pool, ShellRegEntry, ModelKey } from "./types"
 import { detectMode, readConfigured, normalizeProviderListResponse } from "./activation"
 import type { MatrixModeOption } from "./activation"
-// [2026-08-29]-[事件/参数形状提取纯函数迁至 helpers.ts：入口禁导出非插件函数，否则
-//  opencode 会把它们当插件工厂调用产生 null hooks，炸掉 config 钩子与 provider.list]-[修复启动报错]
+// [2026-08-29]-[event/parameter shape-extraction pure functions moved to helpers.ts: the entry must not export non-plugin functions, otherwise
+//  opencode invokes them as plugin factories producing null hooks, blowing up the config hook and provider.list]-[fixed startup error]
 import { chatParamsModelKey, sessionDeletedId, sessionCreatedInfo } from "./helpers"
 import { parseRouteMeta } from "./meta"
 import { relayImageParts } from "./relay"
@@ -62,7 +63,7 @@ import {
 } from "./catalog"
 import type { ShellDefinition, EffortInfo } from "./catalog"
 
-/** opencode state 根（desktop 设 XDG_STATE_HOME=userData；CLI=xdg-basedir 默认 ~/.local/state） */
+/** opencode state root (desktop sets XDG_STATE_HOME=userData; CLI = xdg-basedir default ~/.local/state) */
 function resolveOpencodeStateRoot(): string {
   const xdg = process.env.XDG_STATE_HOME
   return join(xdg ?? join(homedir(), ".local", "state"), "opencode")
@@ -79,27 +80,27 @@ interface Credentials { glmKey?: string; dsKey?: string; copilotToken?: string; 
 
 export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   const raw = rawOptions ?? {}
-  // [2026-09-04]-[auto-handover：捕获主插件输入面（v1 client + 项目目录），供 tool.execute.after
-  //  自动 /handover 用（钩子参数 input 会遮蔽外层命名）]
+  // [2026-09-04]-[auto-handover: capture the main plugin's input surface (v1 client + project directory) for the tool.execute.after
+  //  automatic /handover (the hook parameter input shadows the outer name)]
   const pluginClient = input.client
   const pluginDirectory = input.directory
-  // 老 options 只在显式存在时覆盖新文件 observe，避免默认值反向覆盖用户配置。
+  // legacy options only override the new file observe when explicitly present, avoiding defaults clobbering user config.
   const rawQuota = (raw as any).quota
   const legacyObserve: Partial<Record<Pool, boolean>> = {}
   for (const pool of ["glm", "copilot", "deepseek"] as Pool[]) {
     if (rawQuota?.[pool] && Object.prototype.hasOwnProperty.call(rawQuota[pool], "enabled")) legacyObserve[pool] = Boolean(rawQuota[pool].enabled)
   }
   let userConfig = loadUserConfig()
-  // [2026-09-01]-[配置面统一：jsonc 行为段为基线合成有效 options（元组显式键兼容一代优先）；
-  //  config 钩子重载 jsonc 后重建，横幅/阈值/lanes 即时生效（mode/watch 为启动级，重启生效）]
+  // [2026-09-01]-[unified config surface: the jsonc behavior section is the baseline synthesizing effective options (explicit tuple keys keep gen-1 priority);
+  //  rebuilt after the config hook reloads jsonc, so banner/thresholds/lanes take effect immediately (mode/watch are startup-level, effective after restart)]
   let { options, legacySections } = resolveEffectiveOptions(raw, userConfig.config)
   let policy = routePolicy(userConfig.config, legacyObserve)
-  // [2026-08-31]-[去厂商化：billing/peak 系数解析器——只读用户 jsonc（任意 provider 键），
-  //  subscription 显式声明才享 1.0，其余 api 0.85；闭包读最新 userConfig（config 钩子重载后生效）
+  // [2026-08-31]-[vendor-neutral: billing/peak coefficient resolver — reads only the user jsonc (any provider key),
+  //  only explicit subscription gets 1.0, other api gets 0.85; closure reads the latest userConfig (effective after config hook reload)]
   const billingBoostOf = (provider: string): number =>
     billingOfProvider(userConfig.config, provider) === "subscription" ? 1.0 : BILLING_API_BOOST
-  // [2026-08-31]-[终审P1-2：唯一 peak 解析器——显式旧 billingWindow 覆盖期内对 glm/deepseek 池生效
-  //  （老 options 兼容保留一代），否则走 jsonc 路由口径（enabled 门控）；闭包读最新 policy/userConfig]
+  // [2026-08-31]-[final review P1-2: the only peak resolver — within the legacy explicit billingWindow override period, effective for glm/deepseek pools
+  //  (legacy options kept for gen-1 compatibility), otherwise the jsonc routing scope (enabled gated); closure reads the latest policy/userConfig]
   const legacyBillingWindow = Object.prototype.hasOwnProperty.call(raw, "billingWindow") ? options.billingWindow : undefined
   const peakOfProvider = (provider: string): boolean => {
     if (legacyBillingWindow) {
@@ -115,30 +116,31 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   let doctorSummary: string | null = null
   const creds: Credentials = { copilotToken: undefined }
   let initTried = false
-  const denySkip = new Set<string>() // 自身 deny 的 callID：记账时排除
+  const denySkip = new Set<string>() // callIDs denied by ourselves: excluded from failure accounting
   let bannerCache: { at: number; lines: string[] } | null = null
-  const sessionAgent = new Map<string, string>() // legacy 路径：chat.params 记录（区分主模型与壳子代理）
-  // [2026-09-04]-[图片中继：会话→主模型 modelKey（chat.params 记录，dynamic/legacy 两路）＋config 钩子
-  //  构建的模型元数据索引（vision 判定与壳注入同源），experimental.chat.messages.transform 运行期查询]
+  const sessionAgent = new Map<string, string>() // legacy path: recorded by chat.params (distinguishes main model vs shell subagent)
+  // [2026-09-04]-[image relay: session → main model modelKey (recorded by chat.params, both dynamic/legacy paths) + model metadata index
+  //  built by the config hook (vision verdict same source as shell injection), queried at runtime by experimental.chat.messages.transform]
   const sessionModelKey = new Map<string, ModelKey>()
   let metaIndexRuntime: Record<string, EffortInfo> | null = null
-  // [2026-08-29]-[动态矩阵 v1.3：mode 判定一次性；legacy=原静态路径逐字节不变]
+  // [2026-08-29]-[dynamic matrix v1.3: mode decided once; legacy = original static path byte-for-byte unchanged]
   const runMode = detectMode(options.matrix!.mode as MatrixModeOption, process.env.OPENCODE_CLIENT)
   const dynamic = runMode !== "legacy"
   let manager: MatrixManager | null = null
-  // [2026-08-29]-[fail-open 可见性：config 注入崩溃只写 stderr 时模型侧无感知，会对着空注册表盲派——
-  //  崩溃即置位，transform 向系统提示注入显式告警（自做/告知用户，别派发）]-
+  // [2026-08-29]-[fail-open visibility: when config injection crashes only stderr is written, the model side never notices and dispatches blindly
+  //  against an empty registry — set the flag on crash, and transform injects an explicit warning into the system prompt (do it yourself / tell the user; don't dispatch)]-
   let configFailed = false
   const injectedNames = new Set<string>()
   const conflictNames = new Set<string>()
   let supersetDefs: ShellDefinition[] = []
   let degradedModelCount = 0
-  // [2026-09-04]-[会话上下文水位实测：message.updated token usage → 主会话（非壳/非内部）水位；
-  //  超线后读取类工具分级闸（先提醒后硬拦），把规程自报水位变成机制执行]
+  // [2026-09-04]-[measured session context watermark: message.updated token usage → main-session (non-shell/non-internal) watermark;
+  //  past the line, read-class tools get the tiered gate (nudge first, then hard deny) — turns rules self-reporting into mechanism enforcement]
   const sessionWatermark = new Map<string, { tokens: number; at: number }>()
   const readNudged = new Map<string, Set<string>>()
-  // [2026-09-04]-[auto-handover 守卫：inflight 防并发（工具可并行，多个 after 同超线只触发一次）；
-  //  冷却 10 分钟防「压缩后摘要+尾巴仍超线→再压缩」抖动（实测水位待下一轮 assistant 消息才回落）]
+  // [2026-09-04]-[auto-handover guards: inflight prevents concurrency (tools run in parallel; several afters past the line trigger only once);
+  //  a 10-minute cooldown prevents "post-compaction summary + tail still past the line → compact again" flapping (the measured watermark only falls
+  //  back after the next assistant message)]
   const handoverInflight = new Set<string>()
   const handoverCooldown = new Map<string, number>()
   const HANDOVER_COOLDOWN_MS = 10 * 60_000
@@ -152,7 +154,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
 
   function kk(n: number): string { return `${Math.round(n / 1000)}k` }
 
-  /** [水位·会话] 横幅行：ok 档只报数字（省 token），超线后附分级指令 */
+  /** [WATERMARK:SESSION] banner line: ok tier reports numbers only (saves tokens); past the line attaches tiered directives */
   function sessionWatermarkLine(sessionID: string | undefined): string | null {
     try {
       if (!sessionID || isShellOrInternalSession(sessionID)) return null
@@ -160,14 +162,14 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       if (!wm) return null
       const t = thresholdsOf(options.context)
       const level = watermarkLevel(wm.tokens, t)
-      const base = `[水位·会话] 本会话上下文实测 ~${kk(wm.tokens)}（软${kk(t.soft)}/硬${kk(t.hard)}/压${kk(t.force)}）`
+      const base = `[WATERMARK:SESSION] measured session context ~${kk(wm.tokens)} (soft ${kk(t.soft)}/hard ${kk(t.hard)}/force ${kk(t.force)})`
       if (level === "ok") return base
-      if (level === "soft") return `${base}——已超软水位：新的读取/扫描必须委派 economy 壳（scouter/clerk），自读将被拦截提醒`
-      if (level === "hard") return `${base}——已超硬水位：read/glob/grep/list 已禁自读、bash 仅验证类放行；扫描一律委派 economy，请收尾交付`
-      // [2026-09-04]-[force 档文案分流：auto-handover 开启时静候自动压缩（横幅只报事实，省 token）；
-      //  关闭时维持旧指令（依赖手动 /handover）]
-      if (options.context?.autoHandover !== false) return `${base}——【强制】已超强制压缩水位：auto-handover 即将自动全量备份并压缩本会话（任务自动继续），静候，禁止新增读取与委派`
-      return `${base}——【强制】已超强制压缩水位：立即执行 /handover 或上下文压缩，禁止新增读取与委派`
+      if (level === "soft") return `${base}—soft watermark exceeded: new reads/scans must be delegated to an economy shell (scouter/clerk); self-reads will be intercepted with a nudge`
+      if (level === "hard") return `${base}—hard watermark exceeded: read/glob/grep/list self-reads denied, bash allows verification commands only; delegate all scans to economy and wrap up`
+      // [2026-09-04]-[force tier copy split: with auto-handover on, stand by for automatic compaction (banner reports facts only, saves tokens);
+      //  with it off, keep the legacy directive (relying on manual /handover)]
+      if (options.context?.autoHandover !== false) return `${base}—[MANDATORY] force-compaction watermark exceeded: auto-handover will fully back up and compact this session (the task continues automatically); stand by — no new reads or delegations`
+      return `${base}—[MANDATORY] force-compaction watermark exceeded: run /handover or compact the context now; no new reads or delegations`
     } catch { return null }
   }
 
@@ -175,7 +177,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     bannerCache = null
   }
 
-  /** 侧栏只轮询落盘快照；刷新后主动重建，不能依赖下一次聊天请求读取横幅。 */
+  /** The sidebar only polls persisted snapshots; rebuild proactively after refresh — never rely on the next chat request to read the banner. */
   function refreshSidebarState(): void {
     try {
       clearBannerCache()
@@ -183,9 +185,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     } catch { /* fail-open */ }
   }
 
-  // [2026-09-03]-[手动改能力排名/任务池选配即时生效：目录级 watch 两份覆盖文件（writeJsonAtomic=tmp+rename
-  //  换 inode，必须监听目录而非文件本身），5s mtime 轮询兜底（部分宿主 fs.watch 不投递，matrix-manager
-  //  同款策略）；触发即强制重建横幅+侧栏快照，TUI 对话框/CLI/手改文件三条路径统一即时可见]-[配置改动即时可见]
+  // [2026-09-03]-[manual capability-rank/task-pool changes take effect immediately: directory-level watch on both override files (writeJsonAtomic=tmp+rename
+  //  swaps inodes, so watch the directory not the file), 5s mtime polling as fallback (some hosts' fs.watch never delivers; matrix-manager
+  //  uses the same policy); a trigger forces banner+sidebar snapshot rebuild, so TUI dialogs/CLI/hand-edited files all become visible immediately]-[config changes visible immediately]
   const OVERRIDE_WATCH_FILES = new Set(["capability-rank.json", "pool-config.json"])
   let overrideWatchStarted = false
   let overrideWatchTimer: ReturnType<typeof setTimeout> | null = null
@@ -194,7 +196,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     if (overrideWatchTimer) clearTimeout(overrideWatchTimer)
     overrideWatchTimer = setTimeout(() => {
       overrideWatchTimer = null
-      try { appendStatusLog("能力排名/任务池选配已变更：横幅与侧栏即时刷新") } catch { /* fail-open */ }
+      try { appendStatusLog("capability rank/task-pool selection changed: banner and sidebar refresh immediately") } catch { /* fail-open */ }
       refreshSidebarState()
     }, 200)
     if (typeof overrideWatchTimer === "object" && overrideWatchTimer !== null && "unref" in overrideWatchTimer) (overrideWatchTimer as any).unref()
@@ -209,9 +211,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       const w = watch(dir, { recursive: false }, (_event, filename) => {
         if (filename && OVERRIDE_WATCH_FILES.has(String(filename))) onOverrideConfigChanged()
       })
-      w.on("error", (exc) => { try { appendStatusLog(`fs.watch(${dir}) 覆盖配置监听异常（mtime 轮询兜底）: ${exc}`) } catch { /* fail-open */ } })
-    } catch { /* fail-open：目录缺失/启动失败由轮询兜底 */ }
-    // mtime 轮询兜底：首跑仅记基线不触发
+      w.on("error", (exc) => { try { appendStatusLog(`fs.watch(${dir}) override-config watch error (mtime polling fallback): ${exc}`) } catch { /* fail-open */ } })
+    } catch { /* fail-open: missing directory/startup failure is covered by polling */ }
+    // mtime polling fallback: first run records a baseline without triggering
     const poll = () => {
       try {
         let sig = ""
@@ -228,16 +230,16 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   }
 
   function routingWithRealFailures(routing: ReturnType<typeof loadContext>["routing"]) {
-    // [2026-08-29]-[复审P2-5：legacy 内存标记恒空仍加守卫，与新闸写入点一致防未来引入非 dynamic 写入路径]-
+    // [2026-08-29]-[re-review P2-5: legacy in-memory marks are always empty yet still guarded, matching the new gate's write point against future non-dynamic write paths]-
     if (!dynamic) return routing
     const down = { ...routing.down_agents }
-    for (const combo of realFailedComboKeys()) down[combo] = "探针可用但实际委派失败（30 分钟内存隔离）"
+    for (const combo of realFailedComboKeys()) down[combo] = "probe ok but real delegation failed (30-min in-memory isolation)"
     return { ...routing, down_agents: down }
   }
 
   function collectCreds(cfg: Record<string, any>): void {
     try {
-      // 优先级：opencode 鉴权层（/connect 管理）→ provider config options → env
+      // priority: opencode auth layer (managed by /connect) → provider config options → env
       const auth = readAuthStore()
       creds.glmKey = auth.glmKey ?? creds.glmKey
       creds.dsKey = auth.dsKey ?? creds.dsKey
@@ -267,21 +269,21 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     try {
       return readConfigured(stateRoot, mode)
     } catch (exc) {
-      appendStatusLog(`配置面读取 fail-open: ${exc}`)
+      appendStatusLog(`config surface read fail-open: ${exc}`)
       return { configStatus: "empty" as const, models: [] as ModelKey[] }
     }
   }
 
-  /** [2026-09-01]-[P3 启动竞态修复：单次 attempt，短超时（不阻塞太久）；失败/未就绪抛错供调用方退避重试]-
-   *  provider.list 单次探测（不含重试逻辑，重试由 collectProviderModels 的退避调度负责） */
+  /** [2026-09-01]-[P3 startup race fix: single attempt with a short timeout (blocks briefly); failure/not-ready throws for the caller's backoff retry]-
+   *  single provider.list probe (no retry logic here; retries belong to collectProviderModels's backoff scheduling) */
   async function attemptProviderList(
     input: { client?: { provider?: { list?: () => Promise<unknown> } } },
     timeoutMs: number,
   ): Promise<{ models: string[]; providers: string[] }> {
     const resp = await withTimeout(Promise.resolve(input?.client?.provider?.list?.()), timeoutMs)
-    // 形状归一纯函数见 activation.normalizeProviderListResponse（delta 复审 P1：先解包 .data 包装）
+    // shape normalization pure function in activation.normalizeProviderListResponse (delta re-review P1: unwrap .data first)
     const normalized = normalizeProviderListResponse(resp)
-    if (!normalized) throw new Error("provider.list 响应形状不可识别")
+    if (!normalized) throw new Error("provider.list response shape unrecognized")
     const providers = normalized.providers
     const connected = normalized.connected
     const models: string[] = []
@@ -289,26 +291,27 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     for (const p of providers) {
       const pid = String(p?.id ?? "")
       if (!pid) continue
-      // connected 在场=有凭证筛选（不在该列表的 provider 壳注册后必失败，且污染 restartRequired 基线）
+      // connected present = credentialed filter (providers outside this list would always fail after shell registration and pollute the restartRequired baseline)
       if (connected && !connected.has(pid)) continue
       providerIds.push(pid)
       for (const mid of Object.keys(p?.models ?? {})) {
         models.push(`${pid}/${mid}`)
       }
     }
-    if (providers.length === 0 && !Array.isArray(resp)) throw new Error("provider.list 响应形状不可识别")
+    if (providers.length === 0 && !Array.isArray(resp)) throw new Error("provider.list response shape unrecognized")
     return { models, providers: providerIds }
   }
 
-  // [2026-09-01]-[启动竞态加固：opencode 核心 provider 注册表就绪耗时不固定，原 2 次固定 2.5s/8s 重试
-  //  经常仍撞上未就绪（实测两次均超时）——改自适应退避（更短首次超时+更多次数），命中率显著提升；
-  //  config 钩子内必须等到结果才能 injectShellDefs（cfg.agent 只在钩子内一次性生效，事后追加不生效，
-  //  这是 opencode 插件 API 的硬约束，非本插件可绕过），故此处仍是 await，但退避调度使其"尽快返回"
-  //  而非固定死等，多数情况比旧实现更快拿到真实 provider.list 结果，减少落到 restartRequired 兜底的概率]
-  const PROVIDER_LIST_BACKOFF_MS = [0, 1_500, 3_000, 6_000] // 4 次尝试，累计等待 10.5s + 4×超时预算
+  // [2026-09-01]-[startup race hardening: opencode core's provider registry readiness time is unpredictable; the original 2 fixed retries
+  //  at 2.5s/8s often still hit not-ready (both timed out in practice) — switched to adaptive backoff (shorter first timeout + more
+  //  attempts) with a markedly higher hit rate; injectShellDefs must wait for this result inside the config hook (cfg.agent only takes
+  //  effect once inside the hook, later appends are ignored — a hard constraint of the opencode plugin API this plugin cannot bypass),
+  //  so this stays await, but the backoff scheduling makes it "return as soon as possible" instead of a fixed wait; most of the time it
+  //  gets the real provider.list result faster than before, reducing the chance of falling to the restartRequired fallback]
+  const PROVIDER_LIST_BACKOFF_MS = [0, 1_500, 3_000, 6_000] // 4 attempts, cumulative wait 10.5s + 4× timeout budget
   const PROVIDER_LIST_ATTEMPT_TIMEOUT_MS = 5_000
 
-  /** 有凭证 provider 的全部可对话模型（client.provider.list 带自适应退避重试；失败回退 cfg.provider 键集） */
+  /** all conversational models of credentialed providers (client.provider.list with adaptive backoff; falls back to cfg.provider keys on failure) */
   async function collectProviderModels(
     input: { client?: { provider?: { list?: () => Promise<unknown> } } },
     cfg: Record<string, any>,
@@ -318,45 +321,46 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       if (PROVIDER_LIST_BACKOFF_MS[i] > 0) await new Promise((r) => setTimeout(r, PROVIDER_LIST_BACKOFF_MS[i]))
       try {
         const result = await attemptProviderList(input, PROVIDER_LIST_ATTEMPT_TIMEOUT_MS)
-        if (i > 0) appendStatusLog(`provider.list 第 ${i + 1} 次尝试成功（此前 ${i} 次未就绪）`)
+        if (i > 0) appendStatusLog(`provider.list attempt ${i + 1} succeeded (previous ${i} not ready)`)
         return { ...result, fellBack: false }
       } catch (exc) {
         lastExc = exc
         if (i < PROVIDER_LIST_BACKOFF_MS.length - 1) {
-          appendStatusLog(`provider.list 第 ${i + 1} 次未就绪，退避重试: ${exc}`)
+          appendStatusLog(`provider.list attempt ${i + 1} not ready, backing off: ${exc}`)
         }
       }
     }
-    // 全部尝试失败：回退 cfg.provider 键集（仅 providerID，供 restartRequired 基线；模型面由配置面/内置链兜底）
+    // all attempts failed: fall back to the cfg.provider key set (providerIDs only, as restartRequired baseline; model surface covered by config surface/built-in chains)
     const keys = Object.keys(cfg.provider ?? {})
-    appendStatusLog(`provider.list 不可用（${PROVIDER_LIST_BACKOFF_MS.length} 次尝试后回退 cfg.provider 键集 ${keys.length} 个）: ${lastExc}`)
+    appendStatusLog(`provider.list unavailable (fell back to ${keys.length} cfg.provider keys after ${PROVIDER_LIST_BACKOFF_MS.length} attempts): ${lastExc}`)
     return { models: [], providers: keys, fellBack: true }
   }
 
-  // [2026-09-01]-[异步兜底：config 钩子内的退避重试若仍全败（起始阶段 opencode 核心异常慢），
-  //  或本次启动直接用了跨重启缓存（未做实时探测）——后台继续以更长间隔探测 provider.list，
-  //  成功即刷新缓存供下次启动秒用；命中新 provider 时只能提示"需重启"而非静默生效——
-  //  cfg.agent 只在 config 钩子内一次性读取（opencode 插件 API 硬约束），事后无法补注册壳 agent；
-  //  此处价值仅在于把"还要不要重启""现在重启能不能生效"从盲猜变成明确、实时的状态提示]
+  // [2026-09-01]-[async fallback: if the in-hook backoff still fails outright (opencode core unusually slow at startup),
+  //  or this startup used the cross-restart cache (no live probe) — keep probing provider.list in the background at longer
+  //  intervals; on success refresh the cache so the next startup is instant; a newly seen provider can only be hinted as
+  //  "restart required", never silently activated — cfg.agent is read once inside the config hook (hard opencode plugin API
+  //  constraint), shells cannot be registered after the fact;
+  //  the value here is turning "is a restart still needed / would a restart take effect now" from blind guessing into explicit, live status hints]
   function scheduleProviderListWatchdog(
     input: { client?: { provider?: { list?: () => Promise<unknown> } } },
     knownProviders: ReadonlySet<string>,
   ): void {
-    const delays = [15_000, 30_000, 60_000] // 后台 3 次，间隔递增，累计再等 105s；进程退出自然终止，无需显式取消
+    const delays = [15_000, 30_000, 60_000] // 3 background rounds, increasing gaps, 105s more in total; process exit ends it naturally, no explicit cancel
     const run = async () => {
       for (const delay of delays) {
         await new Promise((r) => setTimeout(r, delay))
         try {
           const result = await attemptProviderList(input, 6_000)
-          // [2026-09-01]-[真实探测成功即刷新跨重启缓存：下次启动 config 钩子直接读缓存，免去重新等待]
+          // [2026-09-01]-[real probe success refreshes the cross-restart cache: next startup's config hook reads the cache directly, no re-waiting]
           saveProviderCache({ at: nowIso(), models: result.models, providers: result.providers })
           const fresh = result.providers.filter((p) => !knownProviders.has(p))
           if (fresh.length > 0) {
-            appendStatusLog(`provider.list 后台探测：发现新 provider（${fresh.join("、")}）已连接——重启 opencode 即可完成壳注册`)
+            appendStatusLog(`provider.list background probe: new provider(s) connected (${fresh.join(", ")}) — restart opencode to complete shell registration`)
             clearBannerCache()
           }
           return
-        } catch { /* 继续下一轮退避，fail-open */ }
+        } catch { /* keep backing off to the next round, fail-open */ }
       }
     }
     run().catch(() => {})
@@ -370,7 +374,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       ensureStateAssets()
       creds.copilotToken = creds.copilotToken ?? readAuthStore().githubToken
       const costsP = costsStale() && options.cost!.enabled ? refreshCosts().catch(() => {}) : Promise.resolve()
-      // [2026-08-31]-[动态能力分级：与探针同频调度（TTL 24h 内自动跳过实际拉取）]
+      // [2026-08-31]-[dynamic capability grading: scheduled at the same cadence as the probe (TTL 24h skips actual fetches)]
       const capP = capabilityStale() && options.capability!.enabled ? refreshCapability(options.capability!).catch(() => {}) : Promise.resolve()
       const matrixP = dynamic && manager
         ? refreshActiveMatrixIfStale(probeEndpoints(), manager.activeMatrixKeys()).catch(() => {})
@@ -380,11 +384,11 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         deepseek: policy.deepseek.observe,
         copilot: policy.copilot.observe,
       } })
-      // [2026-09-01]-[探针实时联动：待启动探针/矩阵/能力刷新真正落地后再写侧栏快照，避免读到刷新前的旧数据]-[fail-open 不阻塞启动]
+      // [2026-09-01]-[probe live coupling: write sidebar snapshots only after the startup probe/matrix/capability refreshes land, avoiding stale pre-refresh data]-[fail-open, never blocks startup]
       Promise.allSettled([costsP, capP, matrixP]).then(refreshSidebarState).catch(() => {})
-      // [2026-08-28]-[探针/配额/成本只在启动跑一次，启动竞态（如核心晚回写 token）或高峰限流后永不自愈]-
-      // [10min 周期刷新：矩阵 TTL 内自动跳过，配额/成本由各自 TTL 兜底；timer unref 不阻进程退出]
-      // [2026-08-29]-[动态矩阵只探激活组合（增量，ro 别名共享 key 去重）；legacy 保持全量]
+      // [2026-08-28]-[probe/quota/cost ran only once at startup; startup races (e.g. core writing the token late) or post-peak rate limits never self-healed]-
+      // [10min periodic refresh: skipped automatically within matrix TTL; quota/cost covered by their own TTLs; timer unref never blocks process exit]
+      // [2026-08-29]-[dynamic matrix probes only active combos (incremental, ro aliases share keys with dedup); legacy stays full]
       const timer = setInterval(() => {
         try {
           const matrixP = dynamic && manager
@@ -396,9 +400,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             copilot: policy.copilot.observe,
           } })
           const costsP = costsStale() && options.cost!.enabled ? refreshCosts().catch(() => {}) : Promise.resolve()
-          // [2026-08-31]-[动态能力分级：10min 周期同频检查，capabilityStale/TTL 24h 门控实际拉取]
+          // [2026-08-31]-[dynamic capability grading: 10min periodic same-cadence check, capabilityStale/TTL 24h gates the actual fetch]
           const capP = capabilityStale() && options.capability!.enabled ? refreshCapability(options.capability!).catch(() => {}) : Promise.resolve()
-          // [2026-09-01]-[探针实时联动：10min 周期刷新落地后立即使横幅缓存失效并重写侧栏快照，不等下一条聊天消息]
+          // [2026-09-01]-[probe live coupling: once the 10min periodic refresh lands, invalidate the banner cache and rewrite sidebar snapshots immediately, not waiting for the next chat message]
            Promise.allSettled([matrixP, costsP, capP]).then(refreshSidebarState).catch(() => {})
         } catch { /* fail-open */ }
       }, 600_000)
@@ -410,7 +414,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
 
   function ensureStateAssets(): void {
     try {
-      // [2026-08-28]-[bundle 部署后 import.meta 相对路径断链，资产改为 TS 模块内联；模板每次启动回写＝随包版本固定]
+      // [2026-08-28]-[after bundle deployment import.meta relative paths break; assets moved to inline TS modules; templates rewrite at every startup = pinned to the package version]
       writeFileSync(join(stateDir(), "delegation-template.md"), DELEGATION_TEMPLATE)
     } catch { /* fail-open */ }
   }
@@ -442,7 +446,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     return { ctx, registry }
   }
 
-  /** 动态超集清单视图（config 前兜底读盘；缺省回退静态清单） */
+  /** dynamic superset manifest view (fallback disk read before config; default falls back to the static manifest) */
   function dynamicManifest(): ReturnType<typeof loadManifest> | null {
     if (supersetDefs.length > 0) {
       return { shells: supersetDefs.map(toManifestEntry), lanes: (loadManifest() as any).lanes }
@@ -454,7 +458,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     return null
   }
 
-  /** favorites 模型集（modelId 口径）：链内同档优先；读激活快照的配置面，fail-open 空集 */
+  /** favorites model set (modelId scope): same-tier in-chain priority; reads the activation snapshot's config surface, fail-open empty set */
   function preferredModelIds(): Set<string> {
     try {
       return new Set((manager?.snapshot().configured ?? []).map((k) => k.slice(k.indexOf("/") + 1)))
@@ -463,14 +467,14 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     }
   }
 
-  /** 六档 base 链：用户 lanes 选项优先；动态对激活壳全集运行算法；legacy 使用生成期同源链。 */
+  /** six-lane base chain: user lanes option first; dynamic runs the algorithm over all active shells; legacy uses the generation-time same-source chain. */
   function baseChainFor(lane: Lane): string[] {
     const custom = (options.lanes as any)?.[lane]
     if (Array.isArray(custom) && custom.length > 0) return custom
     if (!dynamic || !manager) return laneShells(loadContext(options, creds as any), lane)
     const m = loadManifest()
     const attrs = new Map<string, { effort: string; capability: string; vision: boolean; pool: string; provider: string; modelId: string; cost: number | null }>()
-    // [2026-08-29]-[失败分类：dynamic 先滤已退休模型壳，避免连续 404 的模型仍进改派候选]
+    // [2026-08-29]-[failure classification: dynamic filters retired-model shells first, so models 404ing continuously never re-enter redirect candidates]
     for (const s of filterRetiredShells((dynamicManifest() ?? m).shells)) {
       attrs.set(s.name, { effort: s.effort, capability: s.capability, vision: s.vision, pool: String(s.pool), provider: s.provider, modelId: s.modelId, cost: costOf(s.modelId) })
     }
@@ -478,9 +482,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       builtin: (m.lanes as any)[lane] ?? [],
       activeShells: new Set(manager.snapshot().activeShells),
       shells: attrs, capabilityOf: (modelId) => baseScoreDynamic(modelId),
-      // [2026-08-31]-[去厂商化：链生成乘 billingBoost×unknownPenalty（用户配置/能力分级驱动）]
+      // [2026-08-31]-[vendor-neutral: chain generation multiplies billingBoost×unknownPenalty (user config/capability grading driven)]
       billingBoostOf, unknownOf: unknownOfModel,
-      // [2026-09-02]-[favorites 优先：收藏模型链内同档排前]
+      // [2026-09-02]-[favorites first: favorite models rank first in the same tier within the chain]
       preferredModels: preferredModelIds(),
     })
   }
@@ -518,7 +522,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
          deepseek: policy.deepseek.observe,
          copilot: policy.copilot.observe,
       } })
-      // [2026-08-29]-[评分引擎：配额视图归一化水位因子（water 系数）]
+       // [2026-08-29]-[scoring engine: normalized quota-view watermark factor (water coefficients)]
        const water = { ...waterFactorOf(qv), routing: Object.fromEntries(Object.entries(policy).map(([k, v]) => [k, v.routing])) as Partial<Record<Pool, boolean>> }
        const states = poolStates(qv, peak, policy)
        for (const lane of LANE_ORDER) {
@@ -527,21 +531,21 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
              registry, matrix: ctx.matrix?.combos ?? null, routing: routingWithRealFailures(ctx.routing),
               quotaExhausted: quotaEx, routePolicy: policy, states, glmPeak: peak.glmPeak, costs, water,
               billingBoostOf, peakOf: peakOfProvider,
-              // [2026-09-02]-[favorites 优先：运行期同 tier 排前与 base 链同源]
-              preferredModels: preferredModelIds(),
-              // [2026-09-03]-[任务池选配：横幅推荐与各 lane 选配清单一致]
-              poolConfig: loadPoolConfig(),
-           })
-         } catch { /* 单档失败不影响其余档 */ }
-       }
-       // [2026-09-01]-[down 来源标注：熔断（routing.json 600s）与实调隔离（内存 TTL）分开展示剩余时长]
+              // [2026-09-02]-[favorites first: runtime same-tier-first, same source as the base chain]
+               preferredModels: preferredModelIds(),
+               // [2026-09-03]-[task-pool selection: banner recommendation matches each lane's selection list]
+               poolConfig: loadPoolConfig(),
+            })
+          } catch { /* one lane failing never affects the others */ }
+        }
+        // [2026-09-01]-[down source annotation: breaker (routing.json 600s) and real-fail isolation (in-memory TTL) shown with time left, separately]
        const down = new Map<string, string>()
-       for (const k of Object.keys(routingWithRealFailures(ctx.routing).down_agents)) down.set(k, "熔断")
+       for (const k of Object.keys(routingWithRealFailures(ctx.routing).down_agents)) down.set(k, "breaker")
        for (const k of realFailedComboKeys()) {
          const left = realFailedRemainingMs(k)
-         down.set(k, left !== null ? `实调隔离·剩${Math.max(1, Math.round(left / 60_000))}m` : "实调隔离")
+         down.set(k, left !== null ? `real-fail isolation·${Math.max(1, Math.round(left / 60_000))}m left` : "real-fail isolation")
        }
-      // [2026-08-29]-[动态矩阵：[路由] 只显示激活候选；[限制] 追加 模式/watch/configStatus/restartRequired/降级标注]
+      // [2026-08-29]-[dynamic matrix: [ROUTES] shows only active candidates; [LIMITS] appends mode/watch/configStatus/restartRequired/downgrade marks]
       const matrixInfo = dynamic && manager ? {
         mode: runMode, configStatus: manager.snapshot().configStatus,
         watch: options.matrix!.watch === true,
@@ -563,7 +567,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
          update: updateBannerText(),
          overrides: overrideSummary(),
       })
-      // [水位] 行需要原始配额数据 → 二次组装（banner 纯函数吃快照；这里补真实 quota）
+      // [WATERMARK] line needs raw quota data → second assembly (the banner pure function takes a snapshot; real quota added here)
       const lines2 = buildBanner({
         lanes: lanes as any,
         down,
@@ -578,7 +582,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         update: updateBannerText(),
         overrides: overrideSummary(),
       })
-      // [2026-08-29]-[评分引擎决策日志：每次横幅重建（15s 缓存失效）追加各 lane 评分明细；fail-open 不阻塞]
+      // [2026-08-29]-[scoring engine decision log: every banner rebuild (15s cache expiry) appends per-lane score details; fail-open, never blocks]
       try {
         const records: DecisionRecord[] = []
         for (const lane of LANE_ORDER) {
@@ -589,7 +593,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         }
         if (records.length > 0) logDecision(records).catch(() => {})
       } catch { /* fail-open */ }
-      // [2026-09-01]-[TUI 侧边栏「最佳模型」面板：与横幅同源的各档链首候选，覆盖写入供 tui.tsx 轮询]
+      // [2026-09-01]-[TUI sidebar "best model" panel: each lane's chain-head candidate, same source as the banner, overwritten for tui.tsx polling]
       try {
         writeRouteSnapshot(LANE_ORDER.map((lane) => {
           const r = lanes[lane]
@@ -601,7 +605,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           }
         }))
       } catch { /* fail-open */ }
-      // [2026-09-01]-[TUI 侧边栏「水位/峰值」面板：与 [水位] 横幅同源、常态可见，覆盖写入供 tui.tsx 轮询]
+      // [2026-09-01]-[TUI sidebar "watermark/peak" panel: same source as the [WATERMARK] banner, always visible, overwritten for tui.tsx polling]
       try {
         writeQuotaBrief(providerStatusEntries({
           quota: { glm: qv.glm, copilot: qv.copilot, deepseek: qv.deepseek },
@@ -618,7 +622,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     }
   }
 
-  /** 动态模式六档 lanes 映射（lane-policy 产出）；legacy=静态 lanes */
+  /** dynamic-mode six-lane map (produced by lane-policy); legacy = static lanes */
   function dynamicLaneMap(ctx: ReturnType<typeof loadContext>): Record<string, string[]> {
     if (!dynamic) return (ctx.manifest.lanes ?? {}) as Record<string, string[]>
     const out: Record<string, string[]> = {}
@@ -626,7 +630,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     return out
   }
 
-  // [2026-09-04]-[运行期闸输入装配提取：task 六闸/内置封堵/读取水位闸共用（water/glmPeak/states）]
+  // [2026-09-04]-[runtime gate input assembly extracted: shared by the task six gates / built-in blocking / read watermark gate (water/glmPeak/states)]
   function gateExtrasSnapshot(): { water?: WaterFactor; glmPeak?: boolean; states?: Record<string, unknown> } {
     try {
       const peak = billingWindowForConfig(new Date(), userConfig.config, legacyBillingWindow)
@@ -643,7 +647,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     } catch { return {} }
   }
 
-  /** 指定 lane 链首候选（内置封堵/读取闸附言用；与横幅同源） */
+  /** designated lane chain-head candidate (for built-in blocking / read-gate postscript; same source as the banner) */
   function laneHeadCandidate(lane: Lane, ctx: ReturnType<typeof loadContext>): string | null {
     try {
       const lanes = dynamicLaneMap(ctx)
@@ -664,8 +668,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     } catch { return null }
   }
 
-  /** [2026-09-04]-[读取水位闸：soft=每工具一次性拦截提醒（附 economy 改派建议），hard/force=read 类
-   *  一律拦截、bash 仅验证类放行；壳子代理会话豁免（它们就是被委派的执行体）] */
+  /** [2026-09-04]-[read watermark gate: soft = one-time per-tool intercept+nudge (with an economy redirect suggestion); hard/force = read-class
+   *  always denied, bash lets only verification commands through; shell subagent sessions exempt (they are the delegated executors)] */
   function handleReadGate(input: { tool: string; sessionID?: string; callID: string }, output: { args?: any }): void {
     try {
       if (options.context?.gates !== true) return
@@ -685,28 +689,28 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       if (action === "nudge") { nudged.add(input.tool); readNudged.set(sid, nudged) }
       const { ctx } = currentContext()
       const hint = laneHeadCandidate("economy", ctx)
-      const head = `[opencode-switchman] 本会话上下文实测 ~${kk(wm.tokens)} 已超${level === "force" ? "强制压缩" : level === "hard" ? "硬" : "软"}水位（软${kk(t.soft)}/硬${kk(t.hard)}/压${kk(t.force)}）`
+      const head = `[opencode-switchman] measured session context ~${kk(wm.tokens)} exceeds the ${level === "force" ? "force-compaction" : level === "hard" ? "hard" : "soft"} watermark (soft ${kk(t.soft)}/hard ${kk(t.hard)}/force ${kk(t.force)})`
       let msg: string
       if (level === "soft") {
-        msg = `${head}：${input.tool} 自读首次拦截（本会话该工具此后放行）——新的读取/扫描请委派 economy 壳${hint ? `（如 ${hint}，ROUTE_META role=scouter）` : ""}，只要结论+file:line 摘要`
+        msg = `${head}: ${input.tool} self-read intercepted once (this tool is allowed afterwards in this session) — delegate new reads/scans to an economy shell${hint ? ` (e.g. ${hint}, ROUTE_META role=scouter)` : ""}; conclusions + file:line summary only`
       } else if (level === "hard") {
-        msg = `${head}：${input.tool} 已禁自读——读取/扫描必须委派 economy 壳${hint ? `（如 ${hint}）` : ""}；git/测试/lint 等验证类命令仍可运行；请收尾交付`
+        msg = `${head}: ${input.tool} self-read denied — reads/scans must be delegated to an economy shell${hint ? ` (e.g. ${hint})` : ""}; verification commands (git/test/lint) still run; please wrap up`
       } else {
-        // [2026-09-04]-[force 档 deny 文案：auto-handover 开启时告知静候（勿与自动压缩对抗）]
+        // [2026-09-04]-[force tier deny copy: with auto-handover on, tell the model to stand by (don't fight the automatic compaction)]
         msg = options.context?.autoHandover !== false
-          ? `${head}：已超强制压缩水位——auto-handover 将自动备份并压缩本会话（任务自动继续），静候，禁止新增读取与委派`
-          : `${head}：必须立即执行上下文压缩（/handover 或摘要归档拆新会话），禁止新增读取与委派`
+          ? `${head}: force-compaction watermark exceeded — auto-handover will back up and compact this session (the task continues automatically); stand by, no new reads or delegations`
+          : `${head}: compact the context immediately (/handover, or summarize-archive and split into a new session); no new reads or delegations`
       }
       denySkip.add(input.callID)
-      appendStatusLog(`读取水位闸 ${action}（${input.tool}，~${kk(wm.tokens)}，${level}）`)
+      appendStatusLog(`read watermark gate ${action} (${input.tool}, ~${kk(wm.tokens)}, ${level})`)
       throw new Error(msg)
     } catch (exc) {
       if (denySkip.has(input.callID)) throw exc
-      appendStatusLog(`读取水位闸 fail-open（放行）: ${exc}`)
+      appendStatusLog(`read watermark gate fail-open (allowed): ${exc}`)
     }
   }
 
-  /** [2026-09-04]-[autoRedirect：deny 附言候选壳名原值（firstCandidateHint 复用；index 层静默改派用）] */
+  /** [2026-09-04]-[autoRedirect: deny-postscript candidate shell name verbatim (firstCandidateHint reused; used by the index-layer silent redirect)] */
   function firstCandidateShell(agent: string, ctx: ReturnType<typeof loadContext>, extras?: { water?: WaterFactor; glmPeak?: boolean; states?: Record<string, unknown> }): string | null {
     try {
       const lanes = dynamicLaneMap(ctx)
@@ -722,7 +726,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         water: extras?.water,
         glmPeak: extras?.glmPeak,
         states: extras?.states as any,
-        // [2026-09-03]-[deny 附言候选不推荐未入选任务池选配清单的模型（与闸5.5/横幅同源）]
+        // [2026-09-03]-[deny-postscript candidates never recommend models outside the task-pool selection list (same source as gate 5.5/banner)]
         poolConfig: loadPoolConfig(),
       } as any, agent)
     } catch {
@@ -730,17 +734,17 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     }
   }
 
-  /** deny 附言：首候选（过全组闸后的链首壳）；[2026-08-31]-[终审P1-3：与横幅同源——接受 gateExtras 补足运行期输入] */
+  /** deny postscript: first candidate (chain-head shell passing all gates); [2026-08-31]-[final review P1-3: same source as the banner — accepts gateExtras to complete runtime inputs] */
   function firstCandidateHint(agent: string, ctx: ReturnType<typeof loadContext>, extras?: { water?: WaterFactor; glmPeak?: boolean; states?: Record<string, unknown> }): string | null {
     const cand = firstCandidateShell(agent, ctx, extras)
-    return cand ? `请改派 ${cand}` : "降级链已尽：向用户声明原因并给 2 个可选项"
+    return cand ? `redirect to ${cand}` : "downgrade chain exhausted: state the reason to the user and offer 2 options"
   }
 
   return {
     config: async (cfg: Record<string, any>) => {
       try {
-        // [2026-08-31]-[配置钩子首步装载用户水位配置；路由快照本启动内一致]-[fail-open]
-        // [2026-09-01]-[jsonc 重载即重建有效 options：阈值/lanes/banner/rules 对后续请求生效]
+        // [2026-08-31]-[config hook first step: load the user watermark config; routing snapshot consistent within this startup]-[fail-open]
+        // [2026-09-01]-[jsonc reload rebuilds effective options immediately: thresholds/lanes/banner/rules apply to subsequent requests]
         userConfig = loadUserConfig()
         ;({ options, legacySections } = resolveEffectiveOptions(raw, userConfig.config))
         policy = routePolicy(userConfig.config, legacyObserve)
@@ -748,86 +752,88 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         const errors = doctor.diagnostics.filter((d) => d.level === "error").length
         const warns = doctor.diagnostics.filter((d) => d.level === "warn").length
         doctorSummary = errors || warns ? `doctor: ${errors} error / ${warns} warn` : null
-        if (doctorSummary) appendStatusLog(`自检发现 ${errors} error / ${warns} warn；运行 /switchman-doctor 查看`)
+        if (doctorSummary) appendStatusLog(`doctor found ${errors} error / ${warns} warn; run /switchman-doctor to view`)
         try { writeJsonAtomic(paths().doctorSnapshot, { at: new Date().toISOString(), diagnostics: doctor.diagnostics.map((d) => ({ code: d.code, level: d.level, path: d.path })) }) } catch { /* fail-open */ }
         collectCreds(cfg)
         creds.copilotToken = creds.copilotToken ?? readAuthStore().githubToken
-        // [2026-08-29]-[一键升级命令资产：prod 注册 /switchman-update，local 删除残留——legacy/动态两路都生效]-
+        // [2026-08-29]-[one-click upgrade command assets: prod registers /switchman-update, local removes leftovers — effective on both legacy/dynamic paths]-
         ensureUpdateCommands(detectLoadMode())
-        // [2026-09-03]-[/poolConfig-chat //modelRank-chat：会话式配置入口（AI 交互换算 CLI 命令）；
-        //  手动交互弹窗由 TUI 插件承载，保留原名 /poolConfig //modelRank，两者互补]-
+        // [2026-09-03]-[/poolConfig-chat //modelRank-chat: conversational config entries (AI translates to CLI commands);
+        //  manual interactive dialogs live in the TUI plugin, keeping the original names /poolConfig //modelRank; the two complement each other]-
         cfg.command = {
-          "poolConfig-chat": { template: poolConfigCommandMd(pluginCliPath("switchman-config.js")), description: "会话式配置各任务池参与模型（economy/mechanical/main/hard/vision/review）；手动弹窗用 /poolConfig" },
-          "modelRank-chat": { template: modelRankCommandMd(pluginCliPath("switchman-config.js")), description: "会话式配置模型能力排名（手动排名优先于基础能力分）；手动弹窗用 /modelRank" },
-          // [2026-09-04]-[移除 /handover 会话式注册：改为 TUI palette 直接执行（fork 备份+压缩当前
-          //  会话，不经 AI）；另 opencode 内置 session.fork（消息手选 fork 弹窗）已占用 /fork，
-          //  插件不再注册同名命令避免双入口]-
-          // [2026-09-03]-[/poolConfig-chat //modelRank-chat：会话式配置入口（AI 交互换算 CLI 命令）；
-          //  手动交互弹窗由 TUI 插件承载，保留原名 /poolConfig //modelRank，两者互补]-
+          "poolConfig-chat": { template: poolConfigCommandMd(pluginCliPath("switchman-config.js")), description: "Configure task-pool participating models conversationally (economy/mechanical/main/hard/vision/review); use /poolConfig for the manual dialog" },
+          "modelRank-chat": { template: modelRankCommandMd(pluginCliPath("switchman-config.js")), description: "Configure model capability ranks conversationally (manual ranks override base capability scores); use /modelRank for the manual dialog" },
+          // [2026-09-04]-[removed the /handover conversational registration: moved to direct TUI palette execution (fork backup + compaction of the
+          //  current session, no AI in the loop); opencode's built-in session.fork (message-selection fork dialog) also occupies /fork,
+          //  so the plugin no longer registers a same-name command, avoiding dual entries]-
+          // [2026-09-03]-[/poolConfig-chat //modelRank-chat: conversational config entries (AI translates to CLI commands);
+          //  manual interactive dialogs live in the TUI plugin, keeping the original names /poolConfig //modelRank; the two complement each other]-
           ...cfg.command,
         }
-        // [2026-09-03]-[能力排名/任务池选配 watch：手动改配置即时刷新横幅与侧栏，不等下一条聊天消息；legacy/动态两路都生效]-[配置改动即时可见]
+        // [2026-09-03]-[capability rank/task-pool watch: manual config changes refresh banner and sidebar immediately, not waiting for the next chat message; effective on both legacy/dynamic paths]-[config changes visible immediately]
         startOverrideConfigWatcher()
         if (!dynamic) {
-          // legacy：静态 shells.json 路径（行为与 v1.2 逐字节一致）
+          // legacy: static shells.json path (behavior byte-identical with v1.2)
           const { registry } = currentContext()
           const n = injectShells(cfg, registry)
-          appendStatusLog(`已注入 ${n} 只模型空壳（agent，legacy 静态矩阵）`)
-          // [2026-08-29]-[配置钩子触发自更新检查]-[检查异步且失败不阻塞启动]
+          appendStatusLog(`injected ${n} model shells (agents, legacy static matrix)`)
+          // [2026-08-29]-[config hook triggers the self-update check]-[async check; failure never blocks startup]
           refreshSelfUpdate().then((state) => { if (state?.outdated) clearBannerCache() }).catch(() => {})
           return
         }
-        // [2026-08-29]-[超集注入：config 一次（cfg.agent 运行期不可变）→运行期激活门控]
-        // 超集=配置面 ∪ 有凭证 provider 全部可对话模型 ∪ 保底模型；排除 embedding 类
+        // [2026-08-29]-[superset injection: config once (cfg.agent is immutable at runtime) → runtime activation gating]
+        // superset = config surface ∪ all conversational models of credentialed providers ∪ floor models; embedding classes excluded
         const stateRoot = resolveOpencodeStateRoot()
         const configured = readConfiguredSafe(stateRoot, runMode)
-        // [2026-09-01]-[跨重启秒开：首次成功探测过 provider.list 后即缓存 providers/models（仅真实成功时写，
-        //  见 scheduleProviderListWatchdog/下方成功分支）；非首次启动直接用缓存建壳，不再每次重启都要
-        //  阻塞等 provider.list 网络竞态（原退避最长 ~30s）——缓存可能滞后于最新连接状态，故仍在后台
-        //  发起一次真实探测：命中新 provider 才提示重启，命中率与旧实现一致，只是不再堵门口]
+        // [2026-09-01]-[instant startup across restarts: after the first successful provider.list probe, providers/models are cached (written only on
+        //  real success, see scheduleProviderListWatchdog/the success branch below); non-first startups build shells straight from the cache,
+        //  no longer blocking on the provider.list network race at every restart (the old backoff took up to ~30s) — the cache may lag the
+        //  latest connection state, so a real probe still runs once in the background: a newly seen provider is what hints a restart, hit rate
+        //  unchanged from the old implementation, it just no longer blocks the doorway]
         const providerCache = loadProviderCache()
         let providerModels: { models: string[]; providers: string[]; fellBack: boolean }
         let usedProviderCache = false
         if (providerCache) {
           providerModels = { models: providerCache.models, providers: providerCache.providers, fellBack: false }
           usedProviderCache = true
-          appendStatusLog(`provider.list 使用跨重启缓存（${providerCache.providers.length} 个 provider，缓存于 ${providerCache.at}），后台校验新增`)
+          appendStatusLog(`provider.list using cross-restart cache (${providerCache.providers.length} providers, cached at ${providerCache.at}); verifying additions in background`)
         } else {
           providerModels = await collectProviderModels(input, cfg)
           if (!providerModels.fellBack) saveProviderCache({ at: nowIso(), models: providerModels.models, providers: providerModels.providers })
         }
         const catalog = await loadCatalog().catch(() => ({ index: {}, status: "none" as const, etag: null }))
-        // [2026-09-01]-[保底改源：opencode 自带免费模型（OpenCode Zen，models.dev opencode provider
-        //  -free ∪ big-pickle 特例，24h 滚动）优先；目录不可用（无网冷启动）fail-open 回退静态清单]
+        // [2026-09-01]-[floor source change: opencode's bundled free models (OpenCode Zen, models.dev opencode provider
+        //  -free ∪ big-pickle special case, 24h rolling) take priority; catalog unavailable (offline cold start) fail-open falls back to the static manifest]
         const freeFloor = freeFloorModels(catalog.index)
         const floorModels = freeFloor.length > 0
           ? freeFloor
           : [...new Set(loadManifest().shells.map((s) => `${s.provider}/${s.modelId}`))]
-        if (freeFloor.length > 0) appendStatusLog(`保底=OpenCode Zen 免费模型 ${freeFloor.length} 个（catalog ${catalog.status}）`)
-        else appendStatusLog(`保底回退静态清单（catalog ${catalog.status}，免费模型 0 个）`)
-        // [2026-09-01]-[加固：configured（可见集/favorites）此前无脑并入 supersetModels，provider 不存在的
-        // 脏收藏（如手滑收藏 "provider/not-a-model"，provider 不在真实已连接 provider 集）此前会被
-        // buildShells 当真实模型建出可调度但必挂的壳，且污染下方 knownProviders
-        // 令 computeActivation 的"provider 已知"判定失真、永远检测不到这条脏数据。改为先按真实已连接
-        // provider 集过滤，被过滤的单独记日志，不再被动提升为"看似合法"的壳]
+        if (freeFloor.length > 0) appendStatusLog(`floor = ${freeFloor.length} OpenCode Zen free models (catalog ${catalog.status})`)
+        else appendStatusLog(`floor fell back to the static manifest (catalog ${catalog.status}, 0 free models)`)
+        // [2026-09-01]-[hardening: configured (visible set/favorites) used to be merged into supersetModels blindly; dirty favorites (e.g. accidentally
+        // favoriting "provider/not-a-model" whose provider is not in the real connected set) would be built by buildShells as real,
+        // dispatchable-but-doomed shells, and would pollute knownProviders below, distorting computeActivation's "provider known"
+        // verdict so the dirty data was never detected. Now filter by the real connected provider set first, logging filtered entries
+        // separately instead of passively promoting them into "seemingly legal" shells]
         const realKnownProviders = new Set(providerModels.providers)
         const invalidFavoriteModels = configured.models.filter((m) => !realKnownProviders.has(m.slice(0, m.indexOf("/"))))
         if (invalidFavoriteModels.length > 0) {
-          appendStatusLog(`可见集/收藏含未知 provider 的无效模型（provider 未连接，已忽略不建壳）：${invalidFavoriteModels.join("、")}`)
+          appendStatusLog(`visible set/favorites contain invalid models with unknown provider (provider not connected; ignored, no shells built): ${invalidFavoriteModels.join(", ")}`)
         }
         const validConfiguredModels = configured.models.filter((m) => realKnownProviders.has(m.slice(0, m.indexOf("/"))))
         const supersetModels = [...new Set([...validConfiguredModels, ...providerModels.models, ...floorModels])]
           .filter((full) => isConversational(full.slice(full.indexOf("/") + 1)))
           .sort()
         const metaIndex: Record<string, EffortInfo> = { ...bundledModelIndex(), ...catalog.index }
-        // [2026-09-04]-[图片中继：同一份元数据索引供 messages.transform 运行期查 vision（与壳注入同源）]
+        // [2026-09-04]-[image relay: the same metadata index serves messages.transform runtime vision queries (same source as shell injection)]
         metaIndexRuntime = metaIndex
         supersetDefs = buildShells(supersetModels, metaIndex, {
           roAliases: true, degradedFamilyByProvider: true, markDegraded: true,
         })
-        // [2026-09-04]-[注入面模式可配：chain（默认）=六档链精选∪favorites/可见集（task 工具描述
-        //  省 6-10k token/会话；链外模型点名走 denyUninjected 提示去模型管理开启）；
-        //  all=可用全集（旧行为，任何可用模型可点名）。cfg.agent 一次性生效，改配置需重启]
+        // [2026-09-04]-[injection surface mode configurable: chain (default) = six-lane chain curation ∪ favorites/visible set (saves 6-10k
+        //  tokens/session on the task tool description; out-of-chain models called by name go through denyUninjected hinting to enable them
+        //  in model management); all = the full usable set (old behavior, any available model callable). cfg.agent takes effect once;
+        //  changing the config needs a restart]
         const injectKeepModels = options.injection!.mode === "all"
           ? new Set(supersetModels)
           : new Set(validConfiguredModels)
@@ -855,9 +861,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           })
         } catch { /* fail-open */ }
         const knownProviders = new Set<string>([...supersetModels.map((m) => m.slice(0, m.indexOf("/"))), ...providerModels.providers])
-        // [2026-09-01]-[异步兜底：钩子内退避仍全落回 fallback，或本次直接用了跨重启缓存（未做实时探测）时，
-        //  后台继续探测——命中新 provider 只能提示需重启（cfg.agent 一次性生效的硬约束，见
-        //  scheduleProviderListWatchdog 注释），但至少把"现在重启能不能生效"从盲猜变成实时、明确的状态提示]
+        // [2026-09-01]-[async fallback: when the in-hook backoff still falls back entirely, or this startup used the cross-restart cache (no live probe),
+        //  the background keeps probing — a newly seen provider can only be hinted as restart-required (hard cfg.agent one-shot constraint, see
+        //  the scheduleProviderListWatchdog comment), but at least "would a restart take effect now" becomes a live, explicit status hint]
         if (providerModels.fellBack || usedProviderCache) scheduleProviderListWatchdog(input, knownProviders)
         manager = new MatrixManager({
           stateRoot, mode: runMode, superset: supersetDefs,
@@ -865,43 +871,45 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           watchEnabled: options.matrix!.watch === true,
           onRecompute: (state, newTargets, source) => {
             clearBannerCache()
-            // [2026-08-29]-[配置面变化即探：desktop 可见集开关/TUI favorites 增删（config 源）全量重探
-            //  激活组合、不等 TTL；session/startup 源维持仅探新增组合；10min 周期刷新保持不变]-
+            // [2026-08-29]-[config-surface changes probe immediately: desktop visible-set toggles / TUI favorites add-remove (config source)
+            //  re-probe all active combos without waiting for TTL; session/startup sources keep probing only new combos; the 10min
+            //  periodic refresh stays unchanged]-
            const targets = source === "config" ? (manager?.activeMatrixKeys() ?? newTargets) : newTargets
-            // [2026-09-01]-[favorites/可见集变更后，侧栏快照必须等待强制全量探针完成后主动重写；
-            // 不能依赖下一条聊天消息触发 bannerLines，否则推荐会长期显示旧路由]-[配置改动即时可见]
+            // [2026-09-01]-[after favorites/visible-set changes the sidebar snapshot must wait for the forced full probe, then be rewritten actively;
+            //  relying on the next chat message to trigger bannerLines would leave recommendations stale for a long time]-[config changes visible immediately]
             const probeP = targets.length > 0
               ? probeKeys(targets, probeEndpoints()).catch(() => {})
               : Promise.resolve()
-            // [2026-09-02]-[favorites 变更即时显示：recompute 全同步（新链在回调前已落盘），先立即重写
-            //  侧栏快照——新链按收藏偏好此刻已可计算，健康/延迟沿用上轮探针；探针完成后再刷新一次
-            //  收敛延迟排序。此前只在 probeP.then 重写＝探针窗口（秒级~数十秒）内侧栏停留旧链]-
-            // [配置改动即时可见：通知与侧栏候选同步变化]
+            // [2026-09-02]-[favorites changes shown immediately: recompute is fully synchronous (new chains persisted before this callback), so rewrite
+            //  the sidebar snapshot right away — the new chains are computable now with favorites applied; health/latency reuse the previous
+            //  probe round, refreshing once more after the probe converges latency ordering. Previously rewriting only in probeP.then left the
+            //  sidebar on stale chains during the probe window (seconds to tens of seconds)]-
+            // [config changes visible immediately: notifications and sidebar candidates change in sync]
             refreshSidebarState()
             probeP.then(refreshSidebarState).catch(() => {})
-            // [2026-08-31]-[改落盘 status-log 供 tui.tsx 侧边栏渲染，不再刷屏 stderr 遮挡输入框]-[高频重算通知]
-            appendStatusLog(`激活矩阵已重算（gen=${state.generation}，激活壳 ${state.activeShells.length}，探针 ${source}×${targets.length}）`)
+            // [2026-08-31]-[switched to persisted status-log rendered by the tui.tsx sidebar, no longer flooding stderr over the input box]-[high-frequency recompute notices]
+            appendStatusLog(`activation matrix recomputed (gen=${state.generation}, active shells ${state.activeShells.length}, probes ${source}×${targets.length})`)
           },
         })
         manager.recompute(configured)
         manager.start()
-        appendStatusLog(`已注入 ${injected.size} 只壳（模式=${runMode}，注入面=${options.injection!.mode}=${fullSupersetCount}→精选后 ${supersetDefs.length}，冲突 ${conflicts.size}；激活门控运行中）`)
-        // [2026-08-29]-[配置钩子触发自更新检查]-[检查异步且失败不阻塞启动]
+        appendStatusLog(`injected ${injected.size} shells (mode=${runMode}, injection surface=${options.injection!.mode}=${fullSupersetCount}→${supersetDefs.length} after curation, conflicts ${conflicts.size}; activation gating active)`)
+        // [2026-08-29]-[config hook triggers the self-update check]-[async check; failure never blocks startup]
         refreshSelfUpdate().then((state) => { if (state?.outdated) clearBannerCache() }).catch(() => {})
       } catch (exc) {
         configFailed = true
-        appendStatusLog(`config 钩子 fail-open: ${exc}`)
+        appendStatusLog(`config hook fail-open: ${exc}`)
       }
     },
 
     "chat.params": async (input) => {
       try {
-        // [2026-08-29]-[修复复审P1-首轮时序与分类：agent 名唯一真源——注入壳名集合→isShell、
-        //  title/compaction/summary→忽略、其余（含用户自定义 subagent）→按主会话注册；
-        //  modelKey 取 Model 对象 providerID/id（chatParamsModelKey）]
+        // [2026-08-29]-[re-review P1 fix — first-turn timing and classification: the agent name's single source of truth — the injected
+        //  shell-name set → isShell; title/compaction/summary → ignore; everything else (including user-defined subagents) → register as main session;
+        //  modelKey taken from the Model object's providerID/id (chatParamsModelKey)]
         const sessionID = (input as any).sessionID as string | undefined
         const agent = (input as any).agent as string | undefined
-        // [2026-09-04]-[图片中继：会话主模型记录（两路都记；messages.transform 查 vision 用）]
+        // [2026-09-04]-[image relay: session main-model record (both paths; used for vision lookup by messages.transform)]
         const modelKey = chatParamsModelKey(input)
         if (sessionID && modelKey) sessionModelKey.set(sessionID, modelKey)
         if (dynamic) {
@@ -914,9 +922,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
 
     "experimental.chat.system.transform": async (input, output) => {
       try {
-        // 壳子代理/内部代理不注入调度员规程与横幅（角色已是执行体，省 token 且防角色混淆）；
-        // [2026-08-29]-[修复复审P1-首轮时序：transform 早于 chat.params——依赖 session.created
-        //  预注册的 agent 名分类（动态=skipSystemInjection；legacy=sessionAgent∪内部代理名），不依赖 chat.params 先到]
+        // shell subagents/internal agents get no dispatcher rules or banner (their role is already the executor; saves tokens and prevents role confusion);
+        // [2026-08-29]-[re-review P1 fix — first-turn timing: transform runs before chat.params — rely on the agent-name classification pre-registered
+        //  by session.created (dynamic = skipSystemInjection; legacy = sessionAgent ∪ internal agent names), not on chat.params arriving first]
         if (input.sessionID) {
           if (dynamic) {
             if (manager?.skipSystemInjection(input.sessionID)) return
@@ -925,20 +933,20 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             if (/-mx-/.test(agent) || agent === "title" || agent === "compaction" || agent === "summary") return
           }
         }
-        // [2026-08-29]-[fail-open 可见性：注入崩溃时显式告警——不派发，直接自做或告知用户]-
+        // [2026-08-29]-[fail-open visibility: explicit warning when injection crashes — don't dispatch; do it yourself or tell the user]-
         if (configFailed) {
-          output.system.push("[opencode-switchman] ⚠ 插件注入失败（壳/派发闸不可用）——本轮禁止 task 派发，直接自做或向用户说明后自做")
+          output.system.push("[opencode-switchman] ⚠ plugin injection failed (shells/dispatch gates unavailable) — task delegation forbidden this turn; do it yourself or explain to the user, then proceed yourself")
         }
-        // [v1.2] 调度员规程随包内置：系统提示每轮注入（内存态、不可被本地文件改动丢失，
-        // 与用户自己的全局/项目 AGENTS.md 拼接共存，互不覆盖）
-        // [2026-09-02]-[去重：项目/全局 AGENTS.md 已含同文时跳过重复注入（如本插件仓库自身开发场景，
-        //  省 ~2.2k token/会话）。opencode 在 transform 触发前已把装配好的系统段拼接进 system[0]
-        //  （session/llm/request.ts prepare），AGENTS.md 内容可检出；未装配则检测不命中、照常注入（fail-safe）]-
-        const rulesMarker = "# 全局规程（主调度员守则"
+        // [v1.2] dispatcher rules bundled with the package: injected into the system prompt every turn (in-memory, cannot be lost to local file edits,
+        // coexists by concatenation with the user's own global/project AGENTS.md, neither overwriting the other)
+        // [2026-09-02]-[dedup: skip re-injection when the project/global AGENTS.md already carries the same text (e.g. this plugin repo's own dev
+        //  scenario, saving ~2.2k tokens/session). opencode concatenates the assembled system section into system[0] before transform fires
+        //  (session/llm/request.ts prepare), so AGENTS.md content is detectable; if not assembled, detection misses and injection proceeds (fail-safe)]-
+        const rulesMarker = "# Global Protocol (master dispatcher rules"
         const rulesAlreadyPresent = Array.isArray(output.system)
           && output.system.some((p) => typeof p === "string" && p.includes(rulesMarker))
         if (options.rules!.enabled && !rulesAlreadyPresent) {
-          // [2026-09-04]-[规程插值：委派底价与三水位阈值来自用户 jsonc（缺省 3k/60k/80k/100k）]
+          // [2026-09-04]-[rules interpolation: delegation floor and the three watermark thresholds come from user jsonc (defaults 3k/60k/80k/100k)]
           const t = thresholdsOf(options.context)
           output.system.push(AGENTS_MD.trimEnd()
             .replaceAll("{{DELEGATION_FLOOR}}", String(options.rules!.delegationFloor ?? DEFAULT_DELEGATION_FLOOR))
@@ -949,19 +957,19 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         if (options.banner!.enabled) {
           for (const line of bannerLines()) output.system.push(line)
         }
-        // [2026-09-04]-[实测会话水位行：主会话每轮注入（ok 档只报数字）；rules/banner 全关时尊重零注入意愿]
+        // [2026-09-04]-[measured session watermark line: injected into the main session every turn (ok tier reports numbers only); when rules/banner are both off, respect the zero-injection wish]
         if (options.rules!.enabled || options.banner!.enabled) {
           const wmLine = sessionWatermarkLine(input.sessionID)
           if (wmLine) output.system.push(wmLine)
         }
       } catch (exc) {
-        appendStatusLog(`规程/横幅 fail-open: ${exc}`)
+        appendStatusLog(`rules/banner fail-open: ${exc}`)
       }
     },
 
-    // [2026-09-04]-[图片中继：主会话模型无视觉时，把最后一条用户消息里的图片部件替换为
-    //  「落盘路径+读图指引」文本（vision 壳/MCP 视觉工具按路径接力），宿主不再报错；
-    //  元数据未知/查不到模型 → fail-open 不动；整钩子 try/catch，绝不让聊天断流]
+    // [2026-09-04]-[image relay: when the main session model has no vision, replace image parts in the last user message with a
+    //  "persisted paths + image-reading guidance" text (vision shells/MCP vision tools pick up by path), so the host no longer errors;
+    //  metadata unknown/model not found → fail-open, leave as-is; the whole hook is try/catch — the chat stream is never severed]
     "experimental.chat.messages.transform": async (_input, output) => {
       try {
         if (options.relay?.image === false) return
@@ -979,7 +987,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           ?? (typeof m?.providerID === "string" && typeof m?.id === "string" ? `${m.providerID}/${m.id}` as ModelKey : null)
         if (!key) return
         const meta = (metaIndexRuntime ?? bundledModelIndex())[key]
-        const modelVision = meta ? meta.vision === true : null // 元数据未知 → null 不动
+        const modelVision = meta ? meta.vision === true : null // metadata unknown → null, leave as-is
         if (modelVision !== false) return
         const { ctx } = currentContext()
         const writeDir = join(stateDir(), "media", sid)
@@ -988,18 +996,18 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           visionHead: laneHeadCandidate("vision", ctx),
           writeDir,
         })
-        // 只有部件确实变化时才写回 output（msgs 元素即 output.messages[i] 引用）
+        // write back to output only when parts actually changed (msgs elements are the output.messages[i] references)
         if (res.changed) {
           target.parts = res.parts
-          appendStatusLog(`图片中继：模型 ${key} 无视觉输入，已落盘 ${res.paths.length} 张图片并注入读图指引（会话 ${sid}）`)
+          appendStatusLog(`image relay: model ${key} has no vision input; persisted ${res.paths.length} image(s) to disk and injected reading guidance (session ${sid})`)
         }
       } catch (exc) {
-        appendStatusLog(`图片中继 fail-open（放行）: ${exc}`)
+        appendStatusLog(`image relay fail-open (passed through): ${exc}`)
       }
     },
 
     "tool.execute.before": async (input, output) => {
-      // [2026-09-04]-[读取水位闸：task 之外的读取类/bash 工具按实测会话水位分级拦截]
+      // [2026-09-04]-[read watermark gate: read-class/bash tools other than task are intercepted by tier per the measured session watermark]
       if (input.tool !== "task") {
         if (input.tool === "bash" || READ_CLASS_TOOLS.has(input.tool)) handleReadGate(input as any, output as any)
         return
@@ -1009,8 +1017,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         cleanRoutingExpired()
         const agent = String(output.args?.subagent_type ?? "").trim()
         if (!agent) return
-        // [2026-08-29]-[闸1 第一层（动态）：壳名形态但未注入超集 → deny（附重启/激活指引）；
-        //  非壳名 unknown 维持 fail-open 放行]
+        // [2026-08-29]-[gate 1 layer one (dynamic): shell-shaped name but not injected into the superset → deny (with restart/activation guidance);
+        //  non-shell unknown stays fail-open allowed]
         let shell: ShellRegEntry | undefined = registry[agent]
         const activationGate = dynamic
           ? {
@@ -1020,14 +1028,14 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             restartRequired: manager?.snapshot().restartRequired ?? [],
           }
           : null
-        // [2026-08-31]-[终审P1-3：deny 附言候选与横幅同源——补 water/glmPeak/states 运行期输入
-        //  （quotaView 为缓存读，与 quotaExhaustedFlags 同 TTL，不新增网络成本）]
+        // [2026-08-31]-[final review P1-3: deny-postscript candidates share the banner's source — add water/glmPeak/states runtime inputs
+        //  (quotaView is a cached read, same TTL as quotaExhaustedFlags, no extra network cost)]
         const gateExtras = gateExtrasSnapshot()
-        // [2026-09-04]-[autoRedirect：闸快照提取为共享对象（改派守卫用同一 snap 复检目标壳）]
+        // [2026-09-04]-[autoRedirect: gate snapshot extracted into a shared object (the redirect guard re-checks the target shell with the same snap)]
         const gateSnap = {
           registry,
           matrix: ctx.matrix?.combos ?? null,
-          // [2026-08-29]-[功能1 仅动态矩阵：legacy 静态路径逐字节不变（tester 回归发现漏_gate）]-
+          // [2026-08-29]-[feature 1 dynamic matrix only: legacy static path byte-for-byte unchanged (tester regression found the missing gate)]-
           routing: dynamic ? routingWithRealFailures(ctx.routing) : ctx.routing,
           quotaExhausted: quotaExhaustedFlags(),
           routePolicy: policy,
@@ -1036,17 +1044,17 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           activation: activationGate,
           realFailedCombos: dynamic ? realFailedComboKeys() : undefined,
           retiredModels: dynamic ? new Set(retiredModelKeys()) : undefined,
-          // [2026-08-31]-[去厂商化：deny 附言候选与横幅排序同源]
+          // [2026-08-31]-[vendor-neutral: deny-postscript candidates share the banner's ordering]
           billingBoostOf,
           peakOf: peakOfProvider,
           water: gateExtras.water,
           glmPeak: gateExtras.glmPeak,
           states: gateExtras.states as any,
-          // [2026-09-03]-[闸5.5 任务池选配：手动配置优先于系统默认（与横幅/hint 同源）]
+          // [2026-09-03]-[gate 5.5 task-pool selection: manual config overrides system defaults (same source as banner/hint)]
           poolConfig: loadPoolConfig(),
         }
-        // [2026-09-04]-[autoRedirect：一跳守卫——对目标壳用同一 snap 复检 checkShell；目标仍 deny 或
-        //  redirect 回环 → 维持原 deny 返回 false（守卫只判放行与否，不再二次改派）]
+        // [2026-09-04]-[autoRedirect: one-hop guard — re-check the target shell with checkShell on the same snap; target still denied or the redirect
+        //  would loop → keep the original deny and return false (the guard only decides pass/block, never a second redirect)]
         const autoRedirectOn = options.dispatch?.autoRedirect !== false
         const tryRedirect = (target: string | null, prompt: unknown): boolean => {
           try {
@@ -1064,24 +1072,24 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         if (!shell) {
           if (dynamic && shellLikeName(agent)) {
             const hint = firstCandidateHint(agent, ctx, gateExtras)
-            // [2026-09-04]-[autoRedirect：未注入壳 deny——META 有效且链首候选过守卫时静默改派放行]
+            // [2026-09-04]-[autoRedirect: uninjected-shell deny — when the META is valid and the chain-head candidate passes the guard, silently redirect and allow]
             if (autoRedirectOn) {
               const [meta, metaErr] = parseRouteMeta(output.args?.prompt)
               const cand = meta !== null && metaErr === null ? firstCandidateShell(agent, ctx, gateExtras) : null
               if (cand && tryRedirect(cand, output.args?.prompt)) {
-                appendStatusLog(`自动改派 ${agent} → ${cand}（未注入壳，改派链首候选）`)
+                appendStatusLog(`auto-redirect ${agent} → ${cand} (uninjected shell; redirected to the chain-head candidate)`)
                 return
               }
             }
-            // [2026-09-04]-[补 denySkip：原实现此分支 throw 未标记 callID，被兜底 catch 当 fail-open
-            //  吞掉放行——denyUninjected 的「维持抛错」从未真正阻断；修复后 deny 才会如实上抛]
+            // [2026-09-04]-[added denySkip: the original implementation threw in this branch without marking the callID, so the catch-all treated it as
+            //  fail-open and allowed it — denyUninjected's "keep throwing" never actually blocked; after the fix the deny is truly rethrown]
             denySkip.add(input.callID)
             throw new Error(denyUninjected(agent, activationGate?.restartRequired ?? [], hint))
           }
-          // [2026-09-04]-[内置 subagent 封堵：explore/general 与壳路由竞争，默认 deny 附改派建议]
+          // [2026-09-04]-[built-in subagent blocking: explore/general compete with shell routing; default deny with a redirect suggestion]
           const builtinDeny = builtinAgentDeny(agent, options.builtinAgents!.mode ?? "deny", (lane) => laneHeadCandidate(lane, ctx))
           if (builtinDeny) {
-            // [2026-09-04]-[autoRedirect：内置代理封堵——prompt 末尾追加合成 ROUTE_META 后改派对应 lane 链首]
+            // [2026-09-04]-[autoRedirect: built-in agent blocking — append a synthetic ROUTE_META to the prompt tail and redirect to the corresponding lane's chain head]
             if (autoRedirectOn) {
               const lane = BUILTIN_SUBAGENTS[agent]
               const cand = lane ? laneHeadCandidate(lane, ctx) : null
@@ -1092,7 +1100,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
                 const newPrompt = `${basePrompt}${basePrompt.endsWith("\n") ? "" : "\n"}${metaLine}`
                 if (tryRedirect(cand, newPrompt)) {
                   output.args.prompt = newPrompt
-                  appendStatusLog(`自动改派 ${agent} → ${cand}（内置代理封堵，追加合成 ROUTE_META）`)
+                  appendStatusLog(`auto-redirect ${agent} → ${cand} (built-in agent blocked; appended a synthetic ROUTE_META)`)
                   return
                 }
               }
@@ -1106,14 +1114,14 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         const r = checkShell(agent, shell, output.args?.prompt, gateSnap)
         if (r.note) appendStatusLog(r.note)
         if (r.deny) {
-          // [2026-09-04]-[autoRedirect：deny 且 hint 已算出候选 → 一跳静默改派（守卫复检），零重试]
+          // [2026-09-04]-[autoRedirect: denied and a hint candidate is already computed → one-hop silent redirect (guard re-check), zero retries]
           if (tryRedirect(r.redirect, output.args?.prompt)) {
-            appendStatusLog(`自动改派 ${agent} → ${r.redirect}（${r.deny.slice(0, 60)}）`)
+            appendStatusLog(`auto-redirect ${agent} → ${r.redirect} (${r.deny.slice(0, 60)})`)
             return
           }
-          // [2026-09-04]-[autoRedirect：闸6 META 无效——非 review lane 在 prompt 末尾合成 ROUTE_META
-          //  后同壳复检放行（review 须真实异族 producer_family，不可合成，维持 deny）]
-          if (autoRedirectOn && !r.redirect && r.deny.includes("ROUTE_META 无效")) {
+          // [2026-09-04]-[autoRedirect: gate 6 META invalid — synthesize a ROUTE_META at the prompt tail for non-review lanes and re-check the same
+          //  shell for pass (review requires a real cross-family producer_family, cannot be synthesized; deny stands)]
+          if (autoRedirectOn && !r.redirect && r.deny.includes("invalid ROUTE_META")) {
             const lane = laneOfShell(agent, gateSnap.lanes) ?? "main"
             if (lane !== "review") {
               const role = ({ hard: "planner", main: "programmer", mechanical: "tester", economy: "scouter", vision: "observer" } as Record<string, string>)[lane] ?? "programmer"
@@ -1123,7 +1131,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
               const g = checkShell(agent, shell, newPrompt, gateSnap)
               if (!g.deny && !(g.redirect && g.redirect !== agent)) {
                 output.args.prompt = newPrompt
-                appendStatusLog(`自动改派 ${agent}（补 ROUTE_META，${lane} 档）`)
+                appendStatusLog(`auto-redirect ${agent} (added ROUTE_META, ${lane} lane)`)
                 return
               }
             }
@@ -1132,16 +1140,17 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           throw new Error(r.deny)
         }
       } catch (exc) {
-        if (denySkip.has(input.callID)) throw exc // deny 原样上抛（阻断派发）
-        appendStatusLog(`六闸 fail-open（放行）: ${exc}`)
+        if (denySkip.has(input.callID)) throw exc // deny rethrown as-is (blocks dispatch)
+        appendStatusLog(`six gates fail-open (allowed): ${exc}`)
       }
     },
 
-    // [2026-09-04]-[auto-handover：tool.execute.after 在工具执行路径内被 await → 与主循环天然串行
-    //  （无双烧/竞态）。仅强制压缩水位（force）触发：软/硬水位维持 deny+提示让模型显式收尾（摘要
-    //  保真度更高），force 时模型已无读取能力、任务大概率未完——fork 全量备份 + summarize 压缩当前
-    //  会话；压缩写入后宿主 agent 循环下一步经 filterCompactedEffect 重读消息（prompt.ts while 循环
-    //  每步重取），任务以「摘要+保留尾巴（tool_use/result 配对完整）」上下文自动继续，无需重新 prompt]
+    // [2026-09-04]-[auto-handover: tool.execute.after is awaited on the tool execution path → naturally serialized with the main loop
+    //  (no double-burn/race). Triggered only at the force-compaction watermark: soft/hard keep deny+hints so the model wraps up explicitly
+    //  (higher summary fidelity); at force the model has lost read ability and the task is likely unfinished — fork a full backup + summarize-
+    //  compact the current session; after compaction is written the host agent loop re-reads messages on the next step via filterCompactedEffect
+    //  (the prompt.ts while loop re-fetches each step), so the task continues automatically on "summary + preserved tail (tool_use/result pairs
+    //  intact)" context, no re-prompting needed]
     "tool.execute.after": async (hookInput) => {
       const sid = hookInput.sessionID
       try {
@@ -1153,11 +1162,11 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         if (handoverInflight.has(sid)) return
         if (Date.now() - (handoverCooldown.get(sid) ?? 0) < HANDOVER_COOLDOWN_MS) return
         handoverInflight.add(sid)
-        appendStatusLog(`auto-handover 触发（${hookInput.tool} 执行后，~${kk(wm.tokens)} 超强制压缩水位）：全量备份并压缩当前会话`)
+        appendStatusLog(`auto-handover triggered (after ${hookInput.tool}, ~${kk(wm.tokens)} exceeds the force-compaction watermark): full backup + compaction of the current session`)
         const result = await runHandover(v1HandoverPort(pluginClient), sid, pluginDirectory)
         handoverCooldown.set(sid, Date.now())
-        appendStatusLog(`auto-handover ${result.ok ? "完成" : "失败"}：${result.message}`)
-        // 压缩后软水位一次性提醒重新武装；实测水位待下一轮 assistant 消息回落（冷却期兜底防抖）
+        appendStatusLog(`auto-handover ${result.ok ? "done" : "failed"}: ${result.message}`)
+        // after compaction, re-arm the soft watermark's one-time nudge; the measured watermark falls back with the next assistant message (cooldown guards flapping)
         if (result.ok) readNudged.delete(sid)
       } catch (exc) {
         appendStatusLog(`auto-handover fail-open: ${exc}`)
@@ -1168,8 +1177,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
 
     event: async ({ event }) => {
       try {
-        // [2026-08-29]-[修复复审P1-首轮时序：session.created 预注册（事件早于首轮 chat.params/transform，
-        //  记 agent 名供 transform 首轮分类；modelKey 由 chat.params 补齐）]
+        // [2026-08-29]-[re-review P1 fix — first-turn timing: session.created pre-registration (the event precedes the first chat.params/transform;
+        //  records the agent name for transform's first-turn classification; modelKey filled in by chat.params)]
         if (event.type === "session.created") {
           const info = sessionCreatedInfo((event as any).properties)
           if (info) {
@@ -1178,8 +1187,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           }
           return
         }
-        // [2026-09-04]-[会话上下文水位实测：message.updated → 最近 assistant 消息 token usage
-        //  （input+cache.read+reasoning+output ≈ 下一轮上下文）；壳/内部会话不计入]
+        // [2026-09-04]-[measured session context watermark: message.updated → the latest assistant message's token usage
+        //  (input+cache.read+reasoning+output ≈ next-round context); shell/internal sessions not counted]
         if (event.type === "message.updated") {
           const props = (event as any).properties
           const sid = props?.sessionID
@@ -1190,8 +1199,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           }
           return
         }
-        // [2026-08-29]-[修复复审P1-session.deleted 形状：properties={info:{id}}（sdk types.gen.ts:576-580）；
-        //  清理会话注册表（仅动态矩阵；非壳会话移除→重算）]
+        // [2026-08-29]-[re-review P1 fix — session.deleted shape: properties={info:{id}} (sdk types.gen.ts:576-580);
+        //  clean the session registry (dynamic matrix only; non-shell sessions removed → recompute)]
         if (event.type === "session.deleted") {
           const sid = sessionDeletedId((event as any).properties)
           if (sid) {
@@ -1206,50 +1215,50 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         if (part?.type !== "tool" || part?.state?.status !== "error") return
         if (part.callID && denySkip.has(part.callID)) {
           denySkip.delete(part.callID)
-          return // 自身 deny 不记账
+          return // self-deny: no failure accounting
         }
         const agent = String(part.state?.input?.subagent_type ?? "").trim()
         if (!agent) return
         const { ctx, registry } = currentContext()
-        const reason = String(part.state?.error ?? part.state?.message ?? "派发失败").slice(0, 300)
+        const reason = String(part.state?.error ?? part.state?.message ?? "dispatch failed").slice(0, 300)
         const combo = registry[agent]?.comboKey
-        // [2026-08-29]-[失败分类：厂商无关分类，一次判定全程复用（瞬时 429 与真额度分离）]
+        // [2026-08-29]-[failure classification: vendor-neutral classification, decided once and reused end to end (transient 429 vs real quota)]
         const category = classifyFailure(reason)
-        // [2026-09-01]-[配置层失败分流：壳未注册＝调度层失败（探针 ok 的模型不因门控漏拦被毒化），
-        //  仅审计不隔离不熔断；端点不兼容＝永久配置错误，6h 长 TTL 隔离]
+        // [2026-09-01]-[config-layer failure triage: shell not injected = dispatch-layer failure (probe-ok models are not poisoned by gating leaks),
+        //  audit only, no isolation, no breaker; endpoint incompatibility = permanent config error, isolated with a 6h long TTL]
         if (category === "shell_injection") {
           recordInjection(agent, reason)
           return
         }
-        // [2026-08-29]-[功能1 仅动态矩阵：legacy 维持原 recordFailure 熔断路径（tester 回归发现漏_gate）]-
+        // [2026-08-29]-[feature 1 dynamic matrix only: legacy keeps the original recordFailure breaker path (tester regression found the missing gate)]-
         const realFailed = dynamic && Boolean(combo && ctx.matrix?.combos[combo]?.status === "ok")
         if (realFailed) {
-          // 限流用短 TTL（10 分钟自愈）；endpoint 用 6h（永久配置错误重试无意义）；其余默认 30 分钟
+          // rate limit uses a short TTL (10-min self-heal); endpoint uses 6h (retrying a permanent config error is pointless); others default to 30 minutes
           const ttlMs = category === "rate_limit" ? RATE_LIMIT_TTL_MS : category === "endpoint" ? ENDPOINT_TTL_MS : undefined
           markRealFailure(combo!, undefined, ttlMs)
-          // [2026-09-01]-[隔离事件落盘：此前纯内存零审计——横幅报 down 却查无此案]
+          // [2026-09-01]-[isolation events persisted: previously purely in-memory with zero audit — the banner reported down but no record existed]
           recordIsolation(agent, combo!, category, ttlMs ?? REAL_FAIL_TTL_MS, reason)
           clearBannerCache()
         }
         const rec = realFailed ? null : recordFailure(agent, reason, registry)
-        // Copilot 网关额度类错误 → 第二真值源置池耗尽（信任至 reset_date）
-        // [2026-08-29]-[失败分类：仅真 quota 判池耗尽，429 瞬时永不触发；非 copilot 池的 quota 不做池级
-        //  处理——探针 10min 会持续 down，横幅自然降级，30 分钟内存标记已覆盖]
+        // Copilot gateway quota-class errors → second truth source marks the pool exhausted (trusted until reset_date)
+        // [2026-08-29]-[failure classification: only a real quota marks pool exhaustion, transient 429s never do; quota on non-copilot pools gets no
+        //  pool-level handling — the 10min probe keeps reporting down, the banner degrades naturally, and the 30-min in-memory mark already covers it]
         if (category === "quota") {
           const shell = registry[agent]
           if (shell?.pool === "copilot") markCopilotGatewayExhausted(reason)
         }
-        // 模型下线类（连续 404）→ 退休移出候选
+        // retired-model class (consecutive 404s) → retire and remove from candidates
         if (category === "not_found" && dynamic) {
           const shell = registry[agent]
           if (shell && noteModelNotFound(`${shell.provider}/${shell.modelId}`)) {
             clearBannerCache()
-            appendStatusLog(`模型已下线（连续 404），已移出候选：${shell.provider}/${shell.modelId}`)
+            appendStatusLog(`model retired (consecutive 404s), removed from candidates: ${shell.provider}/${shell.modelId}`)
           }
         }
-        if (rec?.tripped) appendStatusLog(`${agent} 已熔断（600s）：${reason.slice(0, 80)}`)
+        if (rec?.tripped) appendStatusLog(`${agent} breaker tripped (600s): ${reason.slice(0, 80)}`)
       } catch (exc) {
-        appendStatusLog(`记账 fail-open: ${exc}`)
+        appendStatusLog(`failure accounting fail-open: ${exc}`)
       }
     },
   }

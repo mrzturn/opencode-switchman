@@ -1,7 +1,8 @@
-// 探针：真实请求探活 → model-matrix.json
-// [2026-08-28]-[Copilot 鉴权对齐 opencode 核心：GitHub OAuth token 直连 api.githubcopilot.com，
-// 免 v2/token 交换（gho_ token 换取会 403）；端点/请求头照抄 packages/opencode/src/plugin/github-copilot/copilot.ts]-
-// [口径：TTL 600s；2xx=ok；30s 内有响应=慢而可用不判 down（超时 45s 判 down）；并发 8-32]
+// [2026-09-04]-[English localization: translate comments and status messages; no logic change]
+// Probe: real-request liveness checks -> model-matrix.json
+// [2026-08-28]-[Copilot auth aligned with the opencode core: GitHub OAuth token straight to api.githubcopilot.com,
+// skipping the v2/token exchange (the gho_ token exchange returns 403); endpoint/headers copied from packages/opencode/src/plugin/github-copilot/copilot.ts]-
+// [calibration: TTL 600s; 2xx=ok; any response within 30s=slow but usable, not down (timeout 45s marks down); concurrency 8-32]
 import { readCopilotGithubToken, markCopilotGatewayExhausted } from "./quota"
 import { loadManifest, loadMatrix, paths, writeJsonAtomic, withPathLock, PROBE_TTL, appendStatusLog } from "./state"
 import { classifyFailure } from "./failclass"
@@ -42,19 +43,19 @@ function buildRequest(
     if (!ghToken) return null
     const base = eps.copilotApiBase ?? COPILOT_BASE
     const shape = shapes[modelId]
-    // [2026-09-01]-[端点选择对齐核心 isMsgApi（supported_endpoints 含 /v1/messages）：形状缓存已知则
-    //  按真实值路由，未知（冷启动/无 token）才回退 modelId 前缀启发式，避免"新增非 claude 命名但走
-    //  messages API 的模型"或反之被误判导致 400]
+    // [2026-09-01]-[endpoint selection aligned with the core isMsgApi (supported_endpoints includes /v1/messages): when the
+    //  shape cache is known route by the real value; only unknown (cold start/no token) falls back to the modelId prefix heuristic,
+    //  avoiding 400s from misjudging "new non-claude-named models on the messages API" or the reverse]
     const useMessagesApi = shape ? shape.messagesApi : modelId.startsWith("claude")
     if (useMessagesApi) {
       const headers = copilotHeaders(ghToken, { "anthropic-version": "2023-06-01" })
       const body: Record<string, unknown> = {
         model: modelId, max_tokens: 16,
-        messages: [{ role: "user", content: "回复：OK" }],
+        messages: [{ role: "user", content: "Reply: OK" }],
       }
-      // [2026-09-01]-[对齐核心 models.ts：按该模型真实 capabilities.supports 推导，形状未知/不满足→不发
-      //  thinking（不再无条件按 modelId 前缀猜测），budget 分支需相应抬高 max_tokens（Anthropic 硬约束
-      //  max_tokens 必须 > thinking.budget_tokens）]
+      // [2026-09-01]-[aligned with the core models.ts: derive from the model's real capabilities.supports; unknown/unsatisfied
+      //  shape sends no thinking (no longer unconditionally guessing by modelId prefix); the budget branch raises max_tokens
+      //  accordingly (Anthropic hard constraint: max_tokens must be > thinking.budget_tokens)]
       const param = hasEffort ? deriveThinkingParam(shape, effort) : null
       if (param?.kind === "budget") {
         body.thinking = { type: "enabled", budget_tokens: param.budgetTokens }
@@ -66,27 +67,27 @@ function buildRequest(
     }
     const useResponses = !/^(gemini|kimi|mai)/.test(modelId)
     if (useResponses) {
-      const body: Record<string, unknown> = { model: modelId, input: "回复：OK", max_output_tokens: 16 }
+      const body: Record<string, unknown> = { model: modelId, input: "Reply: OK", max_output_tokens: 16 }
       const param = hasEffort ? deriveThinkingParam(shape, effort) : null
       if (param?.kind === "reasoningEffort") body.reasoning = { effort: param.value }
-      else if (hasEffort && !shape) body.reasoning = { effort } // 形状未知：沿用旧启发式兜底
+      else if (hasEffort && !shape) body.reasoning = { effort } // shape unknown: keep the old heuristic as fallback
       return { url: `${base}/responses`, headers: copilotHeaders(ghToken), body }
     }
-    const body: Record<string, unknown> = { model: modelId, max_tokens: 8, messages: [{ role: "user", content: "回复：OK" }] }
+    const body: Record<string, unknown> = { model: modelId, max_tokens: 8, messages: [{ role: "user", content: "Reply: OK" }] }
     if (hasEffort) body.reasoning_effort = effort
     return { url: `${base}/chat/completions`, headers: copilotHeaders(ghToken), body }
   }
   if (poolForProviderId(provider) === "glm") {
     if (!eps.glmKey) return null
     const base = eps.glmBaseURL ?? "https://open.bigmodel.cn/api/coding/paas/v4"
-    const body: Record<string, unknown> = { model: modelId, max_tokens: 8, messages: [{ role: "user", content: "回复：OK" }] }
+    const body: Record<string, unknown> = { model: modelId, max_tokens: 8, messages: [{ role: "user", content: "Reply: OK" }] }
     if (hasEffort) body.reasoning_effort = effort
     return { url: `${base}/chat/completions`, headers: { "Content-Type": "application/json", Authorization: `Bearer ${eps.glmKey}` }, body }
   }
   if (poolForProviderId(provider) === "deepseek") {
     if (!eps.dsKey) return null
     const base = eps.deepseekBaseURL ?? "https://api.deepseek.com"
-    const body: Record<string, unknown> = { model: modelId, max_tokens: 8, messages: [{ role: "user", content: "回复：OK" }] }
+    const body: Record<string, unknown> = { model: modelId, max_tokens: 8, messages: [{ role: "user", content: "Reply: OK" }] }
     if (hasEffort) body.reasoning_effort = effort
     return { url: `${base}/chat/completions`, headers: { "Content-Type": "application/json", Authorization: `Bearer ${eps.dsKey}` }, body }
   }
@@ -94,8 +95,9 @@ function buildRequest(
 }
 
 /**
- * [2026-08-29]-[评分引擎：探针结果状态归一纯函数——down+rate_limit(429) 转 strained（健康 0.6 参与而非出局），
- *  其余类别维持原状；供 probeTargets 落盘前调用，也便于纯函数层测试]
+ * [2026-08-29]-[scoring engine: pure function normalizing probe result status -- down+rate_limit(429) becomes strained
+ *  (health 0.6 participates instead of being out); other categories unchanged; called by probeTargets before persisting,
+ *  also handy for pure-function-layer tests]
  */
 export function classifyProbeStatus(raw: { status: "ok" | "down" | "unknown"; reason?: string }): "ok" | "strained" | "down" | "unknown" {
   if (raw.status === "down" && classifyFailure(String(raw.reason ?? "")) === "rate_limit") return "strained"
@@ -107,7 +109,7 @@ async function probeOne(
   shapes: Record<string, CopilotThinkingShape>,
 ): Promise<{ status: "ok" | "down" | "unknown"; reason?: string; latency_ms: number | null }> {
   const req = buildRequest(provider, modelId, effort, eps, ghToken, shapes)
-  if (!req) return { status: "unknown", reason: "无可用端点/凭证", latency_ms: null }
+  if (!req) return { status: "unknown", reason: "no usable endpoint/credentials", latency_ms: null }
   const t0 = Date.now()
   try {
     const res = await fetch(req.url, {
@@ -122,14 +124,14 @@ async function probeOne(
     try {
       const text = (await res.text()).slice(0, 120)
       if (text) reason += `: ${text.split(/\s+/).join(" ")}`
-    } catch { /* 空响应体 */ }
+    } catch { /* empty response body */ }
     return { status: "down", reason, latency_ms: latency }
   } catch (exc) {
     return { status: "down", reason: `${(exc as Error).name}: ${(exc as Error).message}`.slice(0, 160), latency_ms: Date.now() - t0 }
   }
 }
 
-/** 探测全部壳组合并写矩阵（后台调用；全链 fail-open；legacy 全量路径） */
+/** Probe all shell combos and write the matrix (background call; fail-open throughout; legacy full path) */
 export async function refreshMatrix(eps: ProbeEndpoints): Promise<number | null> {
   try {
     const targets = new Map<string, [string, string, string]>()
@@ -139,14 +141,14 @@ export async function refreshMatrix(eps: ProbeEndpoints): Promise<number | null>
     }
     return await probeTargets([...targets.keys()], eps, targets)
   } catch (exc) {
-    appendStatusLog(`探针 fail-open: ${exc}`)
+    appendStatusLog(`probe fail-open: ${exc}`)
     return null
   }
 }
 
 /**
- * [2026-08-29]-[动态矩阵增量探测：只探给定组合（ro 别名共享 matrixKey，按 key 去重），
- * 读改写合并保留其余组合与 active_keys/target_generation 字段]
+ * [2026-08-29]-[dynamic matrix incremental probing: only probe the given combos (ro aliases share the matrixKey, dedupe by key);
+ * read-modify-write merge keeps the other combos and the active_keys/target_generation fields]
  */
 export async function probeKeys(keys: string[], eps: ProbeEndpoints): Promise<number | null> {
   try {
@@ -157,7 +159,7 @@ export async function probeKeys(keys: string[], eps: ProbeEndpoints): Promise<nu
     }
     return await probeTargets([...targets.keys()], eps, targets)
   } catch (exc) {
-    appendStatusLog(`增量探针 fail-open: ${exc}`)
+    appendStatusLog(`incremental probe fail-open: ${exc}`)
     return null
   }
 }
@@ -167,12 +169,13 @@ async function probeTargets(
 ): Promise<number | null> {
   try {
     const sorted = [...new Set(keys)].sort()
-    // [2026-08-29]-[修复复审P1-写入竞态：起始捕获 target_generation；本轮只持自己的探测结果，
-    // 完成时在串行临界区内重读盘面——代际已变则整轮丢弃（新代际重算会重新调度探针）]
+    // [2026-08-29]-[fix review-P1 write race: capture target_generation at the start; this round holds only its own probe
+    // results; on completion re-read the disk inside the serial critical section -- if the generation changed discard the
+    // whole round (the new generation recompute reschedules probes)]
     const gen0 = loadMatrix()?.target_generation
     const results: Record<string, any> = {}
     const gh = readCopilotGithubToken()
-    // [2026-09-01]-[对齐核心：探针前刷新 Copilot 真实能力形状缓存（TTL 24h 门控内部短路，fail-open）]
+    // [2026-09-01]-[aligned with the core: refresh the Copilot real capability-shape cache before probing (TTL 24h gated short-circuit, fail-open)]
     await refreshThinkingShapesIfStale(gh, eps.copilotApiBase ?? COPILOT_BASE)
     const shapes = loadCachedThinkingShapes()
     const workers = Math.max(8, Math.min(32, sorted.length))
@@ -182,42 +185,42 @@ async function probeTargets(
         const key = sorted[idx++]!
         const [prov, model, eff] = targets.get(key)!
         const r = await probeOne(prov, model, eff, eps, gh, shapes)
-        // [2026-08-29]-[评分引擎：429 限流类失败不再写 down——写 strained（保留 reason/latency/checked_at），
-        //  评分层 health=0.6 参与而非出局；其余类别维持原状]
+        // [2026-08-29]-[scoring engine: 429 rate-limit failures no longer write down -- write strained (keeping
+        //  reason/latency/checked_at); the scoring layer health=0.6 participates instead of being out; other categories unchanged]
         results[key] = { ...r, status: classifyProbeStatus(r), checked_at: new Date().toISOString() }
       }
     }
     await Promise.all(Array.from({ length: workers }, run))
-    // [v1.1 坑位第二真值源] Copilot 组合普遍 402 monthly quota → 置池耗尽信任至 reset_date
-    // （/user 快照 unlimited:true 与网关实况背离，已实测坐实；429 是并发限流噪音，不计入）
+    // [v1.1 quota second source of truth] Copilot combos broadly hit 402 monthly quota -> mark pool exhausted trusted until reset_date
+    // (the /user snapshot unlimited:true diverges from gateway reality, confirmed by measurement; 429 is concurrency rate-limit noise, not counted)
     const cpKeys = sorted.filter((k) => k.startsWith("github-copilot|"))
     const cp402 = cpKeys.filter((k) => /402|exceeded.*monthly|monthly.*quota/i.test(String(results[k]?.reason ?? "")))
-    // [2026-08-28]-[402 是月度池耗尽真值（429 为并发限流噪音），阈值从 50% 降到 ≥3 个组合即置耗尽]
+    // [2026-08-28]-[402 is the monthly-pool-exhausted truth (429 is concurrency noise); threshold lowered from 50% to >=3 combos to mark exhaustion]
     if (cpKeys.length > 0 && cp402.length >= 3) {
-      markCopilotGatewayExhausted(`探针 ${cp402.length}/${cpKeys.length} 组合 402 月度池耗尽`)
-      appendStatusLog(`Copilot 月度池耗尽（网关第二真值源），信任至 reset_date`)
+      markCopilotGatewayExhausted(`probe ${cp402.length}/${cpKeys.length} combos 402 monthly pool exhausted`)
+      appendStatusLog(`Copilot monthly pool exhausted (gateway second source of truth), trusted until reset_date`)
     }
     return await withPathLock(paths().matrix, () => {
       const cur = loadMatrix() ?? ({} as Matrix)
       if ((cur.target_generation ?? undefined) !== (gen0 ?? undefined)) {
-        // [2026-08-31]-[改落盘 status-log 供 tui.tsx 侧边栏渲染，不再刷屏 stderr 遮挡输入框]
-        appendStatusLog(`探针结果丢弃（矩阵代际已变 ${gen0 ?? "n/a"}→${cur.target_generation ?? "n/a"}；由新代际重算重新调度）`)
+        // [2026-08-31]-[switched to persisting via the status-log for tui.tsx sidebar rendering, no longer spamming stderr over the input box]
+        appendStatusLog(`probe results discarded (matrix generation changed ${gen0 ?? "n/a"}->${cur.target_generation ?? "n/a"}; rescheduled by the new generation recompute)`)
         return null
       }
-      // 合并以写入时最新盘面为基（保留并发写入的其余组合与 active_keys/target_generation，不丢更新）
+      // Merge on top of the latest disk state at write time (keeps concurrently written combos and active_keys/target_generation, no lost updates)
       const matrix: Matrix = { ...cur, combos: { ...(cur.combos ?? {}), ...results }, generated_at: new Date().toISOString() }
       writeJsonAtomic(paths().matrix, matrix)
       const ok = Object.values(matrix.combos).filter((c) => c.status === "ok").length
-      appendStatusLog(`矩阵已刷新：${sorted.length} 组合 ${ok} ok（累计 ${Object.keys(matrix.combos).length}）`)
+      appendStatusLog(`matrix refreshed: ${sorted.length} combos ${ok} ok (total ${Object.keys(matrix.combos).length})`)
       return ok
     })
   } catch (exc) {
-    appendStatusLog(`探针 fail-open: ${exc}`)
+    appendStatusLog(`probe fail-open: ${exc}`)
     return null
   }
 }
 
-/** 矩阵过期（>TTL 或缺失）才刷新（legacy 全量路径） */
+/** Refresh only when the matrix is stale (>TTL or missing; legacy full path) */
 export async function refreshMatrixIfStale(eps: ProbeEndpoints): Promise<void> {
   try {
     const m = loadMatrix()
@@ -227,11 +230,11 @@ export async function refreshMatrixIfStale(eps: ProbeEndpoints): Promise<void> {
     }
     await refreshMatrix(eps)
   } catch (exc) {
-    appendStatusLog(`探针调度 fail-open: ${exc}`)
+    appendStatusLog(`probe scheduling fail-open: ${exc}`)
   }
 }
 
-/** [2026-08-29]-[动态矩阵：只刷新激活组合（TTL 门控同上；激活面为空则不探）] */
+/** [2026-08-29]-[dynamic matrix: refresh only active combos (same TTL gating; no probing when the active set is empty)] */
 export async function refreshActiveMatrixIfStale(eps: ProbeEndpoints, activeKeys: string[]): Promise<void> {
   try {
     if (activeKeys.length === 0) return
@@ -242,6 +245,6 @@ export async function refreshActiveMatrixIfStale(eps: ProbeEndpoints, activeKeys
     }
     await probeKeys(activeKeys, eps)
   } catch (exc) {
-    appendStatusLog(`探针调度 fail-open: ${exc}`)
+    appendStatusLog(`probe scheduling fail-open: ${exc}`)
   }
 }

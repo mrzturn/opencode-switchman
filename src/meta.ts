@@ -1,12 +1,14 @@
-// ROUTE_META 解析器（纯函数零依赖；行为契约由 27 项 fixture 锁死）
-// 27 项 fixture 的行为契约：前 4000 字符窗口、JSON/k=v 双格式、六键白名单、值小写、
-// 合法值硬校验、安全字段（source/role/capability）缺失即坏 META。
+// [2026-09-04]-[English localization: translate comments and deny/hint messages; no logic change]
+// ROUTE_META parser (pure function, zero dependencies; behavior contract locked by 27 fixtures)
+// Behavior contract of the 27 fixtures: first-4000-char window, JSON/k=v dual format, six-key whitelist,
+// lowercase values, hard validation of legal values, missing required fields (source/role/capability) = bad META.
 import { META_KEYS, META_LEGAL, META_REQUIRED, META_SAMPLE } from "./types"
 import type { Meta, MetaErr, MetaKey } from "./types"
 
 export function parseRouteMeta(prompt: unknown): [Meta | null, MetaErr | null] {
   if (typeof prompt !== "string" || !prompt) return [null, "missing"]
-  // [2026-09-01]-[LLM 偶尔会给协议行加 Markdown 外壳；剥离无语义装饰，避免有效元数据被误拦截。]
+  // [2026-09-01]-[LLMs occasionally wrap the protocol line in Markdown decoration; strip the semantic-free
+  //  decoration so valid metadata is not wrongly rejected.]
   const m = /^[ \t]*(?:>[ \t]*|[-*+][ \t]+)?`?ROUTE_META`?(?:[ \t]*:[ \t]*|[ \t]+)(.+)$/m.exec(prompt.slice(0, 4000))
   if (!m) return [null, "missing"]
   const raw = m[1]!.trim()
@@ -47,13 +49,13 @@ export function parseRouteMeta(prompt: unknown): [Meta | null, MetaErr | null] {
 
 export function metaErrorHint(err: MetaErr | null): string {
   if (err === null) return ""
-  if (err === "missing") return `缺 ROUTE_META 行（委派 prompt 前部须固定携带）；META 格式样例：${META_SAMPLE}`
-  if (err === "malformed") return `ROUTE_META 行格式坏（须单行 JSON 或 k=v 空格分隔）；META 格式样例：${META_SAMPLE}`
+  if (err === "missing") return `missing ROUTE_META line (must always be carried at the top of the delegation prompt); META format sample: ${META_SAMPLE}`
+  if (err === "malformed") return `ROUTE_META line malformed (must be single-line JSON or space-separated k=v); META format sample: ${META_SAMPLE}`
   const kind = err.kind
   if (kind === "invalid") {
     const legal = META_LEGAL[err.field as MetaKey].join("/")
-    return `ROUTE_META.${err.field}='${err.value}' 非法（合法值：${legal}）；META 格式样例：${META_SAMPLE}`
+    return `ROUTE_META.${err.field}='${err.value}' is invalid (legal values: ${legal}); META format sample: ${META_SAMPLE}`
   }
   const legal = META_LEGAL[err.field as MetaKey].join("/")
-  return `ROUTE_META 缺安全字段 ${err.field}（必填，合法值：${legal}）；META 格式样例：${META_SAMPLE}`
+  return `ROUTE_META missing required field ${err.field} (required, legal values: ${legal}); META format sample: ${META_SAMPLE}`
 }

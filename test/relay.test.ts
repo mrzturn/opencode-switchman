@@ -1,5 +1,6 @@
-// [2026-09-04]-[图片中继 fixture：relayImageParts 纯函数三例（无视觉替换落盘/有视觉原样/元数据未知原样）
-//  ＋写盘失败保留原部件与本地路径原值引用]
+// [2026-09-04]-[English localization: translate runtime messages and comments; no logic change]
+// [2026-09-04]-[image relay fixture: relayImageParts pure-function cases (no-vision replaced+persisted / has-vision as-is / metadata unknown as-is)
+//  + write failure keeps the original part, and local paths keep the original-value reference]
 import { describe, expect, test } from "bun:test"
 import { relayImageParts } from "../src/relay"
 
@@ -9,11 +10,11 @@ function filePart(id: string, url: string, mime = "image/png") {
   return { id, sessionID: "s1", messageID: "m1", type: "file", mime, url }
 }
 
-describe("relay：relayImageParts 纯函数", () => {
-  test("无视觉＋data URL 图片部件 → 替换为读图指引文本部件且写盘被调用", async () => {
+describe("relay: relayImageParts pure function", () => {
+  test("no vision + data URL image part → replaced by a reading-guidance text part and the writer invoked", async () => {
     const written: Array<{ path: string; bytes: Uint8Array }> = []
     const parts = [
-      { id: "t0", type: "text", text: "看这张图" },
+      { id: "t0", type: "text", text: "look at this image" },
       filePart("p1", `data:image/png;base64,${PNG_B64}`),
     ]
     const res = await relayImageParts(parts, {
@@ -27,22 +28,22 @@ describe("relay：relayImageParts 纯函数", () => {
     expect(written[0]!.path).toBe("/tmp/switchman-relay-fixture/s1/p1.png")
     expect(Buffer.from(written[0]!.bytes).toString()).toBe("fake-png-bytes")
     expect(res.paths).toEqual([written[0]!.path])
-    // 全部图片部件聚合成一个文本部件，其余部件原样保留
+    // all image parts aggregate into one text part, other parts kept as-is
     expect(res.parts.length).toBe(2)
     const textPart = res.parts[1] as any
     expect(textPart.type).toBe("text")
     expect(textPart.sessionID).toBe("s1")
     expect(textPart.messageID).toBe("m1")
-    expect(textPart.text).toContain("本会话模型无视觉输入")
+    expect(textPart.text).toContain("no vision input")
     expect(textPart.text).toContain(written[0]!.path)
     expect(textPart.text).toContain("glm-mx-46v-high")
     expect(textPart.text).toContain('"lane":"vision"')
-    expect(textPart.text).toContain("MCP 视觉工具")
-    // 原数组未被原地修改
+    expect(textPart.text).toContain("MCP vision tool")
+    // the original array was not mutated in place
     expect((parts[1] as any).type).toBe("file")
   })
 
-  test("有视觉 → 原样返回（changed=false，不写盘）", async () => {
+  test("has vision → returned as-is (changed=false, nothing written)", async () => {
     let called = 0
     const parts = [filePart("p1", `data:image/png;base64,${PNG_B64}`)]
     const res = await relayImageParts(parts, {
@@ -56,7 +57,7 @@ describe("relay：relayImageParts 纯函数", () => {
     expect(called).toBe(0)
   })
 
-  test("元数据未知（null）→ 原样返回（fail-open 不动）", async () => {
+  test("metadata unknown (null) → returned as-is (fail-open, untouched)", async () => {
     const parts = [filePart("p1", `data:image/jpeg;base64,${PNG_B64}`, "image/jpeg")]
     const res = await relayImageParts(parts, {
       modelVision: null,
@@ -68,10 +69,10 @@ describe("relay：relayImageParts 纯函数", () => {
     expect(res.parts).toBe(parts)
   })
 
-  test("无图片部件 → 原样；写盘失败保留原部件；本地路径原值引用不写盘", async () => {
+  test("no image parts → as-is; write failure keeps the original part; local path keeps the original value without writing", async () => {
     let called = 0
     const write = async () => { called++ }
-    const plain = [{ id: "t0", type: "text", text: "纯文本" }]
+    const plain = [{ id: "t0", type: "text", text: "plain text" }]
     const r0 = await relayImageParts(plain, { modelVision: false, visionHead: null, writeDir: "/x", writeFile: write })
     expect(r0.changed).toBe(false)
 
@@ -88,6 +89,6 @@ describe("relay：relayImageParts 纯函数", () => {
     expect(r2.changed).toBe(true)
     expect(called).toBe(0)
     expect((r2.parts[0] as any).text).toContain("/home/u/pic/cat.png")
-    expect((r2.parts[0] as any).text).toContain("调用 MCP 视觉工具")
+    expect((r2.parts[0] as any).text).toContain("call an MCP vision tool")
   })
 })

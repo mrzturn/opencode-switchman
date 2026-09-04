@@ -1,29 +1,30 @@
-// [2026-09-04]-[auto-handover 核心抽出：TUI 手动 /handover 与主插件 tool.execute.after 自动触发共用。
-//  纯逻辑无 UI：fork 全量备份（不传 messageID=复制全部消息）→ 备份标题加 [backup] → summarize
-//  压缩当前会话（沿用最后一条 assistant 的 provider/model）→ 不切换会话（区别于内置 /fork）。
-//  压缩后 agent 循环下一步经 filterCompactedEffect 重读消息（宿主 prompt.ts while 循环），
-//  任务以「摘要+保留尾巴」上下文自动继续——宿主设计内行为，无竞态（钩子在工具路径内被 await 串行）]
+// [2026-09-04]-[English localization: translate CLI messages and comments; no logic change]
+// [2026-09-04]-[auto-handover core extracted: shared by the TUI manual /handover and the main plugin's tool.execute.after auto trigger.
+//  Pure logic, no UI: fork full backup (no messageID = copy all messages) → backup title tagged [backup] → summarize
+//  compaction of the current session (reusing the last assistant's provider/model) → no session switch (unlike builtin /fork).
+//  After compaction, the agent loop re-reads messages via filterCompactedEffect on the next step (host prompt.ts while loop);
+//  the task continues automatically with "summary + retained tail" context — in-design host behavior, no race (the hook is awaited serially inside the tool path)]
 export interface HandoverPort {
-  /** 全量 fork：返回新会话 { id, title }；失败返回 null */
+  /** Full fork: returns the new session { id, title }; null on failure */
   forkFull(sessionID: string, directory: string): Promise<{ id: string; title: string | undefined } | null>
-  /** 改标题（[backup] 标记；失败 fail-open 不阻断压缩） */
+  /** Retitle ([backup] tag; fail-open on failure, does not block compaction) */
   setTitle(sessionID: string, directory: string, title: string): Promise<boolean>
-  /** 取最后一条 assistant 消息的 provider/model（压缩用；无则跳过压缩） */
+  /** Get the last assistant message's provider/model (for compaction; skips compaction when absent) */
   lastAssistantModel(sessionID: string, directory: string): Promise<{ providerID: string; modelID: string } | null>
-  /** 压缩（summarize）：返回是否成功 */
+  /** Compact (summarize): returns success or not */
   compact(sessionID: string, directory: string, model: { providerID: string; modelID: string }): Promise<boolean>
 }
 
 export interface HandoverResult {
   ok: boolean
-  /** 备份会话 ID（fork 成功时存在） */
+  /** Backup session ID (present when fork succeeds) */
   backupID?: string
-  /** 是否完成当前会话压缩 */
+  /** Whether the current session was compacted */
   compacted: boolean
   message: string
 }
 
-/** 备份标题：fork 计数后缀（orig (fork #N)）保证多次备份唯一 */
+/** Backup title: fork-count suffix (orig (fork #N)) keeps repeated backups unique */
 export function backupTitle(forkTitle: string | undefined, sessionID: string): string {
   return `[backup] ${forkTitle ?? sessionID}`
 }
@@ -31,25 +32,25 @@ export function backupTitle(forkTitle: string | undefined, sessionID: string): s
 export async function runHandover(port: HandoverPort, sessionID: string, directory: string): Promise<HandoverResult> {
   try {
     const forked = await port.forkFull(sessionID, directory)
-    if (!forked?.id) return { ok: false, compacted: false, message: `session.fork 失败（未返回新会话）` }
+    if (!forked?.id) return { ok: false, compacted: false, message: `session.fork failed (no new session returned)` }
     const marked = await port.setTitle(forked.id, directory, backupTitle(forked.title, sessionID)).catch(() => false)
     const model = await port.lastAssistantModel(sessionID, directory)
     const compacted = model ? await port.compact(sessionID, directory, model) : false
-    const mark = marked ? "（[backup] 标记）" : ""
+    const mark = marked ? " ([backup] tagged)" : ""
     return {
       ok: true,
       backupID: forked.id,
       compacted,
       message: compacted
-        ? `已全量备份为会话 ${forked.id.slice(0, 8)}…${mark}并压缩当前会话`
-        : `已全量备份为会话 ${forked.id.slice(0, 8)}…${mark}；未取到模型信息，跳过当前会话压缩`,
+        ? `Fully backed up as session ${forked.id.slice(0, 8)}…${mark}; current session compacted`
+        : `Fully backed up as session ${forked.id.slice(0, 8)}…${mark}; no model info retrieved, skipped current session compaction`,
     }
   } catch (exc) {
-    return { ok: false, compacted: false, message: `handover 失败：${exc instanceof Error ? exc.message : String(exc)}` }
+    return { ok: false, compacted: false, message: `handover failed: ${exc instanceof Error ? exc.message : String(exc)}` }
   }
 }
 
-/** v1 SDK 适配器（主插件 input.client，path/query/body 风格；RequestResult fields 非抛错） */
+/** v1 SDK adapter (main plugin input.client, path/query/body style; RequestResult fields are non-throwing) */
 export function v1HandoverPort(client: {
   session: {
     fork(opts: any): Promise<any>

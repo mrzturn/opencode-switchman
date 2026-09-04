@@ -1,8 +1,9 @@
-// [2026-09-04]-[派发偏向修复：会话上下文水位实测＋读取类工具分级闸——把规程自报水位变成机制执行]
-// 纯函数层：token 估算、水位分级、读取闸决策；状态（Map）由 index.ts 持有，此处无 IO。
+// [2026-09-04]-[dispatch-bias fix: measured session context watermark + tiered gate on read-class tools — turns the rules' self-reported watermark into mechanism enforcement]
+// [2026-09-04]-[English localization: translate runtime messages and comments; no logic change]
+// Pure-function layer: token estimation, watermark tiering, read-gate decisions; state (Maps) is held by index.ts, no IO here.
 import type { ContextOptions } from "./types"
 
-/** 读取类工具（超线后拦截/提醒；write/edit/web 类不拦——不阻塞交付） */
+/** Read-class tools (intercepted/reminded past the line; write/edit/web classes never blocked — delivery must not stall) */
 export const READ_CLASS_TOOLS: ReadonlySet<string> = new Set(["read", "glob", "grep", "list"])
 
 export type WatermarkLevel = "ok" | "soft" | "hard" | "force"
@@ -17,8 +18,8 @@ export function thresholdsOf(options: ContextOptions | undefined): ContextThresh
   }
 }
 
-/** message.updated → info.tokens（v2）或 info.metadata.assistant.tokens（v1）双路径防御读取；
- *  口径=input+cache.read+reasoning+output ≈ 下一轮请求携带的上下文 */
+/** message.updated → info.tokens (v2) or info.metadata.assistant.tokens (v1) dual-path defensive read;
+ *  scope = input+cache.read+reasoning+output ≈ the context carried by the next request */
 export function estimateContextTokens(info: unknown): number | null {
   const anyInfo = info as { tokens?: TokensShape; metadata?: { assistant?: { tokens?: TokensShape } } } | null
   const t = anyInfo?.tokens ?? anyInfo?.metadata?.assistant?.tokens
@@ -36,8 +37,8 @@ export function watermarkLevel(tokens: number, t: ContextThresholds): WatermarkL
   return "ok"
 }
 
-/** 验证/交付类命令放行（输出极小、不注入上下文）：git 全系（含 add/commit/push 收尾交付）、
- *  测试/lint/类型检查、构建打包——硬水位下仍可收尾验证与交付 */
+/** Verification/delivery commands pass through (tiny output, no context injection): the whole git family
+ *  (including add/commit/push wrap-up), test/lint/typecheck, build/pack — wrap-up verification and delivery still work at hard watermark */
 export function isVerificationBash(command: string): boolean {
   const c = command.trim()
   return /^git\s+[a-z]/.test(c)
@@ -48,16 +49,16 @@ export function isVerificationBash(command: string): boolean {
 export interface ReadGateInput {
   tool: string
   level: WatermarkLevel
-  /** 该会话该工具此前是否已提醒过（软水位一次性提醒机制；hard/force 不读此字段） */
+  /** whether this tool was already nudged in this session (soft watermark one-time nudge; hard/force never read this) */
   alreadyNudged?: boolean
-  /** bash 命令文本（仅 tool=bash 时使用） */
+  /** bash command text (only used when tool=bash) */
   bashCommand?: string
 }
 
 export type ReadGateAction = "allow" | "nudge" | "deny"
 
-/** 读取闸决策：soft=每工具一次性 nudge（deny 附改派建议，之后放行）；hard/force=read 类一律
- *  deny、bash 仅验证类放行；非读取类工具恒 allow。nudge/deny 的文案由 index.ts 组装（附 economy 候选）。 */
+/** Read-gate decision: soft = one-time nudge per tool (deny with a redirect suggestion, allowed afterwards); hard/force = read-class
+ *  always deny, bash lets only verification commands through; non-read tools always allow. nudge/deny copy is assembled by index.ts (with the economy candidate attached). */
 export function readGateDecision(input: ReadGateInput): ReadGateAction {
   const { tool, level, bashCommand } = input
   if (level === "ok") return "allow"

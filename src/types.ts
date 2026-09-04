@@ -1,12 +1,13 @@
-// opencode-switchman 类型与契约（六档壳矩阵编排）
-// [2026-08-31]-[去厂商化：Pool 降级为「配额抓取基础设施」概念（有抓器的 provider 才有水位数据），
-//  禁止参与排序/门控/链生成；编排规则只消费 billing/unknown 等配置驱动系数]
+// [2026-09-04]-[English localization: translate CLI messages and comments; no logic change]
+// opencode-switchman types and contracts (six-lane shell matrix orchestration)
+// [2026-08-31]-[De-vendoring: Pool demoted to a "quota-scraping infrastructure" concept (only providers with scrapers have watermark data),
+//  barred from ranking/gating/chain generation; orchestration rules consume only config-driven coefficients such as billing/unknown]
 import type { ScoreBreakdown } from "./scoring"
 
 export type Lane = "economy" | "mechanical" | "main" | "hard" | "vision" | "review"
 export const LANE_ORDER: Lane[] = ["economy", "mechanical", "main", "hard", "vision", "review"]
 
-/** 配额基础设施池（仅配额抓取/水位展示用；编排规则零厂商硬编码） */
+/** Quota infrastructure pools (for quota scraping/watermark display only; zero vendor hardcoding in orchestration rules) */
 export type Pool = "copilot" | "glm" | "deepseek"
 export const POOLS: Pool[] = ["copilot", "glm", "deepseek"]
 
@@ -20,7 +21,7 @@ export type Capability = "ro" | "rw"
 export type Modality = "text" | "image"
 export type MetaSource = "auto" | "user"
 
-// ROUTE_META 合法值表（与 delegation-template 同源；producer_family 禁池名 main/gcp/copilot）
+// Legal ROUTE_META value table (same source as delegation-template; producer_family must not be the pool names main/gcp/copilot)
 export const META_KEYS = ["lane", "role", "producer_family", "capability", "modality", "source"] as const
 export type MetaKey = (typeof META_KEYS)[number]
 export const META_LEGAL: Record<MetaKey, readonly string[]> = {
@@ -52,7 +53,7 @@ export type MetaErr =
   | { kind: "invalid"; field: string; value: string }
   | { kind: "required"; field: string }
 
-// 壳清单（shells.json 静态条目）
+// Shell manifest (shells.json static entries)
 export interface ShellManifestEntry {
   name: string
   pool: Pool
@@ -65,7 +66,7 @@ export interface ShellManifestEntry {
   matrixKey: string // provider|modelId|effort
 }
 
-// ---- 动态激活矩阵（v1.3）----
+// ---- Dynamic activation matrix (v1.3) ----
 export type ModelKey = `${string}/${string}`
 export type MatrixRunMode = "desktop" | "cli" | "legacy"
 export type MatrixConfigStatus = "ok" | "empty" | "unreadable"
@@ -74,17 +75,17 @@ export interface ActivationState {
   generation: number
   mode: MatrixRunMode
   configStatus: MatrixConfigStatus
-  configured: ModelKey[] // desktop: visibility==="show"；cli: favorite[]
-  sessionModels: ModelKey[] // 活跃非壳非内部会话的模型（多会话并集）
+  configured: ModelKey[] // desktop: visibility==="show"; cli: favorite[]
+  sessionModels: ModelKey[] // models of active non-shell non-internal sessions (multi-session union)
   activeModels: ModelKey[] // configured ∪ sessionModels
-  activeShells: string[] // activeModels 展开的壳名
-  restartRequired: string[] // 超集外 providerID 去重（壳注册需重启）
-  // [2026-09-01]-[加固：favorites/可见集里 provider 已知但 modelId 在超集中查无对应壳的脏数据（如手滑
-  // 收藏了不存在的 "provider/not-a-model"），既不贡献壳也不该静默消失——记下来供横幅/日志提示，帮用户定位]-
+  activeShells: string[] // shell names expanded from activeModels
+  restartRequired: string[] // deduped providerIDs outside the superset (shell registration needs a restart)
+  // [2026-09-01]-[Hardening: dirty data where the provider is known in favorites/visible set but no shell exists for the modelId in the superset (e.g.
+  //  accidentally favoriting a nonexistent "provider/not-a-model") — it contributes no shell yet must not vanish silently; recorded for banner/log hints to help users locate]-
   invalidConfigured: ModelKey[]
 }
 
-// 闸1 动态三层注入（gates 快照可选字段；缺省＝legacy 路径不启用）
+// Gate 1 dynamic three-layer injection (optional gates snapshot fields; absent = legacy path disabled)
 export interface ActivationGateInfo {
   enabled: boolean
   activeShells: Set<string> | null
@@ -92,15 +93,15 @@ export interface ActivationGateInfo {
   restartRequired: string[]
 }
 
-// 运行时注册表视图 = 清单 × 探针矩阵 × 凭据在场
+// Runtime registry view = manifest × probe matrix × credentials present
 export interface ShellRegEntry extends ShellManifestEntry {
   status: "enabled" | "disabled"
   disabledReason?: string
   comboKey: string
 }
 
-// 探针矩阵条目
-// [2026-08-29]-[评分引擎：新增 "strained"（429 限流类瞬时限流新状态，健康系数 0.6 而非出局）]
+// Probe matrix entries
+// [2026-08-29]-[Scoring engine: added "strained" (a new transient 429 rate-limit status, health coefficient 0.6 instead of elimination)]
 export interface MatrixEntry {
   status: "ok" | "strained" | "down" | "unknown" | "missing" | "unprobed"
   reason?: string
@@ -110,12 +111,12 @@ export interface MatrixEntry {
 export interface Matrix {
   combos: Record<string, MatrixEntry>
   generated_at?: string | null
-  /** [2026-08-29]-[动态矩阵 v1.3：当前激活组合与目标代数（matrix-manager 维护）] */
+  /** [2026-08-29]-[Dynamic matrix v1.3: currently active combos and target generation (maintained by matrix-manager)] */
   active_keys?: string[]
   target_generation?: number
 }
 
-// 熔断状态
+// Breaker state
 export interface Routing {
   down_agents: Record<string, string>
   down_expiry: Record<string, number>
@@ -123,7 +124,7 @@ export interface Routing {
   updated_at?: string
 }
 
-// GLM 配额缓存（glm-quota.json）
+// GLM quota cache (glm-quota.json)
 export interface GlmScope { used_pct?: number | null; reset_at?: number | null }
 export interface GlmQuota {
   status: "ok" | "unknown"
@@ -136,7 +137,7 @@ export interface GlmQuota {
   mcp_monthly?: { used?: unknown; total?: unknown; used_pct?: number | null; reset_at?: number | null }
 }
 
-// Copilot premium 积分快照（归一化后；数值字段缺失=null）
+// Copilot premium credit snapshot (after normalization; missing numeric fields = null)
 export interface PremiumSnapshot {
   quota_id: string
   entitlement: number | null
@@ -158,10 +159,10 @@ export interface CopilotQuota {
   sku?: string | null
   reset_date?: string | null
   premium?: PremiumSnapshot | null
-  gateway_exhausted?: boolean // 网关 429/quota 错误体第二真值源，信任至 reset_date
+  gateway_exhausted?: boolean // second source of truth from the gateway 429/quota error body, trusted until reset_date
 }
 
-// DeepSeek 余额缓存
+// DeepSeek balance cache
 export interface DsBalance { currency: string; total_balance: string }
 export interface DeepseekQuota {
   status: "ok" | "unknown"
@@ -172,7 +173,7 @@ export interface DeepseekQuota {
   exhausted?: boolean
 }
 
-// 池水位状态（pool_states 评估结果）
+// Pool watermark states (pool_states evaluation result)
 export type PoolStateKind = "surplus" | "healthy" | "strained"
 export interface GlmStateInfo {
   state: PoolStateKind
@@ -188,7 +189,7 @@ export interface CopilotStateInfo {
   waste_est?: number | null
 }
 
-// 计费窗口（可配置，默认口径：GLM 高峰=工作日 14-18；DS 高峰=工作日 9-12+14-18）
+// Billing window (configurable; default semantics: GLM peak = weekdays 14-18; DS peak = weekdays 9-12+14-18)
 export interface BillingWindowConfig {
   glmPeakHours?: [number, number]
   dsPeakRanges?: Array<[number, number]>
@@ -196,7 +197,7 @@ export interface BillingWindowConfig {
 export interface BillingWindow { glmPeak: boolean; dsPeak: boolean; glmLabel: string; dsLabel: string }
 export type RoutePolicy = Record<Pool, { observe: boolean; routing: boolean }>
 
-// 六档选链结果
+// Six-lane chain selection result
 export interface ChainCandidate {
   shell: string
   pool: Pool | string
@@ -205,18 +206,18 @@ export interface ChainCandidate {
   capability: Capability | null
   vision: boolean | null
   latency_ms: number | null
-  /** [2026-08-29]-[评分引擎：组内乘积分明细（normal 档；immediate/评分失败回退时为 undefined），供决策日志追溯] */
+  /** [2026-08-29]-[Scoring engine: in-group multiplicative score breakdown (normal lane; undefined on immediate/scoring-failure fallback), for decision-log traceability] */
   score?: ScoreBreakdown
 }
 export interface DroppedCandidate { shell: string; reason: string }
 export interface LaneResult {
   lane: Lane
-  status: string // ok | exhausted | ok*（* = registry/矩阵缺失 fail-open 降级标记）
+  status: string // ok | exhausted | ok* (* = registry/matrix-missing fail-open downgrade marker)
   chain: ChainCandidate[]
   dropped: DroppedCandidate[]
 }
 
-// 六闸快照（gates 输入，全部由调用方装配——纯函数无 IO）
+// Six-gate snapshot (gates input, all assembled by the caller — pure functions, no IO)
 export interface GateSnapshot {
   registry: Record<string, ShellRegEntry> | null
   matrix: Record<string, MatrixEntry> | null
@@ -225,96 +226,96 @@ export interface GateSnapshot {
   routePolicy?: RoutePolicy
   costs?: (modelId: string) => number | null
   activation?: ActivationGateInfo | null
-  /** 探针 ok 但实际委派失败的进程内短期隔离组合。 */
+  /** In-process short-term isolation of combos that probed ok but actually failed delegation. */
   realFailedCombos?: ReadonlySet<string>
-  /** [2026-08-29]-[失败分类：连续 404 已退休模型集（provider/modelId），闸前 deny；仅动态矩阵注入] */
+  /** [2026-08-29]-[Failure classification: set of retired models (provider/modelId) after consecutive 404s; denied before the gates; injected only by the dynamic matrix] */
   retiredModels?: ReadonlySet<string>
-  /** [2026-08-31]-[去厂商化：deny 附言候选排序与横幅同源（用户 jsonc billing/peak 解析）] */
+  /** [2026-08-31]-[De-vendoring: deny postscript candidates share the banner's source (user jsonc billing/peak resolution)] */
   billingBoostOf?: (provider: string) => number
   peakOf?: (provider: string) => boolean
-  /** [2026-08-31]-[终审P1-3：deny 附言候选与横幅排序同源的运行期输入（water/costs/glmPeak/states）] */
+  /** [2026-08-31]-[Final review P1-3: runtime inputs sharing the source of deny-postscript candidates and banner ranking (water/costs/glmPeak/states)] */
   water?: import("./scoring").WaterFactor
   glmPeak?: boolean | null
   states?: Record<string, { state?: PoolStateKind } & Record<string, unknown>> | null
-  /** [2026-09-03]-[任务池选配（pool-config.json 手动配置）：lane→参与该任务池的 modelId 归一化集合，
-   *  清单存在且非空即压过系统默认候选集（同模型可重复进驻多个 lane）；缺/空=fail-open 默认全量。
-   *  computeLane 与 checkShell 共用同一装配] */
+  /** [2026-09-03]-[Task-pool selection (pool-config.json manual config): lane→normalized modelId set participating in that task pool;
+   *  a non-empty list overrides the system default candidate set (the same model may join multiple lanes); missing/empty = fail-open full set by default.
+   *  computeLane and checkShell share the same assembly] */
   poolConfig?: Partial<Record<string, ReadonlySet<string>>> | null
 }
 
-// 插件 options（["opencode-switchman", {...}] 元组形式）
-// [2026-08-31]-[动态能力分级：第三方权威指数（AA v2 主源/OpenRouter 备源）→ capability.json
-//  （TTL 24h）→ baseScore 的 api 覆盖层；回退链＝实时 api → 随包内置默认排名（gen:capability
-//  生成的官方排名快照，随版本手动迭代）→ 策展表；离线/429 fail-open 不阻塞委派]
+// Plugin options (["opencode-switchman", {...}] tuple form)
+// [2026-08-31]-[Dynamic capability tiers: third-party authoritative indices (AA v2 primary/OpenRouter fallback) → capability.json
+//  (TTL 24h) → baseScore's api override layer; fallback chain = realtime api → bundled default ranking (the official ranking snapshot
+//  generated by gen:capability, iterated manually per version) → curated table; offline/429 fail-open never blocks delegation]
 export interface CapabilityTierThresholds { S?: number; A?: number; B?: number }
 export interface CapabilityOptions {
   enabled?: boolean
-  /** auto（默认）=有 apiKey 先 AA、失败/无 key 转 OpenRouter；也可显式指定单源 */
+  /** auto (default) = with apiKey try AA first, fall back to OpenRouter on failure/no key; a single source can also be explicitly specified */
   source?: "auto" | "artificial-analysis" | "openrouter"
-  /** Artificial Analysis Data API key（x-api-key；也可走 ARTIFICIAL_ANALYSIS_API_KEY 环境变量） */
+  /** Artificial Analysis Data API key (x-api-key; or via the ARTIFICIAL_ANALYSIS_API_KEY env var) */
   apiKey?: string
-  /** 绝对阈值（默认 S>=62/A>=55/B>=45，intelligence index 0-100 口径）或 "quantile"（p80/p60/p40 分位） */
+  /** Absolute thresholds (default S>=62/A>=55/B>=45, intelligence index 0-100 semantics) or "quantile" (p80/p60/p40) */
   tierThresholds?: CapabilityTierThresholds | "quantile"
-  /** LMArena（api.wulong.dev ELO）可选交叉校验：仅日志告警不影响评分，默认 false */
+  /** LMArena (api.wulong.dev ELO) optional cross-check: log warnings only, no scoring impact; default false */
   lmarenaCheck?: boolean
 }
 export interface GlmQuotaOptions {
   enabled?: boolean
-  /** 5 小时窗预留水位（%）：达到即硬拦 GLM 壳，避免用满触发 429；默认 90，周额度仍只认 100% */
+  /** 5-hour window reserve watermark (%): reaching it hard-blocks GLM shells to avoid triggering 429 at full use; default 90, the weekly quota still only recognizes 100% */
   fiveHourReservePct?: number
 }
 export interface DeepseekQuotaOptions {
   enabled?: boolean
-  /** 余额预警阈值（CNY 元）：低于该值在横幅 [水位] 提示，默认 10；仅预警不硬拦（按量计费） */
+  /** Low-balance warning threshold (CNY): below it the banner [WATERMARK] shows a hint, default 10; warning only, no hard block (pay-as-you-go) */
   lowBalanceWarnCny?: number
 }
 export interface CopilotQuotaOptions { enabled?: boolean }
 export interface MatrixOptions {
-  /** auto（默认）=按 OPENCODE_CLIENT 判定 desktop/cli；app/tui 强制覆盖；legacy 完全走静态 shells.json */
+  /** auto (default) = detect desktop/cli via OPENCODE_CLIENT; app/tui force-override; legacy goes fully static shells.json */
   mode?: "auto" | "app" | "tui" | "legacy"
-      /** 监听 opencode state 目录变更重算（默认 true；激活变化对派发闸「下一请求生效」，非实时改写已发请求） */
+      /** Watch the opencode state directory and recompute on change (default true; activation changes take effect for the dispatch gate "on the next request", not rewriting already-sent requests in real time) */
   watch?: boolean
 }
-// [2026-09-04]-[派发偏向修复：会话上下文水位由插件实测（message.updated token usage），
-//  超线读取类工具先提醒后硬拦——把规程里的自报水位变成机制执行]
+// [2026-09-04]-[Dispatch bias fix: session context watermark is measured by the plugin (message.updated token usage);
+//  read-class tools past the line get a warning first, then a hard block — turning the protocol's self-reported watermark into mechanism enforcement]
 export interface ContextOptions {
-  /** 水位闸总开关（默认 true）；关闭后仅横幅提示不拦截 */
+  /** Watermark gate master switch (default true); when off, banner hints only, no interception */
   gates?: boolean
-  /** 软水位（token）：读取类工具首次被拦提醒改派 economy（一次性），之后放行 */
+  /** Soft watermark (tokens): first interception of a read-class tool reminds to redirect to economy (one-time), then lets through */
   softTokens?: number
-  /** 硬水位（token）：read/glob/grep/list 一律 deny；bash 仅放行验证类命令 */
+  /** Hard watermark (tokens): read/glob/grep/list are always denied; bash only lets through verification-type commands */
   hardTokens?: number
-  /** 强制压缩水位（token）：横幅注入强制压缩指令，读取类同硬水位拦截 */
+  /** Force-compaction watermark (tokens): banner injects a forced-compaction instruction; read-class tools are intercepted like the hard watermark */
   forceTokens?: number
-  /** [2026-09-04]-[超强制压缩水位后由 tool.execute.after 自动 /handover（fork 备份+压缩当前会话，
-   *  任务以摘要上下文自动继续）；默认 true，false 时仅横幅提示依赖手动 /handover] */
+  /** [2026-09-04]-[After exceeding the force-compaction watermark, tool.execute.after auto-triggers /handover (fork backup + compact the current session;
+   *  the task continues automatically with summary context); default true; false = banner hint only, relying on manual /handover] */
   autoHandover?: boolean
 }
-// [2026-09-04]-[内置 subagent 封堵：explore/general 与壳路由竞争且原 fail-open 放行，
-//  默认 deny 附 economy/main 改派建议；allow 恢复旧行为]
+// [2026-09-04]-[Builtin subagent block: explore/general compete with shell routing and were previously fail-open allowed;
+//  default deny with economy/main redirect suggestions; allow restores the old behavior]
 export interface BuiltinAgentsOptions { mode?: "deny" | "allow" }
-// [2026-09-04]-[注入面模式：chain=六档链精选∪favorites∪可见集（省 6-10k/会话，链外模型
-//  点名走 denyUninjected 提示）；all=可用全集（旧行为，任何可用模型可点名）]
+// [2026-09-04]-[Injection surface mode: chain = six-lane chain picks ∪ favorites ∪ visible set (saves 6-10k/session; off-chain models
+//  explicitly named get the denyUninjected hint); all = full available set (old behavior, any available model can be explicitly named)]
 export interface InjectionOptions { mode?: "chain" | "all" }
-// [2026-09-04]-[deny 自动改派：错误落点在 tool.execute.before 内静默重写到链首候选（一跳+同 snap
-//  守卫复检），免去主模型多次 deny 试错浪费 token；默认 true]
+// [2026-09-04]-[deny auto-redirect: wrong landing spots are silently rewritten inside tool.execute.before to the chain-head candidate (one hop + same-snapshot
+//  guard re-check), sparing the main model repeated deny-and-retry token waste; default true]
 export interface DispatchOptions { autoRedirect?: boolean }
-// [2026-09-04]-[图片中继：主会话模型无视觉时把消息内图片落盘并注入读图指引（vision 壳/MCP 视觉
-//  工具接力），避免宿主报错；默认 true]
+// [2026-09-04]-[Image relay: when the main session model has no vision, images in the message are saved to disk and image-reading guidance is injected
+//  (vision shell/MCP vision tool relay), avoiding host errors; default true]
 export interface RelayOptions { image?: boolean }
 export interface RulesOptions {
   enabled?: boolean
-  /** 委派底价（token）：预期收益低于该值可自做；注入规程时插值到 {{DELEGATION_FLOOR}} */
+  /** Delegation floor (tokens): self-execution allowed when expected benefit is below it; interpolated into {{DELEGATION_FLOOR}} when injecting the protocol */
   delegationFloor?: number
 }
-// [2026-09-01]-[配置面统一收敛到 opencode-switchman.jsonc：元组 options 降级为兼容 shim
-//  （显式配置优先一代并报 SWM044）；死字段 providers.*（凭证收集实际走 poolForProviderId）移除]
+// [2026-09-01]-[Config surface consolidated into opencode-switchman.jsonc: tuple options demoted to a compatibility shim
+//  (explicit config wins over gen-1 and reports SWM044); dead field providers.* (credential collection actually goes through poolForProviderId) removed]
 export interface SwitchmanOptions {
   quota?: { glm?: GlmQuotaOptions; deepseek?: DeepseekQuotaOptions; copilot?: CopilotQuotaOptions }
   cost?: { enabled?: boolean }
   billingWindow?: BillingWindowConfig
   banner?: { enabled?: boolean }
-  /** 调度员规程系统提示注入（随包内置；关闭后依赖用户自行安装 AGENTS.md） */
+  /** Dispatcher protocol system-prompt injection (bundled builtin; when off, depends on the user installing AGENTS.md themselves) */
   rules?: RulesOptions
   lanes?: Partial<Record<Lane, string[]>>
   matrix?: MatrixOptions

@@ -1,6 +1,6 @@
 # opencode-switchman
 
-**English** | [中文](./README.zh.md)
+**English** | [Chinese](./README.zh.md)
 
 > ### 🎯 Fully-automated model matrix ＋ autonomous decisions ＝ every token lands exactly where it matters. Not one wasted.
 
@@ -99,10 +99,10 @@ The plugin loads the repo's `dist` bundle directly; after `git pull`, re-run `bu
 After starting opencode, every system prompt of the primary model carries a live four-line banner (the dispatcher's ground truth):
 
 ```
-[路由] economy: glm-53-low→claude5-low→gem31pro-low | mechanical: claude5-medium→gem31pro-medium→gem37f-medium | main: glm-53-high→ds-v4p-high→claude5-high | ...
-[水位] GLM 5h 20% weekly 7% (refreshed 09-04 10:00) | Copilot unlimited credits, used 3885 (since 2026-09-01) | advice: ...
-[限制] down: none | retired: 0 models | reviewer must be hetero-family (producer family ≠ shell family) | api-billed & unknown models sink by coefficient (billing=subscription takes priority)
-[更新] new version available: /switchman-update or /switchman-ignore
+[ROUTES] economy: glm-53-low→claude5-low→gem31pro-low | mechanical: claude5-medium→gem31pro-medium→gem37f-medium | main: glm-53-high→ds-v4p-high→claude5-high | ...
+[WATERMARK] GLM 5h 20% weekly 7% (refreshed 09-04 10:00) | Copilot unlimited credits, used 3885 (since 2026-09-01) | advice: ...
+[LIMITS] down: none | retired: 0 models | reviewer must be hetero-family (producer family ≠ shell family) | api-billed & unknown models sink by coefficient (billing=subscription takes priority)
+[UPDATE] new version available: /switchman-update or /switchman-ignore
 ```
 
 The log also shows `[opencode-switchman] injected N model shells (agents)` — N varies dynamically with the model surface of credentialed providers. Lane candidates are generated algorithmically from capability score × effort affinity × billing/unknown coefficients, with vision/review structural gates and no vendor-specific seats; runtime health, quota, and cost rules then select the current first candidate.
@@ -141,7 +141,7 @@ Two manual commands let your configuration beat system defaults. All state is pe
 - **Semantics**: manual ranking **takes priority over the base capability score** (realtime index → bundled snapshot → curated table all yield) — matched models (including their prefix variants) get a rank-position score and S/A/B/C tier: rankings with ≤4 entries map positions to S/A/B/C in order; ≥5 entries use quantile buckets (top 20% S / next 20% A / next 20% B / rest C, same semantics as the OpenRouter rank source); within a tier, the linear rank position breaks ties. Unranked models are unaffected. The ranking feeds every decision surface: lane chains, effort affinity, capability-level gates, and deny hints.
 - **Config file**: `~/.config/opencode/opencode-switchman/capability-rank.json` (`models` array order = strongest first).
 
-Both commands can also be driven directly via the bundled CLI: `node <pkg>/dist/switchman-config.js pool list|add|remove|set|clear` (pool name = economy/mechanical/main/hard/vision/review) / `rank list|set|add|remove|clear` (numbers refer to the `list` output). The `[限制]` banner line reports active overrides ("manual rank: N models / task-pool assignment: M pools").
+Both commands can also be driven directly via the bundled CLI: `node <pkg>/dist/switchman-config.js pool list|add|remove|set|clear` (pool name = economy/mechanical/main/hard/vision/review) / `rank list|set|add|remove|clear` (numbers refer to the `list` output). The `[LIMITS]` banner line reports active overrides ("manual rank: N models / task-pool assignment: M pools").
 
 ## What's New in v0.2.0
 
@@ -168,7 +168,7 @@ See the complete, user-facing release notes and migration guide in [CHANGELOG.md
 | `matrix.mode / watch` | `auto / true` | Activation matrix: `auto` by host (desktop = visible models / CLI/TUI = favorites), `app`/`tui` force a mode, `legacy` restores the static matrix; `watch` recomputes and fully refreshes probes on surface changes (mode/watch are startup-level; restart to apply) |
 | `banner.enabled` | `true` | Four-line banner injection |
 | `rules.enabled / delegationFloor` | `true / 3000` | Bundled dispatcher rules (AGENTS.md) injection; `delegationFloor` is the self-do token floor interpolated into the rules (dispatch by default below it is a violation) |
-| `context.gates / softTokens / hardTokens / forceTokens / autoHandover` | `true / 60000 / 80000 / 100000 / true` | **Measured session watermark gate**: the plugin tracks each main session's context size from message token usage and injects a live `[水位·会话]` line every turn. Past `softTokens`, read-class tools (read/glob/grep/list/bash) get a one-time deny nudge pointing at the economy chain head; past `hardTokens` they are denied outright (bash only lets verification and delivery commands through: git, test/lint/typecheck, build); past `forceTokens` the banner demands immediate compaction. With `autoHandover: true` (default), crossing `forceTokens` also triggers `/handover` automatically after the next tool completes: full fork backup + compaction of the current session, and the running task continues automatically on the summarized context (host loop re-reads compacted messages each step). Shell subagent sessions are exempt |
+| `context.gates / softTokens / hardTokens / forceTokens / autoHandover` | `true / 60000 / 80000 / 100000 / true` | **Measured session watermark gate**: the plugin tracks each main session's context size from message token usage and injects a live `[WATERMARK:SESSION]` line every turn. Past `softTokens`, read-class tools (read/glob/grep/list/bash) get a one-time deny nudge pointing at the economy chain head; past `hardTokens` they are denied outright (bash only lets verification and delivery commands through: git, test/lint/typecheck, build); past `forceTokens` the banner demands immediate compaction. With `autoHandover: true` (default), crossing `forceTokens` also triggers `/handover` automatically after the next tool completes: full fork backup + compaction of the current session, and the running task continues automatically on the summarized context (host loop re-reads compacted messages each step). Shell subagent sessions are exempt |
 | `builtinAgents.mode` | `deny` | Built-in `explore`/`general` subagents compete with shell routing and were previously fail-open; `deny` blocks them with an economy/main re-dispatch hint (the task-tool description from opencode core actively advertises them), `allow` restores the old pass-through |
 | `injection.mode` | `chain` | Shell injection face: `chain` = six lane chains ∪ favorites/visible models (saves ~6-10k tokens of task-tool description per session; naming an off-chain model gets a `denyUninjected` hint to enable it in model management), `all` = every usable model (old behavior). Startup-level: restart to apply |
 | `lanes` | built-in chains | Custom per-lane shell chains (override built-in preference order); keys = economy/mechanical/main/hard/vision/review |
@@ -281,7 +281,7 @@ ROUTE_META {"lane":"main","role":"programmer","producer_family":"glm","capabilit
 - **Real-dispatch isolation**: if a combo probes OK but actual delegation fails, it is isolated in memory for 30 minutes (10 minutes for `rate_limit`), immediately visible to all sessions and cleared on restart. This runs alongside the existing 600s breaker.
 - **Costs and scoring**: models.dev pricing and curated capability grades feed the weighted score; hard-gated candidates are excluded before scoring.
 - **Decision log**: each banner rebuild writes candidate chains plus factor scores to `state/routing-decisions.jsonl` (ring buffer, 200 lines).
-- **Banner**: `[路由][水位][限制][更新]` four lines injected into every system prompt, keeping the dispatcher informed. `[限制]` includes retired-model counts and downgrade marks; `[更新]` exposes upgrade / ignore commands when a new version is detected.
+- **Banner**: `[ROUTES][WATERMARK][LIMITS][UPDATE]` four lines injected into every system prompt, keeping the dispatcher informed. `[LIMITS]` includes retired-model counts and downgrade marks; `[UPDATE]` exposes upgrade / ignore commands when a new version is detected.
 - **Self-update**: startup checks are cached for 24h. Production installs compare against npm registry and can run `/switchman-update` for silent upgrade, then show "upgraded, restart required"; `/switchman-ignore` suppresses the notice for the current session only. Local mode compares against `origin/main`, shows manual update guidance, and only registers `/switchman-ignore`.
 - **Fail-open iron law**: any hook error only writes to stderr and never blocks the main flow; unknown quotas never hard-block — breaker, probe, and dispatch isolation are independent sources of truth.
 
@@ -331,7 +331,7 @@ Both commands sync three configs (line-level surgery that preserves comments and
 
 ## Documentation
 
-- [Technical spec (contracts / algorithms / field-test notes)](./docs/2026-08-28-opencode-switchman-技术方案.md) (Chinese)
+- [Technical spec (contracts / algorithms / field-test notes)](./docs/2026-08-28-opencode-switchman-technical-design.md)
 - [Dispatcher rules AGENTS.md](./AGENTS.md) (bundled and injected via system prompt; no manual install needed)
 - DELEGATION_V1 template: see `delegation-template.md` in the state directory after installation
 

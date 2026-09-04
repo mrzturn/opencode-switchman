@@ -1,7 +1,8 @@
-// 共享壳生成器（scripts/gen-shells.ts 与运行期超集注入共用）＋ models.dev 目录缓存
-// [2026-08-29]-[壳矩阵静态→动态：抽取 gen-shells 命名/档位/家族逻辑为共享纯函数；
-//  运行期超集与静态清单同源生成，gen:shells 产物语义不变]-
-// [fail-open 铁律：目录拉取失败→陈旧缓存→内置 shells.json 隐式元数据→单档 off 降级，绝不阻塞注入]
+// [2026-09-04]-[English localization: translate comments and status messages; no logic change]
+// Shared shell generator (used by scripts/gen-shells.ts and runtime superset injection) + models.dev catalog cache
+// [2026-08-29]-[shell matrix static->dynamic: extracted the gen-shells naming/lane/family logic into shared pure functions;
+//  the runtime superset and the static manifest are generated from the same source, gen:shells output semantics unchanged]-
+// [fail-open iron rule: catalog fetch failure -> stale cache -> implicit metadata from bundled shells.json -> single-lane off degradation, never blocks injection]
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { paths, readJson, writeJsonAtomic, appendStatusLog } from "./state"
@@ -10,7 +11,7 @@ import type { ShellManifestEntry } from "./types"
 import { poolForProviderId } from "./provider-config"
 
 export type Effort = string
-export interface EffortInfo { efforts: string[]; toggle: boolean; vision: boolean; /** [2026-09-01]-[models.dev status=deprecated：已轮换下架（免费模型日更，旧 -free 会被标记弃用）] */ deprecated?: boolean }
+export interface EffortInfo { efforts: string[]; toggle: boolean; vision: boolean; /** [2026-09-01]-[models.dev status=deprecated: rotated off the shelf (free models update daily, old -free ones get marked deprecated)] */ deprecated?: boolean }
 export interface ShellDefinition {
   name: string
   provider: string
@@ -22,10 +23,10 @@ export interface ShellDefinition {
   capability: "rw" | "ro"
   vision: boolean
   matrixKey: string // provider|modelId|effort
-  degraded?: boolean // 无任何元数据源（仅运行期标记）
+  degraded?: boolean // no metadata source at all (runtime-only flag)
 }
 
-// ---- 命名与家族（与原 gen-shells 逐条一致）----
+// ---- naming and family (identical to the original gen-shells entry by entry) ----
 const SHORT: Record<string, string> = {
   "gpt-5.6-luna": "luna", "gpt-5.6-terra": "terra", "gpt-5.6-sol": "sol",
   "gpt-5.5": "55", "gpt-5.4": "54", "gpt-5.4-mini": "54mini", "gpt-5.4-nano": "54nano",
@@ -69,7 +70,7 @@ export function sortEfforts(efforts: Iterable<string>): string[] {
   })
 }
 
-/** 稳定短哈希（FNV-1a→base36 前 4 位）：命名碰撞后缀与遍历顺序无关 */
+/** Stable short hash (FNV-1a -> first 4 base36 chars): collision suffix independent of iteration order */
 export function stableHash(input: string): string {
   let h = 0x811c9dc5
   for (let i = 0; i < input.length; i++) {
@@ -79,7 +80,7 @@ export function stableHash(input: string): string {
   return (h >>> 0).toString(36).slice(0, 4).padStart(4, "0")
 }
 
-// ---- models.dev 解析（纯函数）----
+// ---- models.dev parsing (pure function) ----
 export function parseModelsDevApi(data: Record<string, any>): Record<string, EffortInfo> {
   const out: Record<string, EffortInfo> = {}
   for (const [prov, p] of Object.entries(data)) {
@@ -105,7 +106,7 @@ export function parseModelsDevApi(data: Record<string, any>): Record<string, Eff
   return out
 }
 
-/** 直连拉取（脚本用；运行期走 loadCatalog 缓存） */
+/** Direct fetch (for scripts; runtime goes through the loadCatalog cache) */
 export async function fetchModelsDevIndex(etag?: string | null): Promise<{ index: Record<string, EffortInfo>; etag: string | null; notModified: boolean }> {
   const res = await fetch("https://models.dev/api.json", {
     headers: { Accept: "application/json", "User-Agent": "opencode-switchman/0.1", ...(etag ? { "If-None-Match": etag } : {}) },
@@ -117,7 +118,7 @@ export async function fetchModelsDevIndex(etag?: string | null): Promise<{ index
   return { index, etag: res.headers.get("etag"), notModified: false }
 }
 
-// ---- 状态目录缓存（ETag＋TTL 24h；失败用陈旧缓存）----
+// ---- state dir cache (ETag + TTL 24h; stale cache on failure) ----
 export const CATALOG_TTL_MS = 24 * 3600_000
 interface CatalogCache { fetched_at: number; etag: string | null; index: Record<string, EffortInfo> }
 
@@ -140,13 +141,13 @@ export function loadCatalog(now = Date.now()): Promise<CatalogResult> {
     },
     (exc) => {
       if (cache?.index) return { index: cache.index, status: "stale" as const, etag: cache.etag ?? null }
-      appendStatusLog(`models.dev 目录不可用且无缓存（fail-open 降级）: ${exc}`)
+      appendStatusLog(`models.dev catalog unavailable and no cache (fail-open degradation): ${exc}`)
       return { index: {}, status: "none" as const, etag: null }
     },
   )
 }
 
-/** 内置 shells.json 隐式元数据（模型→档位/视觉回退源；冷启动无网时优于单档降级） */
+/** Implicit metadata from the bundled shells.json (model -> lane/vision fallback source; better than single-lane degradation on a cold start with no network) */
 export function bundledModelIndex(): Record<string, EffortInfo> {
   const out: Record<string, EffortInfo> = {}
   for (const s of (manifestDefault as any).shells as ShellManifestEntry[]) {
@@ -160,16 +161,17 @@ export function bundledModelIndex(): Record<string, EffortInfo> {
   return out
 }
 
-// [2026-09-01]-[超集保底改源：opencode 自带免费模型（OpenCode Zen＝models.dev opencode provider）
-//  替代静态清单——免费模型随官方目录日更轮换，写死清单必然过期；免费判定＝id -free 后缀
-//  ∪ 特例集（big-pickle 等官方自研免费模型无后缀），且 status≠deprecated（已轮换下架的旧
-//  免费模型会标 deprecated，今日可用集通常只剩个位数）。走 loadCatalog 缓存（24h TTL＋stale 回退）。
-//  仅影响壳存在性保底，可派发性仍由激活面（配置面∪会话）与凭证门控决定]
+// [2026-09-01]-[superset floor source change: opencode's bundled free models (OpenCode Zen = the models.dev opencode provider)
+//  replace the static manifest -- free models rotate daily with the official catalog, a hard-coded list inevitably goes stale;
+//  free = id ending in -free union a special-case set (big-pickle and other official in-house free models without the suffix),
+//  and status != deprecated (rotated-off old free models get marked deprecated; today's usable set is usually single-digit).
+//  Goes through the loadCatalog cache (24h TTL + stale fallback).
+//  Only affects the shell-existence floor; dispatchability is still decided by the activation surface (config surface union sessions) and credential gating]
 export const FLOOR_PROVIDER = "opencode" // OpenCode Zen
-/** 无 -free 后缀但免费的官方模型（随目录核对的特例集） */
+/** Official models that are free without a -free suffix (special-case set verified against the catalog) */
 export const FLOOR_FREE_EXTRA = new Set(["big-pickle"])
 
-/** 从 models.dev 目录索引提取免费保底模型全键（provider/modelId） */
+/** Extract full keys (provider/modelId) of free floor models from the models.dev catalog index */
 export function freeFloorModels(index: Record<string, EffortInfo>): string[] {
   const prefix = `${FLOOR_PROVIDER}/`
   return Object.keys(index)
@@ -182,19 +184,19 @@ export function freeFloorModels(index: Record<string, EffortInfo>): string[] {
     .sort()
 }
 
-// ---- 超集展开（模型 × 档位 → 壳定义）----
+// ---- superset expansion (model x lane -> shell definitions) ----
 export interface BuildShellsOpts {
-  /** 静态 ro 标记集（gen-shells 用，按壳名） */
+  /** Static ro marker set (for gen-shells, by shell name) */
   roSet?: Set<string>
-  /** 运行期：为每档追加 review 用 -ro 别名壳（共享 matrixKey＝共享探针组合） */
+  /** Runtime: append a -ro alias shell per lane for review (shared matrixKey = shared probe combo) */
   roAliases?: boolean
-  /** 无元数据模型 family=providerID（运行期降级口径；脚本路径保持 familyOf） */
+  /** Metadata-less models get family=providerID (runtime degradation calibration; the script path keeps familyOf) */
   degradedFamilyByProvider?: boolean
-  /** 标记 degraded 字段（仅运行期；gen:shells 产物不变） */
+  /** Mark the degraded field (runtime only; gen:shells output unchanged) */
   markDegraded?: boolean
 }
 
-/** 短名碰撞＝全部成员追加稳定哈希后缀（与输入顺序无关；无碰撞时产物与原 gen-shells 逐字段一致） */
+/** Short-name collision = all members get a stable hash suffix (independent of input order; without collisions the output matches the original gen-shells field by field) */
 export function buildShells(models: string[], metaIndex: Record<string, EffortInfo>, opts: BuildShellsOpts = {}): ShellDefinition[] {
   const uniq = [...new Set(models)]
   const slashOf = (full: string) => full.indexOf("/")
@@ -224,7 +226,7 @@ export function buildShells(models: string[], metaIndex: Record<string, EffortIn
     const modelId = full.slice(slash + 1)
     const pool = poolOf(provider)
     const info = metaIndex[full]
-    // 档位装配：元数据（toggle→off；effort 值照收）→ 无元数据单档 off
+    // Lane assembly: metadata (toggle->off; effort values kept as-is) -> metadata-less single-lane off
     let efforts: string[] = ["off"]
     let vision = false
     if (info) {
@@ -251,7 +253,7 @@ export function buildShells(models: string[], metaIndex: Record<string, EffortIn
         matrixKey: `${provider}|${modelId}|${effort}`,
         ...(opts.markDegraded && !info ? { degraded: true } : {}),
       })
-      // [2026-08-29]-[review -ro 别名壳：与 rw 壳共享探针组合（matrixKey 相同），探针按 key 去重]-
+      // [2026-08-29]-[review -ro alias shell: shares the probe combo with the rw shell (same matrixKey); probes dedupe by key]-
       if (opts.roAliases && !opts.roSet?.has(name)) {
         const alias = `${name}-ro`
         if (!seen.has(alias)) {
@@ -268,7 +270,7 @@ export function buildShells(models: string[], metaIndex: Record<string, EffortIn
   return shells
 }
 
-/** ShellDefinition → ShellManifestEntry（注册表/注入复用） */
+/** ShellDefinition -> ShellManifestEntry (reused by the registry/injection) */
 export function toManifestEntry(d: ShellDefinition): ShellManifestEntry {
   return {
     name: d.name, pool: d.pool as ShellManifestEntry["pool"], provider: d.provider,
@@ -277,12 +279,12 @@ export function toManifestEntry(d: ShellDefinition): ShellManifestEntry {
   }
 }
 
-/** 排除 embedding 类模型（不可对话） */
+/** Exclude embedding-class models (non-conversational) */
 export function isConversational(modelId: string): boolean {
   return !/embed|rerank|embedding/i.test(modelId)
 }
 
-/** 读原始文件内容（测试/调试用） */
+/** Read raw file content (for tests/debugging) */
 export function readTextIfExists(path: string): string | null {
   try {
     return readFileSync(path, "utf8")

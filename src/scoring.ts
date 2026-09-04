@@ -1,10 +1,12 @@
-// 模型评分引擎（纯函数核心）：显式加权评分 + 硬门 + tier 分组排序 + 决策日志
-// [2026-08-29]-[把 computeLane 规则式排序升级为可追溯显式加权评分；
-//  base（策展能力）压倒一切软系数：先按 tier 分组、组内再按乘积分排序]
-// [2026-08-31]-[去厂商化编排：删 dsLast 池名分组；total 扩为
-//  base×effortFit×health×water×costBias×peak×billingBoost×unknownPenalty——
-//  billing 仅由用户 jsonc 显式声明驱动（subscription=1.0/api=0.85），未知组（能力分级
-//  全链未命中的模型）同 tier 排已知之后；costBias 厂商规则已废除，恒 1.0 留作成本数据预留位]
+// [2026-09-04]-[English localization: translate comments and log messages; no logic change]
+// Model scoring engine (pure-function core): explicit weighted scoring + hard gates + tier-grouped ordering + decision log
+// [2026-08-29]-[upgraded computeLane's rule-based ordering into a traceable explicit weighted score;
+//  base (curated capability) beats all soft factors: group by tier first, then order within groups by product score]
+// [2026-08-31]-[de-vendorized orchestration: removed the dsLast pool-name grouping; total extended to
+//  base×effortFit×health×water×costBias×peak×billingBoost×unknownPenalty —
+//  billing is driven only by explicit user jsonc declarations (subscription=1.0/api=0.85); unknown groups (models missed
+//  by the whole capability-level chain) rank after known ones within the same tier; the costBias vendor rule is
+//  abolished, kept constant 1.0 as a placeholder for future real cost data]
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { paths, withPathLock, appendStatusLog } from "./state"
 import type { Lane, Pool, Routing, ShellRegEntry } from "./types"
@@ -13,21 +15,21 @@ import { CAPABILITY_LEVEL_RANK, TIER_RANK, UNKNOWN_PENALTY, capabilityLevelOf } 
 import type { Tier } from "./model-ranks"
 import { LANE_SPEC, isFallbackCandidate, isPrimaryCandidate } from "./lane-policy"
 
-/** [2026-08-31]-[去厂商化：api 计费系数（subscription=1.0）；取代按池名写死的链尾/按量惩罚] */
+/** [2026-08-31]-[de-vendorization: api billing factor (subscription=1.0); replaces the hardcoded chain-tail/pay-as-you-go penalties keyed by pool name] */
 export const BILLING_API_BOOST = 0.85
 export { UNKNOWN_PENALTY }
 
-// ---- 水位因子（调用方从 poolStates/quotaView 归一后注入；缺省=全 1.0 fail-open）----
+// ---- Watermark factor (caller injects after normalizing via poolStates/quotaView; default = all 1.0 fail-open) ----
 export interface WaterFactor {
-  /** GLM 5 小时窗利用率（0-100） */
+  /** GLM 5-hour window utilization (0-100) */
   glmFiveHourPct?: number | null
-  /** GLM 周额度利用率（0-100） */
+  /** GLM weekly quota utilization (0-100) */
   glmWeeklyPct?: number | null
-  /** Copilot 剩余积分百分比（0-100） */
+  /** Copilot remaining credits percentage (0-100) */
   copilotRemainingPct?: number | null
-  /** Copilot 距重置天数 */
+  /** Days until the Copilot reset */
   copilotResetDays?: number | null
-  /** routing 关闭时水位影响必须中性化。 */
+  /** When routing is off, the watermark influence must be neutralized. */
   routing?: Partial<Record<Pool, boolean>>
 }
 
@@ -38,30 +40,30 @@ export interface ScoreInput {
   pool: Pool | string
   matrixStatus: string
   latencyMs: number | null
-  /** [2026-08-31]-[peak 泛化：该壳 provider 的计费高峰是否活跃（任意 provider；原 glm 专属规则废除）] */
+  /** [2026-08-31]-[peak generalization: whether this shell's provider has an active billing peak (any provider; the original glm-only rule is abolished)] */
   peakActive: boolean
   immediate: boolean
   water: WaterFactor
-  /** [2026-08-31]-[订阅计费系数：subscription=1.0/api=0.85（调用方从用户配置解析）；缺省 1.0] */
+  /** [2026-08-31]-[subscription billing factor: subscription=1.0/api=0.85 (caller parses from user config); default 1.0] */
   billingBoost?: number
 }
 
 export interface ScoreBreakdown {
   base: number
-  /** 第三方能力源的原始指数；tier 相同才参与排序。 */
+  /** Raw index from the third-party capability source; participates in ordering only within the same tier. */
   rawCapability?: number
   baseSource: string
-  /** [2026-08-31]-[动态能力分级：api 命中时为 capability.json 数据版本（决策日志追溯）；策展回退为 null] */
+  /** [2026-08-31]-[dynamic capability levels: on an api hit this is the capability.json data version (decision-log traceability); null on curated fallback] */
   baseVersion?: string | null
   effortFit: number
   health: number
   water: number
-  /** 恒 1.0（厂商规则已废除；预留给未来真实成本数据因子） */
+  /** Constant 1.0 (the vendor rule is abolished; reserved for a future real-cost data factor) */
   costBias: number
   peak: number
-  /** [2026-08-31]-[订阅计费系数（subscription=1.0/api=0.85）] */
+  /** [2026-08-31]-[subscription billing factor (subscription=1.0/api=0.85)] */
   billingBoost: number
-  /** [2026-08-31]-[未知组系数：base 来源为 global 兜底时 0.75，否则 1.0] */
+  /** [2026-08-31]-[unknown-group factor: 0.75 when the base source is the global fallback, else 1.0] */
   unknownPenalty: number
   total: number
   tier: Tier
@@ -71,7 +73,7 @@ function clampWater(v: number): number {
   return Math.min(1.0, Math.max(0.6, v))
 }
 
-/** effortFit：复用 LANE_SPEC 序位，序位靠前越接近 1.0；不在亲和序位显著折损 */
+/** effortFit: reuses the LANE_SPEC ordinals; the closer to the front, the closer to 1.0; a miss of the affinity order costs significantly */
 function effortFitOf(lane: Lane, effort: string | null): number {
   const spec = LANE_SPEC[lane] ?? LANE_SPEC.main
   const idx = spec.efforts.indexOf(effort ?? "")
@@ -79,29 +81,31 @@ function effortFitOf(lane: Lane, effort: string | null): number {
   return Math.max(0.6, 1 - idx * 0.1)
 }
 
-/** health：ok=1.0 / strained=0.6；其余（unknown/missing 等）fail-open 视同 1.0 */
+/** health: ok=1.0 / strained=0.6; everything else (unknown/missing etc.) fail-open as 1.0 */
 function healthOf(matrixStatus: string): number {
   return matrixStatus === "strained" ? 0.6 : 1.0
 }
 
-/** water：水位富余 1.0 线性降至 0.6；>90% 已在上游硬拦。
- *  [2026-08-31]-[去厂商化口径：池名仅作配额抓取数据面映射——有抓取器的 provider 才有水位数据，
- *  未知/自定义 provider 一律 fail-open 1.0；water 系数本身不承载任何厂商商务偏好] */
+/** water: 1.0 on ample watermark, linear down to 0.6; >90% is already hard-blocked upstream.
+ *  [2026-08-31]-[de-vendorized baseline: pool names map only to quota-scraping data faces — providers with a scraper
+ *  have watermark data, unknown/custom providers always fail-open 1.0; the water factor itself carries no vendor
+ *  business preference] */
 function waterOf(pool: string, w: WaterFactor): number {
   if (w.routing?.[pool as Pool] === false) return 1.0
   if (pool === "glm") {
     const pcts = [w.glmFiveHourPct, w.glmWeeklyPct].filter((v): v is number => typeof v === "number")
     if (pcts.length === 0) return 1.0
-    // 「5h 窗与周额度取 min（水位因子）」＝取更吃紧的一档（利用率 max → 因子 min）
+    // "min of the 5h window and weekly quota (watermark factor)" = take the tighter one (utilization max → factor min)
     const worst = Math.max(...pcts)
     return clampWater(1 - (worst / 90) * 0.4)
   }
   if (pool === "copilot") {
     const rem = w.copilotRemainingPct
     const days = w.copilotResetDays
-    // [2026-08-29]-[复审P1-1修正：烧积分语义=「富余将作废」——rem>=20%（真富余）且临期(<7d)才提升 1.0；
-    //  rem<20% 属吃紧（与 poolStates strained、routingAdvice「吃紧→改 glm」一致，不得反向提权）-
-    //  此前 rem>0 的宽条件已回退]-
+    // [2026-08-29]-[re-review P1-1 fix: credit-burn semantics = "surplus about to expire" — only rem>=20% (true surplus)
+    //  and near expiry (<7d) boosts to 1.0; rem<20% is tight (consistent with poolStates strained and routingAdvice
+    //  "tight → move to glm"; must not boost in reverse)-
+    //  the earlier looser rem>0 condition has been reverted]-
     if (typeof rem === "number" && rem >= 20 && typeof days === "number" && days < 7) return 1.0
     if (typeof rem !== "number") return 1.0
     return clampWater(1 - ((100 - rem) / 100) * 0.4)
@@ -109,14 +113,14 @@ function waterOf(pool: string, w: WaterFactor): number {
   return 1.0
 }
 
-/** costBias：恒 1.0——按池名写死的按量惩罚已废除（billingBoost 接管），预留给未来真实成本数据因子 */
+/** costBias: constant 1.0 — the pool-name pay-as-you-go penalty is abolished (billingBoost took over); reserved for a future real-cost data factor */
 function costBiasOf(): number {
   return 1.0
 }
 
-/** 单壳加权评分（纯函数；immediate 只影响排序不影响本函数乘积分）
- *  [2026-08-31]-[去厂商化：total=base*effortFit*health*water*costBias*peak*billingBoost*unknownPenalty；
- *  unknownPenalty 由 base 来源推导（global 兜底=未知组），billingBoost 由调用方注入] */
+/** Per-shell weighted score (pure function; immediate only affects ordering, not this function's product score)
+ *  [2026-08-31]-[de-vendorization: total=base*effortFit*health*water*costBias*peak*billingBoost*unknownPenalty;
+ *  unknownPenalty derives from the base source (global fallback = unknown group), billingBoost injected by the caller] */
 export function scoreShell(input: ScoreInput): ScoreBreakdown {
   const base = baseScoreDynamic(input.modelId)
   const effortFit = effortFitOf(input.lane, input.effort)
@@ -144,7 +148,7 @@ export function scoreShell(input: ScoreInput): ScoreBreakdown {
   }
 }
 
-// ---- 排序候选（computeLane 已装配的形状）----
+// ---- Ranked candidates (the shape computeLane assembles) ----
 export interface Rankable {
   key: string
   modelId: string
@@ -171,18 +175,18 @@ export interface RankContext {
   producerFamily?: string | null
   modality?: string | null
   capability?: string | null
-  /** [2026-08-29]-[复审P1-2(b)：v1.1「便宜者前」契约保留为同 tier 且 total 平局的 tiebreak] */
+  /** [2026-08-29]-[re-review P1-2(b): the v1.1 "cheaper first" contract is kept as a tiebreak for same-tier + tied total] */
   costs?: ((modelId: string) => number | null) | null
-  /** [2026-08-31]-[去厂商化：provider→订阅计费系数（subscription=1.0/api=0.85；调用方从用户 jsonc 解析）] */
+  /** [2026-08-31]-[de-vendorization: provider → subscription billing factor (subscription=1.0/api=0.85; caller parses from user jsonc)] */
   billingBoostOf?: (provider: string) => number
-  /** [2026-08-31]-[去厂商化：provider→计费高峰活跃（任意 provider 的 peak 配置求值）] */
+  /** [2026-08-31]-[de-vendorization: provider → billing-peak active (any provider's peak config evaluated)] */
   peakOf?: (provider: string) => boolean
-  /** [2026-09-02]-[favorites 优先：收藏模型（modelId 口径）在同 tier 内排前；跨 tier 不逆序；
-   *  immediate 不生效（只按延迟）] */
+  /** [2026-09-02]-[favorites first: favorite models (by modelId) sort first within the same tier; tiers never invert;
+   *  no effect under immediate (latency-only ordering)] */
   preferredModels?: ReadonlySet<string> | null
 }
 
-/** 硬门：矩阵 down（strained 非 down）/ 熔断 / 耗尽 / 退休 / 实调隔离 / 语义闸（与 computeLane 同源） */
+/** Hard gates: matrix down (strained is not down) / breaker / exhaustion / retirement / real-call isolation / semantic gates (same source as computeLane) */
 function isGated(s: Rankable, ctx: RankContext): boolean {
   if (s.matrixStatus === "down") return true
   const registry = ctx.registry
@@ -200,9 +204,10 @@ function isGated(s: Rankable, ctx: RankContext): boolean {
 }
 
 /**
- * 硬门剔除 → 排序。immediate 只按 latency_ms 升序；normal 按 tier 分组、组内乘积分降序。
- * [2026-08-31]-[去厂商化：删 dsLast 池名分组——api/未知组由乘积系数自然沉底]
- * 返回 ranked（幸存者）+ breakdowns（key→明细，供决策日志追溯）。
+ * Hard-gate elimination → ordering. immediate orders only by latency_ms ascending; normal groups by tier, descending
+ * product score within groups.
+ * [2026-08-31]-[de-vendorization: removed the dsLast pool-name grouping — api/unknown groups sink naturally by product factor]
+ * Returns ranked (survivors) + breakdowns (key → detail, for decision-log traceability).
  */
 export function rankCandidates<T extends Rankable>(
   shells: readonly T[],
@@ -227,10 +232,12 @@ export function rankCandidates<T extends Rankable>(
       billingBoost: shell && ctx.billingBoostOf ? ctx.billingBoostOf(shell.provider) : ctx.billingBoostOf ? BILLING_API_BOOST : 1.0,
     }))
   }
-  // [2026-09-01]-[同级优先：同级幸存者存在时绝不让跨级项参与排序；只有本级全被硬门淘汰才回退。]-
-  // [2026-09-02]-[思考档分区：off 壳＝lane 级兜底。幸存者先按 effort 是否 off 分区，思考档区整体
-  //  领先、off 区殿后（各自独立跑同级优先/跨级回退）——同 lane 存在思考档候选时 off 壳不再占首，
-  //  immediate 亦然（延迟只在同区内定序；「思考 vs 不思考」是质量底线不是软系数）]
+  // [2026-09-01]-[same-level first: while same-level survivors exist, cross-level entries never join the ordering;
+  //  fallback only when the whole level was hard-gate eliminated.]-
+  // [2026-09-02]-[thinking-level partition: off shells = lane-level fallback. Survivors are first partitioned by whether
+  //  effort is off; the thinking partition leads as a whole, the off partition sinks to bottom (each independently runs
+  //  same-level-first / cross-level fallback) — when the lane has thinking-level candidates, off shells no longer lead,
+  //  immediate included (latency only orders within a partition; "thinking vs not" is a quality floor, not a soft factor)]
   const offClassOf = (s: T): number => ((s.effort ?? "off") === "off" ? 1 : 0)
   const thinking = survivors.filter((s) => offClassOf(s) === 0)
   const offPool = survivors.filter((s) => offClassOf(s) === 1)
@@ -246,7 +253,7 @@ export function rankCandidates<T extends Rankable>(
     if (targetLevel === null) return null
     return Math.abs(CAPABILITY_LEVEL_RANK[capabilityLevelOf(baseScoreDynamic(s.modelId).tier, baseScoreDynamic(s.modelId).source)] - CAPABILITY_LEVEL_RANK[targetLevel])
   }
-  // 分区内同级优先：本级幸存者优先；本级全灭才按最近等级取前二回退。
+  // Within-partition same-level first: same-level survivors win; only when the level is wiped out take the top-2 fallbacks from the nearest level.
   const selectGroup = (pool: T[]): T[] => {
     const primary = pool.filter((s) => isPrimaryCandidate(ctx.lane, baseScoreDynamic(s.modelId)))
     if (primary.length > 0) return primary
@@ -275,10 +282,10 @@ export function rankCandidates<T extends Rankable>(
       return typeof v === "number" ? v : Number.POSITIVE_INFINITY
     }
     survivors.sort((a, b) => {
-        // off 区整体殿后；区内排序维持原口径。
+        // The off partition sinks to bottom as a whole; within-partition ordering keeps the original baseline.
         const offDiff = offClassOf(a) - offClassOf(b)
         if (offDiff !== 0) return offDiff
-        // 同区已耗尽时，回退必须从相邻等级开始，不能被通用 S/A/B/C 排序重新越级。
+        // When the own partition is exhausted, fallbacks must start from the adjacent level and must not be re-leveled by the generic S/A/B/C ordering.
         if (targetLevel !== null) {
           const distanceDiff = levelDistance(a)! - levelDistance(b)!
           if (distanceDiff !== 0) return distanceDiff
@@ -286,10 +293,10 @@ export function rankCandidates<T extends Rankable>(
         const ba = breakdowns.get(a.key)!
       const bb = breakdowns.get(b.key)!
       return TIER_RANK[ba.tier] - TIER_RANK[bb.tier] ||
-        // [2026-09-02]-[favorites 优先：同 tier 内收藏模型排前（用户显式意图压过乘积分；immediate 不生效）]
+        // [2026-09-02]-[favorites first: favorites sort first within the same tier (explicit user intent beats the product score; no effect under immediate)]
         Number(ctx.preferredModels?.has(b.modelId) ?? false) - Number(ctx.preferredModels?.has(a.modelId) ?? false) ||
         bb.total - ba.total ||
-        // tier 是跨档硬门；同档总分持平时再用真实能力指数，不能因统一映射到 TIER_SCORE 而平分。
+        // tier is the cross-level hard key; on a same-tier total-score tie, fall back to the real capability index — a uniform TIER_SCORE mapping must not produce a flat tie.
         (bb.rawCapability ?? -Infinity) - (ba.rawCapability ?? -Infinity) ||
         costOfKey(a) - costOfKey(b) ||
         (inputOrder.get(a.key) ?? 0) - (inputOrder.get(b.key) ?? 0)
@@ -298,7 +305,7 @@ export function rankCandidates<T extends Rankable>(
   return { ranked: survivors, breakdowns }
 }
 
-// ---- 决策日志（state/routing-decisions.jsonl；环形截断 200 行；fail-open + withPathLock）----
+// ---- Decision log (state/routing-decisions.jsonl; ring-truncated to 200 lines; fail-open + withPathLock) ----
 export interface DecisionCandidate extends ScoreBreakdown {
   name: string
 }
@@ -310,7 +317,7 @@ export interface DecisionRecord {
 
 const MAX_DECISION_LINES = 200
 
-/** 追加决策行（每 lane 一行），保留最近 200 行。异常仅 console.error，绝不阻塞主流程。 */
+/** Append decision lines (one per lane), keeping the most recent 200. Exceptions only log; never blocks the main flow. */
 export function logDecision(records: DecisionRecord[]): Promise<void> {
   const p = paths().decisions
   return withPathLock(p, () => {
@@ -322,7 +329,7 @@ export function logDecision(records: DecisionRecord[]): Promise<void> {
       const kept = prev.slice(-MAX_DECISION_LINES)
       writeFileSync(p, `${kept.join("\n")}\n`)
     } catch (exc) {
-      appendStatusLog(`决策日志 fail-open: ${exc}`)
+      appendStatusLog(`decision log fail-open: ${exc}`)
     }
   })
 }

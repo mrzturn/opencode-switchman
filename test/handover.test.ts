@@ -1,11 +1,12 @@
-// [2026-09-04]-[handover-core 单测：编排顺序（fork→标记→取模型→压缩）、fail-open 降级、
-//  v1 适配器参数形状（path/query/body）；TUI v2 适配器与宿主交互无法单测，靠 typecheck 兜底]
+// [2026-09-04]-[English localization: translate test names and comments; synced expectations with translated src messages; no test-logic change]
+// [2026-09-04]-[handover-core unit tests: orchestration order (fork→tag→fetch model→compact), fail-open degradation,
+//  v1 adapter parameter shape (path/query/body); the TUI v2 adapter and host interactions cannot be unit tested, typecheck covers them]
 import { describe, expect, mock, test } from "bun:test"
 import { runHandover, v1HandoverPort, backupTitle, type HandoverPort } from "../src/handover-core"
 
 function makePort(overrides: Partial<HandoverPort> = {}): HandoverPort {
   return {
-    async forkFull() { return { id: "ses_backup_1111", title: "原会话 (fork #1)" } },
+    async forkFull() { return { id: "ses_backup_1111", title: "Original session (fork #1)" } },
     async setTitle() { return true },
     async lastAssistantModel() { return { providerID: "glm", modelID: "glm-5.3" } },
     async compact() { return true },
@@ -14,16 +15,16 @@ function makePort(overrides: Partial<HandoverPort> = {}): HandoverPort {
 }
 
 describe("backupTitle", () => {
-  test("fork 标题存在时拼 [backup] 前缀", () => {
-    expect(backupTitle("任务A (fork #2)", "ses_x")).toBe("[backup] 任务A (fork #2)")
+  test("prepends the [backup] prefix when the fork title exists", () => {
+    expect(backupTitle("TaskA (fork #2)", "ses_x")).toBe("[backup] TaskA (fork #2)")
   })
-  test("fork 标题缺失时回退 sessionID", () => {
+  test("falls back to sessionID when the fork title is missing", () => {
     expect(backupTitle(undefined, "ses_x")).toBe("[backup] ses_x")
   })
 })
 
-describe("runHandover 编排", () => {
-  test("成功路径：fork→[backup] 标记→取模型→压缩，全链按序", async () => {
+describe("runHandover orchestration", () => {
+  test("success path: fork→[backup] tag→fetch model→compact, in order", async () => {
     const calls: string[] = []
     const port = makePort({
       async forkFull(sid, dir) { calls.push(`fork:${sid}:${dir}`); return { id: "ses_b", title: "T" } },
@@ -38,22 +39,22 @@ describe("runHandover 编排", () => {
     expect(r.message).toContain("ses_b".slice(0, 8))
   })
 
-  test("标题标记失败 fail-open：不阻断压缩", async () => {
+  test("title-tag failure is fail-open: does not block compaction", async () => {
     const port = makePort({ async setTitle() { throw new Error("boom") } })
     const r = await runHandover(port, "ses_a", "/w")
     expect(r.ok).toBe(true)
     expect(r.compacted).toBe(true)
   })
 
-  test("无模型信息：备份成功、跳过压缩", async () => {
+  test("no model info: backup succeeds, compaction skipped", async () => {
     const port = makePort({ async lastAssistantModel() { return null } })
     const r = await runHandover(port, "ses_a", "/w")
     expect(r.ok).toBe(true)
     expect(r.compacted).toBe(false)
-    expect(r.message).toContain("跳过")
+    expect(r.message).toContain("skipped")
   })
 
-  test("fork 失败：ok=false 且不触碰压缩", async () => {
+  test("fork failure: ok=false and compaction untouched", async () => {
     const compact = mock(() => Promise.resolve(true))
     const port = makePort({ async forkFull() { return null }, compact: compact as any })
     const r = await runHandover(port, "ses_a", "/w")
@@ -61,14 +62,14 @@ describe("runHandover 编排", () => {
     expect(compact).not.toHaveBeenCalled()
   })
 
-  test("压缩失败：备份仍算 ok（备份价值独立成立）", async () => {
+  test("compaction failure: backup still counts as ok (backup value stands independently)", async () => {
     const port = makePort({ async compact() { return false } })
     const r = await runHandover(port, "ses_a", "/w")
     expect(r.ok).toBe(true)
     expect(r.compacted).toBe(false)
   })
 
-  test("fork 抛错：整体 fail 捕获为结果而非异常", async () => {
+  test("fork throws: the whole thing fails and is captured as a result, not an exception", async () => {
     const port = makePort({ async forkFull() { throw new Error("net down") } })
     const r = await runHandover(port, "ses_a", "/w")
     expect(r.ok).toBe(false)
@@ -76,7 +77,7 @@ describe("runHandover 编排", () => {
   })
 })
 
-describe("v1HandoverPort 适配器", () => {
+describe("v1HandoverPort adapter", () => {
   function makeClient() {
     const calls: any[] = []
     return {
@@ -93,7 +94,7 @@ describe("v1HandoverPort 适配器", () => {
     }
   }
 
-  test("参数形状为 v1 path/query/body；messages 倒序取 assistant 模型", async () => {
+  test("parameter shape is v1 path/query/body; messages scanned in reverse for the assistant model", async () => {
     const c = makeClient()
     const port = v1HandoverPort(c)
     const forked = await port.forkFull("ses_a", "/w")
@@ -107,7 +108,7 @@ describe("v1HandoverPort 适配器", () => {
     expect(c.calls[3]).toEqual(["update", { path: { id: "ses_f" }, query: { directory: "/w" }, body: { title: "[backup] FT" } }])
   })
 
-  test("fork 无 id / error 字段：返回 null；messages 网络错返回 null 模型", async () => {
+  test("fork without id / error field: returns null; messages network error returns null model", async () => {
     const port = v1HandoverPort({
       session: {
         async fork() { return { data: undefined, error: "boom" } },

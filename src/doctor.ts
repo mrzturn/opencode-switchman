@@ -1,3 +1,4 @@
+// [2026-09-04]-[English localization: translate CLI messages and comments; no logic change]
 import { existsSync, statSync, readFileSync, accessSync, constants } from "node:fs"
 import { dirname, isAbsolute, join } from "node:path"
 import { parseJsonc, resolveOpencodeConfigDir, validateUserConfig } from "./config"
@@ -32,8 +33,8 @@ export function runDoctor(input: DoctorInput): DoctorResult {
     if (Number((value as any)?.version) > 1) out.push({ code: "SWM011", level: "warn", path: "version" })
     if ((value as any)?.$schema !== "https://raw.githubusercontent.com/mrzturn/opencode-switchman/main/schema/opencode-switchman-v1.schema.json") out.push({ code: "SWM012", level: "info", path: "$schema" })
     if (providers && typeof providers === "object") for (const k of Object.keys(providers)) {
-      // [2026-08-31]-[去厂商化 SWM020 新语义：任意 provider 键合法（opencode 官方/自定义）；
-      //  仅对内置键的近似拼写（编辑距离≤2/包含）降 warn 附建议，其余 info 提示按自定义处理]
+      // [2026-08-31]-[De-vendored SWM020 new semantics: any provider key is legal (opencode official/custom);
+      //  near-spellings of builtin keys (edit distance≤2/containment) get warn + suggestion, everything else stays info as custom]
       if (!PROVIDER_KEYS.includes(k as any)) {
         const near = suggestion(k, PROVIDER_KEYS)
         if (canonicalKeyOf(k) || near) out.push({ code: "SWM020", level: "warn", path: `providers.${k}`, hint: near ?? canonicalKeyOf(k) ?? undefined })
@@ -44,17 +45,17 @@ export function runDoctor(input: DoctorInput): DoctorResult {
         for (const field of Object.keys(provider)) {
           if (!["enabled", "observe", "billing", "peak"].includes(field)) { const hint = suggestion(field, ["enabled", "observe", "billing", "peak"]); if (hint) out.push({ code: "SWM021", level: "warn", path: `providers.${k}.${field}`, hint }) }
         }
-        // [2026-08-31]-[billing 未显式配置提示：内置键出厂缺省生效中，显式声明可溯源]
+        // [2026-08-31]-[billing not explicitly configured hint: the builtin key's factory default is in effect; explicit declaration enables traceability]
         if (canonicalKeyOf(k) && !("billing" in provider)) out.push({ code: "SWM061", level: "info", path: `providers.${k}.billing` })
       }
     }
-    // [2026-08-31]-[去厂商化：未知组清点与近似归类命中报告（随包清单口径；info 不拦截）]
+    // [2026-08-31]-[De-vendoring: unknown-group inventory and near-classification hit reporting (bundled manifest semantics; info does not block)]
     try {
       const shells = loadManifest().shells
       const unknown = shells.filter((s) => baseScoreDynamic(s.modelId).source === "global")
-      if (unknown.length > 0) out.push({ code: "SWM060", level: "info", path: "shells", hint: `${unknown.length} 模型未命中已知体系（未知组，排序按系数沉底）` })
+      if (unknown.length > 0) out.push({ code: "SWM060", level: "info", path: "shells", hint: `${unknown.length} models not matched by the known system (unknown group, ranked to the bottom by coefficient)` })
       const approx = shells.filter((s) => ["prefix", "family"].includes(baseScoreDynamic(s.modelId).source))
-      if (approx.length > 0) out.push({ code: "SWM062", level: "info", path: "shells", hint: `${approx.length} 模型按前缀/family 近似归类` })
+      if (approx.length > 0) out.push({ code: "SWM062", level: "info", path: "shells", hint: `${approx.length} models classified approximately by prefix/family` })
     } catch { /* fail-open */ }
   }
   try { statSync(dirname(input.configPath)); accessSync(dirname(input.configPath), constants.W_OK) } catch { out.push({ code: "SWM051", level: "error", path: dirname(input.configPath) }) }
@@ -67,7 +68,7 @@ export function runDoctor(input: DoctorInput): DoctorResult {
   }
   if (input.legacy?.quotaEnabled && Object.keys(input.legacy.quotaEnabled).length) out.push({ code: "SWM042", level: "warn", path: "legacy.quota" })
   if (input.legacy?.billingWindow) out.push({ code: "SWM043", level: "warn", path: "legacy.billingWindow" })
-  // [2026-09-01]-[配置面统一：元组显式行为段提示迁移到 opencode-switchman.jsonc（兼容一代，显式值仍优先）]
+  // [2026-09-01]-[Unified config surface: tuple explicit behavior sections prompt migration to opencode-switchman.jsonc (gen-1 compatible, explicit values still win)]
   for (const section of input.legacy?.sections ?? []) out.push({ code: "SWM044", level: "warn", path: `legacy.${section}`, hint: "opencode-switchman.jsonc" })
   if (value !== null) {
     const providers = (value as any)?.providers
@@ -76,14 +77,14 @@ export function runDoctor(input: DoctorInput): DoctorResult {
   if (input.commandPath && !existsSync(input.commandPath)) out.push({ code: "SWM053", level: "warn", path: input.commandPath })
   if (input.cliPath && !existsSync(input.cliPath)) out.push({ code: "SWM053", level: "warn", path: input.cliPath })
   for (const key of ["glmQuota", "copilotQuota", "dsQuota", "matrix", "routing", "selfupdate"] as const) { const p = paths()[key]; if (existsSync(p)) try { JSON.parse(readFileSync(p, "utf8")) } catch { out.push({ code: "SWM050", level: "warn", path: p }) } }
-  // [2026-08-31]-[终审P2-1：入口透传的加载期诊断与本次重新解析校验同源，按 code+path+level+hint
-  //  去重避免同一条错误被双计（横幅 doctor 摘要计数失真）]
+  // [2026-08-31]-[Final review P2-1: load-time diagnostics passed through by the entry share the same source as this re-parse validation; dedupe by code+path+level+hint
+  //  to avoid double-counting the same error (banner doctor summary count distortion)]
   const deduped = out.filter((d, i, arr) =>
     arr.findIndex((x) => x.code === d.code && x.path === d.path && x.level === d.level && (x.hint ?? "") === (d.hint ?? "")) === i)
   return { diagnostics: deduped.sort((a, b) => ({ error: 0, warn: 1, info: 2 }[a.level] - { error: 0, warn: 1, info: 2 }[b.level] || a.code.localeCompare(b.code))) }
 }
 export function formatDoctorReport(result: DoctorResult): string {
-  if (!result.diagnostics.length) return "opencode-switchman doctor：未发现问题"
+  if (!result.diagnostics.length) return "opencode-switchman doctor: no issues found"
   const rank = { error: 0, warn: 1, info: 2 }
-  return [...result.diagnostics].sort((a, b) => rank[a.level] - rank[b.level] || a.code.localeCompare(b.code)).map((d) => `${d.level.toUpperCase()} ${d.code}${d.path ? ` ${d.path}` : ""}${d.hint ? `（建议 ${d.hint}）` : ""}`).join("\n")
+  return [...result.diagnostics].sort((a, b) => rank[a.level] - rank[b.level] || a.code.localeCompare(b.code)).map((d) => `${d.level.toUpperCase()} ${d.code}${d.path ? ` ${d.path}` : ""}${d.hint ? ` (hint: ${d.hint})` : ""}`).join("\n")
 }

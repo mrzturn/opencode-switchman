@@ -1,7 +1,8 @@
-// 三端点配额探测（v1.1）：GLM monitor / DeepSeek balance / Copilot copilot_internal/user
-// [2026-08-28]-[Copilot 直查官方内部端点（VS Code 同款），实测 200]-
-// [安全红线：GitHub OAuth token 只读，绝不 refresh——轮转会作废 opencode 凭证；401→unknown 自愈]-
-// [三层兜底：网络失败→旧缓存≤7200s→unknown；无凭证/401→unknown 不硬拦；缓存损坏→unknown]
+// [2026-09-04]-[English localization: translate comments and status messages; no logic change]
+// Three-endpoint quota probing (v1.1): GLM monitor / DeepSeek balance / Copilot copilot_internal/user
+// [2026-08-28]-[Copilot queries the official internal endpoint directly (same as VS Code), measured 200]-
+// [security red line: the GitHub OAuth token is read-only, never refresh -- rotation would invalidate opencode credentials; 401 -> unknown self-heals]-
+// [three-layer fallback: network failure -> stale cache <=7200s -> unknown; no credentials/401 -> unknown without hard block; corrupted cache -> unknown]
 import { readFileSync, existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -29,11 +30,11 @@ async function fetchJson(url: string, headers: Record<string, string>): Promise<
   let body: any = null
   try {
     body = await res.json()
-  } catch { /* body 留空 */ }
+  } catch { /* body left empty */ }
   return { status: res.status, body }
 }
 
-// ---- GLM（TOKENS_LIMIT 按 (unit,number) 区分 5h/周）----
+// ---- GLM (TOKENS_LIMIT distinguishes 5h/weekly by (unit,number)) ----
 export async function fetchGlmQuota(key: string): Promise<GlmQuota> {
   try {
     const { status, body } = await fetchJson(GLM_API, {
@@ -56,7 +57,7 @@ export async function fetchGlmQuota(key: string): Promise<GlmQuota> {
       }
     }
     if (!out.five_hour && !out.weekly) {
-      return { status: "unknown", reason: "响应缺少 TOKENS_LIMIT 项（套餐类型或接口变更？）", fetched_at: Date.now() / 1000 }
+      return { status: "unknown", reason: "response missing TOKENS_LIMIT entries (plan type or API changed?)", fetched_at: Date.now() / 1000 }
     }
     return out
   } catch (exc) {
@@ -64,7 +65,7 @@ export async function fetchGlmQuota(key: string): Promise<GlmQuota> {
   }
 }
 
-// ---- DeepSeek balance（按量正常永不硬拦；仅余额耗尽/欠费判 exhausted）----
+// ---- DeepSeek balance (pay-as-you-go never hard-blocks; only exhausted balance/arrears marks exhausted) ----
 export async function fetchDeepseekBalance(key: string): Promise<DeepseekQuota> {
   try {
     const { status, body } = await fetchJson(DS_API, { Authorization: `Bearer ${key}`, Accept: "application/json" })
@@ -81,7 +82,7 @@ export async function fetchDeepseekBalance(key: string): Promise<DeepseekQuota> 
   }
 }
 
-// ---- Copilot copilot_internal/user（归一化：remaining ?? quota_remaining；字段允许缺失）----
+// ---- Copilot copilot_internal/user (normalized: remaining ?? quota_remaining; fields may be missing) ----
 function normalizeSnapshot(raw: Record<string, unknown>): PremiumSnapshot {
   const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null)
   const str = (v: unknown): string | null => (typeof v === "string" ? v : null)
@@ -106,7 +107,7 @@ export async function fetchCopilotQuota(githubToken: string): Promise<CopilotQuo
       ...IMPOSTOR_HEADERS,
     })
     if (status === 401 || status === 403) {
-      return { status: "unknown", reason: `GitHub token ${status}（等待 opencode 核心自愈，本层不刷新）`, fetched_at: Date.now() / 1000 }
+      return { status: "unknown", reason: `GitHub token ${status} (waiting for the opencode core to self-heal; not refreshed at this layer)`, fetched_at: Date.now() / 1000 }
     }
     if (status !== 200) return { status: "unknown", reason: `HTTP ${status}`, fetched_at: Date.now() / 1000 }
     const raw = body?.quota_snapshots ?? {}
@@ -126,7 +127,7 @@ export async function fetchCopilotQuota(githubToken: string): Promise<CopilotQuo
   }
 }
 
-// ---- opencode 鉴权层读取（只读 auth.json；绝不刷新——GitHub OAuth refresh token 轮转会作废 opencode 凭证）----
+// ---- opencode auth store reading (read-only auth.json; never refresh -- rotating the GitHub OAuth refresh token would invalidate opencode credentials) ----
 export interface AuthStoreCreds { githubToken?: string; glmKey?: string; dsKey?: string }
 
 export function readAuthStore(): AuthStoreCreds {
@@ -149,7 +150,7 @@ export function readAuthStore(): AuthStoreCreds {
         }
       }
       return out
-    } catch { /* 尝试下一个候选 */ }
+    } catch { /* try the next candidate */ }
   }
   return {}
 }
@@ -158,7 +159,7 @@ export function readCopilotGithubToken(): string | undefined {
   return readAuthStore().githubToken
 }
 
-// ---- 缓存读写与编排 ----
+// ---- cache IO and orchestration ----
 type QuotaData = GlmQuota | CopilotQuota | DeepseekQuota
 
 function hotOf(pool: string, data: QuotaData | null): boolean {
@@ -173,7 +174,7 @@ function quotaPath(pool: string): string {
   return pool === "glm" ? p.glmQuota : pool === "copilot" ? p.copilotQuota : p.dsQuota
 }
 
-/** 读缓存：TTL 内新鲜；staleOk 时 ≤7200s 旧数据也返回（带 stale 标记）；损坏/过期→null */
+/** Read cache: fresh within TTL; with staleOk also return data up to 7200s old (with a stale flag); corrupted/expired -> null */
 export function readQuotaCache<T extends QuotaData>(pool: string, staleOk = false): T | null {
   const data = readJson<T>(quotaPath(pool))
   if (!data || typeof data !== "object" || (data as any).status !== "ok") return null
@@ -187,7 +188,7 @@ export function readQuotaCache<T extends QuotaData>(pool: string, staleOk = fals
   return null
 }
 
-// 单飞控制：同池并发刷新去重
+// Single-flight: dedupe concurrent refreshes for the same pool
 const inflight: Record<string, Promise<void>> = {}
 
 export function refreshQuota(pool: "glm" | "copilot" | "deepseek", creds: { glmKey?: string; dsKey?: string; copilotToken?: string }): Promise<void> {
@@ -199,7 +200,7 @@ export function refreshQuota(pool: "glm" | "copilot" | "deepseek", creds: { glmK
       if (pool === "glm" && creds.glmKey) data = await fetchGlmQuota(creds.glmKey)
       else if (pool === "copilot" && creds.copilotToken) data = await fetchCopilotQuota(creds.copilotToken)
       else if (pool === "deepseek" && creds.dsKey) data = await fetchDeepseekBalance(creds.dsKey)
-      else data = { status: "unknown", reason: "无可用凭证", fetched_at: Date.now() / 1000 } as QuotaData
+      else data = { status: "unknown", reason: "no usable credentials", fetched_at: Date.now() / 1000 } as QuotaData
       if ((data as any).status === "ok") writeJsonAtomic(quotaPath(pool), data)
     } catch { /* fail-open */ }
   })()
@@ -210,7 +211,7 @@ export function refreshQuota(pool: "glm" | "copilot" | "deepseek", creds: { glmK
 }
 
 export interface QuotaFlags {
-  /** observe=false 才关闭查询和横幅；routing=false 仍持续观察。 */
+  /** Only observe=false turns off queries and the banner; routing=false still keeps observing. */
   observe?: { glm: boolean; deepseek: boolean; copilot: boolean }
   enabled?: { glm: boolean; deepseek: boolean; copilot: boolean }
 }
@@ -221,7 +222,7 @@ export interface QuotaView {
   deepseek: DeepseekQuota | null
 }
 
-/** 保证三池缓存尽量新鲜：过期/缺失即触发后台刷新（不等待），读取按 stale_ok 宽限。 */
+/** Keep the three pool caches as fresh as possible: expired/missing triggers a background refresh (non-blocking), reads allow stale_ok grace. */
 export function quotaView(
   creds: { glmKey?: string; dsKey?: string; copilotToken?: string },
   flags: QuotaFlags,
@@ -241,7 +242,7 @@ export function quotaView(
   }
 }
 
-/** Copilot 网关额度类错误第二真值源：置 gateway_exhausted 信任至 reset_date（index.ts 事件路径调用） */
+/** Second source of truth for Copilot gateway quota errors: set gateway_exhausted trusted until reset_date (called from the index.ts event path) */
 export function markCopilotGatewayExhausted(reason: string): void {
   try {
     const path = quotaPath("copilot")

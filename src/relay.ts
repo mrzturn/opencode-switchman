@@ -1,24 +1,26 @@
-// [2026-09-04]-[图片中继纯函数：主会话模型无视觉时，把消息里的图片部件替换为「落盘路径+读图指引」
-//  文本部件（vision 壳/MCP 视觉工具按路径接力），宿主不再对无视觉模型注入图片而报错。
-//  writeFile 注入便于测试；默认写盘器自建目录。fail-open 语义由调用方（index.ts transform 钩子）保证]
+// [2026-09-04]-[image relay pure functions: when the main session model has no vision, replace image parts in the message with a
+//  "persisted paths + image-reading guidance" text part (vision shells/MCP vision tools pick up by path), so the host no longer
+//  errors injecting images into a non-vision model.
+//  writeFile injection eases testing; the default writer creates directories itself. fail-open semantics are guaranteed by the caller (index.ts transform hook)]
+// [2026-09-04]-[English localization: translate runtime messages and comments; no logic change]
 import { mkdirSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 
 export interface RelayImageOpts {
-  /** true=有视觉不动；false=无视觉需中继；null=元数据未知 → fail-open 不动 */
+  /** true = has vision, leave as-is; false = no vision, relay needed; null = metadata unknown → fail-open, leave as-is */
   modelVision: boolean | null
-  /** vision lane 链首候选壳名（null=只保留路径与 MCP 指引） */
+  /** vision lane chain-head candidate shell name (null = keep only paths and MCP guidance) */
   visionHead: string | null
-  /** data URL 落盘目录（调用方按 sessionID 划分） */
+  /** directory where data URLs are persisted (caller partitions by sessionID) */
   writeDir: string
-  /** 写盘注入（测试用）；缺省=mkdir + writeFileSync */
+  /** writer injection (for tests); default = mkdir + writeFileSync */
   writeFile?: (path: string, bytes: Uint8Array) => Promise<void> | void
 }
 
 export interface RelayImageResult {
   parts: unknown[]
   changed: boolean
-  /** 本次中继涉及的图片路径列表（落盘或原值引用） */
+  /** image paths involved in this relay (persisted or referenced by original value) */
   paths: string[]
 }
 
@@ -49,13 +51,13 @@ interface ImageHit {
   sessionID?: string
   messageID?: string
   mime: string
-  /** data: URL / http(s) URL / 本地路径；防御式部件可能为空串 */
+  /** data: URL / http(s) URL / local path; defensive parts may carry an empty string */
   url: string
-  /** 防御式部件可能直接携带字节 */
+  /** defensive parts may carry raw bytes directly */
   bytes: Uint8Array | null
 }
 
-/** 防御式图片部件识别：type==="file" 且 mime 以 image/ 开头，或 type==="image"（任意宿主形状） */
+/** Defensive image-part detection: type==="file" with mime starting image/, or type==="image" (any host shape) */
 function imageOf(part: unknown): ImageHit | null {
   const p = part as any
   if (!p || typeof p !== "object") return null
@@ -79,16 +81,16 @@ function imageOf(part: unknown): ImageHit | null {
 function guidanceText(paths: string[], visionHead: string | null): string {
   const list = paths.join("\n")
   if (visionHead) {
-    return `[opencode-switchman] 本会话模型无视觉输入，图片未直接注入（避免宿主报错）。已落盘：\n${list}\n请读图：委派 vision 壳 ${visionHead}（ROUTE_META {"lane":"vision","role":"observer","modality":"image","capability":"ro","source":"auto"}，prompt 中给上述路径）；或调用 MCP 视觉工具传路径。`
+    return `[opencode-switchman] This session's model has no vision input; images were not injected directly (avoids host errors). Persisted to disk:\n${list}\nTo read them: delegate the vision shell ${visionHead} (ROUTE_META {"lane":"vision","role":"observer","modality":"image","capability":"ro","source":"auto"}, include the paths above in the prompt), or call an MCP vision tool with these paths.`
   }
-  return `[opencode-switchman] 本会话模型无视觉输入，图片未直接注入（避免宿主报错）。已落盘：\n${list}\n请读图：调用 MCP 视觉工具传路径。`
+  return `[opencode-switchman] This session's model has no vision input; images were not injected directly (avoids host errors). Persisted to disk:\n${list}\nTo read them: call an MCP vision tool with these paths.`
 }
 
 /**
- * 主流程：modelVision 非 false 或无图片部件 → 原样返回（changed=false）。
- * 有图片部件：data URL 解 base64 落盘 `<writeDir>/<part.id>.<ext>`；本地路径/http URL 用原值；
- * 全部图片部件替换为第一个命中位置上的单个文本部件（含全部路径与读图指引）。
- * 单张写盘失败 → 保留原部件（该图不进指引），其余继续。
+ * Main flow: modelVision not false, or no image parts → return as-is (changed=false).
+ * With image parts: data URLs are base64-decoded and persisted to `<writeDir>/<part.id>.<ext>`; local paths/http URLs keep the original value;
+ * all image parts are replaced by a single text part at the first hit position (carrying all paths and reading guidance).
+ * A single write failure → keep the original part (that image stays out of the guidance), the rest continue.
  */
 export async function relayImageParts(parts: unknown[], opts: RelayImageOpts): Promise<RelayImageResult> {
   if (opts.modelVision !== false) return { parts, changed: false, paths: [] }
@@ -117,19 +119,19 @@ export async function relayImageParts(parts: unknown[], opts: RelayImageOpts): P
         ref = path
       }
     } else if (/^https?:\/\//i.test(ref)) {
-      path = ref // 已是 http URL：原值
+      path = ref // already an http URL: keep the original value
     } else if (ref) {
-      path = ref.startsWith("file://") ? ref.slice("file://".length) : ref // 本地路径：原值
+      path = ref.startsWith("file://") ? ref.slice("file://".length) : ref // local path: keep the original value
     }
     if (bytes && bytes.byteLength > 0 && path) {
       try {
         await write(path, bytes)
       } catch {
-        out.push(parts[i]) // 写盘失败 fail-open：保留原部件
+        out.push(parts[i]) // write failure fail-open: keep the original part
         continue
       }
     } else if (!ref) {
-      out.push(parts[i]) // 既无引用也无字节：原样保留
+      out.push(parts[i]) // neither reference nor bytes: keep as-is
       continue
     }
     if (path) {

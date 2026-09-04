@@ -2,8 +2,8 @@
   "_meta": {
     "generated_at": "2026-09-02T14:49:02.112Z",
     "generator": "bun run gen:capability",
-    "upstream": "openrouter.ai /api/v1/models?sort=coding-high-to-low（benchmarks.artificial_analysis 官方指数）",
-    "note": "离线/拉取失败的随包默认能力排名；随版本手动迭代（重跑 gen:capability 刷新）"
+    "upstream": "openrouter.ai /api/v1/models?sort=coding-high-to-low (benchmarks.artificial_analysis official indices)",
+    "note": "Bundled default capability ranks for offline/fetch-failure fallback; iterated manually per release (re-run gen:capability to refresh)"
   },
   "bundled": true,
   "source": "openrouter",

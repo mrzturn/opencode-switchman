@@ -241,14 +241,14 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
 }
 @media (max-width:768px){
   .slide{padding:6.5vh 5vw 72px}
-  /* [2026-08-29]-[移动端长文本适配：英文不可断 token（命令/路径/型号名）撑破布局——
-     取消标题强制 <br>、长 token 允许断行；中英双页共享此规则] */
+  /* [2026-08-29]-[mobile long-text adaptation: unbreakable English tokens (commands/paths/model names) broke the layout —
+     drop forced <br> in headings and allow long tokens to wrap; shared by both EN and ZH pages] */
   h1 br,h2 br,h3 br,.sub br{display:none}
   h1,h2,h3,.sub,.cmd,.chip,code,td,th{overflow-wrap:anywhere;word-break:normal}
   .slide .inner{margin:0 auto}
   .quad,.layers,.lanes,.brain,.heal,.mxwrap,.codewrap,.hookflow{grid-template-columns:1fr;gap:14px}
-  /* [2026-08-29]-[英文文本较中文长约四成：六档卡片移动端收紧密度（min-height 归零+缩字号），
-     对齐中文版视觉密度；仅英文页，中文页不动] */
+  /* [2026-08-29]-[English text runs ~40% longer than Chinese: tighten six-lane card density on mobile (min-height to 0 + smaller font)
+     to match the ZH page's visual density; EN page only, ZH page untouched] */
   .lanes .lane{min-height:0;padding:18px 18px 16px}
   .lanes .lane h3{font-size:16.5px;margin-bottom:6px}
   .lanes .lane p{font-size:12.5px;line-height:1.6}
@@ -266,8 +266,8 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
   .brow .bl{justify-content:flex-start;min-height:40px;padding:9px 14px;border-right:0;border-bottom:1px solid rgba(148,180,255,.12)}
   .brow .bt{font-size:12px;padding:12px 14px;white-space:nowrap}
   .codebox pre{font-size:12px;padding:16px;line-height:1.85}
-  /* [2026-08-29]-[修复：壳名公式 nowrap 撑爆网格最小宽度（英文版整行更长→右侧整体溢出）——
-     移动端允许换行+网格子项 min-width:0 防最小内容宽度传导；中文版本就放得下，视觉不变] */
+  /* [2026-08-29]-[fix: the shell-name formula's nowrap blew up the grid's min width (the EN line is longer overall → right-side overflow) —
+     allow wrapping on mobile + grid items min-width:0 to stop min-content-width propagation; the ZH version fits as-is, visually unchanged] */
   .mxnaming{font-size:12px;white-space:normal;line-height:2}
   .mxwrap>div{min-width:0}
 }
@@ -317,7 +317,7 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
   .chip{font-size:10.5px;padding:7px 11px}
   .close h2{font-size:clamp(26px,8vw,40px)}
   .close .sub{font-size:16px;line-height:1.65;margin-bottom:24px}
-  /* [2026-09-01]-[安装命令改为 curl 一键脚本 + npx 两条等价路径；拆两行竖排，中间「or」分隔行标识二选一] */
+  /* [2026-09-01]-[install command switched to a curl one-liner script + npx as two equivalent paths; split into two stacked lines with an "or" divider marking either-or] */
   .cmd{font-size:12px;padding:12px 14px;gap:8px}
   .cmd .c1,.cmd .c2{white-space:nowrap}
   .brand,.hint{display:none}
@@ -330,7 +330,7 @@ h2.title .grad{background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,va
 
 <div class="bg"><div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div><div class="grid"></div><div class="scan"></div></div>
 <div class="progress" id="prog"></div>
-<div class="topnav"><a class="gh" href="https://github.com/mrzturn/opencode-switchman" target="_blank" rel="noopener"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>GitHub</a><a class="lang" href="index.zh.html">中文版</a></div>
+<div class="topnav"><a class="gh" href="https://github.com/mrzturn/opencode-switchman" target="_blank" rel="noopener"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>GitHub</a><a class="lang" href="index.zh.html">Chinese</a></div>
 <div class="dots" id="dots"></div>
 <div class="brand">opencode-<em>switchman</em> · v0.2.0</div>
 <div class="counter"><b id="cur">01</b> / <span id="tot">12</span></div>
@@ -556,7 +556,7 @@ ROUTE_META <span class="tk-p">{</span>
     <div class="heal">
       <div class="healc glass h1 rv" data-d="3"><div class="ic">🛰️</div><h3>Probe matrix</h3><p>Sends real requests to the three quota pools to check liveness. Surface changes trigger a full refresh immediately; the 10-minute cycle keeps temporary failures in the degradation chain.</p><div class="foot">model-matrix.json · probe/10min</div></div>
       <div class="healc glass h2 rv" data-d="4"><div class="ic">🔥</div><h3>Classify + isolate</h3><p>Failures become rate_limit / quota / auth / not_found / server / network / unknown. Real-dispatch failures isolate a combo for 10–30 minutes; 3 consecutive 404s retire a model.</p><div class="foot">routing.json · failures.log</div></div>
-      <div class="healc glass h3 rv" data-d="5"><div class="ic">⬆️</div><h3>Self-update path</h3><p>Startup checks cache for 24h. Production installs expose /switchman-update for silent upgrade plus restart notice; /switchman-ignore is session-scoped and resets on restart.</p><div class="foot">[更新] · commands</div></div>
+      <div class="healc glass h3 rv" data-d="5"><div class="ic">⬆️</div><h3>Self-update path</h3><p>Startup checks cache for 24h. Production installs expose /switchman-update for silent upgrade plus restart notice; /switchman-ignore is session-scoped and resets on restart.</p><div class="foot">[Update] · commands</div></div>
     </div>
   </div>
 </section>

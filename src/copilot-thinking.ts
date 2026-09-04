@@ -1,14 +1,14 @@
-// [2026-09-01]-[对齐 opencode 内置：packages/opencode/src/plugin/github-copilot/models.ts 按
-// Copilot /models 返回的每模型 capabilities.supports（messagesApi/reasoning_effort/adaptive_thinking/
-// max_thinking_budget）动态决定 thinking 参数形状，而非 probe.ts/shells.ts 原先按 modelId 前缀
-// "claude*" 一律猜测 anthropic thinking.type:enabled + 固定 budget 表——该猜测与 claude-sonnet-5
-// 实际网关能力不符，导致探针 400（matrix-down）]-
-// [TTL 24h + last-good；fetch 失败/未缓存时 deriveThinkingParam 返回 null（不发明参数），
-// 对齐核心"未声明变体则不带推理参数"的保守行为，优于猜错形状]
+// [2026-09-04]-[English localization: translate CLI messages and comments; no logic change]
+// [2026-09-01]-[Aligned with opencode builtin: packages/opencode/src/plugin/github-copilot/models.ts decides the thinking parameter shape
+// dynamically per model from the Copilot /models response capabilities.supports (messagesApi/reasoning_effort/adaptive_thinking/
+// max_thinking_budget) instead of probe.ts/shells.ts guessing anthropic thinking.type:enabled + a fixed budget table for all
+// "claude*" modelId prefixes — that guess did not match claude-sonnet-5's actual gateway capability and broke probes with 400 (matrix-down)]-
+// [TTL 24h + last-good; when fetch fails/no cache, deriveThinkingParam returns null (no invented parameters),
+// matching the core's conservative "no reasoning parameters for undeclared variants" behavior — better than guessing a wrong shape]
 import { paths, readJson, writeJsonAtomic, appendStatusLog } from "./state"
 
 export interface CopilotThinkingShape {
-  /** supported_endpoints 含 /v1/messages（核心 isMsgApi） */
+  /** supported_endpoints includes /v1/messages (core isMsgApi) */
   messagesApi: boolean
   reasoningEfforts: string[]
   adaptiveThinking: boolean
@@ -50,14 +50,14 @@ export async function fetchCopilotThinkingShapes(
 
 let mem: { dir: string; cache: ThinkingCache | null } | null = null
 
-/** 同步读缓存（config 钩子/shells.ts 用，不发网络请求） */
+/** Synchronous cache read (used by the config hook/shells.ts; no network requests) */
 export function loadCachedThinkingShapes(): Record<string, CopilotThinkingShape> {
   const dir = paths().dir
   if (mem?.dir !== dir) mem = { dir, cache: readJson<ThinkingCache>(paths().copilotThinking) }
   return mem?.cache?.shapes ?? {}
 }
 
-/** 过期（>TTL 或缺失）才刷新；无 token 时静默跳过（fail-open，探针照常但不发 thinking） */
+/** Refresh only when stale (>TTL or missing); silently skipped without a token (fail-open: probes still run but send no thinking) */
 export async function refreshThinkingShapesIfStale(ghToken: string | undefined, apiBase: string): Promise<void> {
   try {
     const cached = readJson<ThinkingCache>(paths().copilotThinking)
@@ -68,9 +68,9 @@ export async function refreshThinkingShapesIfStale(ghToken: string | undefined, 
     const cache: ThinkingCache = { fetched_at: Date.now(), shapes }
     writeJsonAtomic(paths().copilotThinking, cache)
     mem = { dir: paths().dir, cache }
-    appendStatusLog(`Copilot 思考参数形状缓存已刷新：${Object.keys(shapes).length} 模型`)
+    appendStatusLog(`Copilot thinking-parameter shape cache refreshed: ${Object.keys(shapes).length} models`)
   } catch (exc) {
-    appendStatusLog(`Copilot 思考参数形状刷新 fail-open: ${exc}`)
+    appendStatusLog(`Copilot thinking-parameter shape refresh fail-open: ${exc}`)
   }
 }
 
@@ -81,11 +81,11 @@ export type ThinkingParam =
   | null
 
 /**
- * 按 opencode 内置 models.ts 同款分支顺序推导实际请求参数：
- * !messagesApi && efforts.length → reasoningEffort；
- * efforts.length && adaptiveThinking → adaptive；
- * maxThinkingBudget → 仅 high/max 两档（核心只为这两档生成变体，low/medium/xhigh 不发参数）；
- * 形状未知/都不满足 → null（不发明参数）。
+ * Derives the actual request parameters with the same branch order as opencode's builtin models.ts:
+ * !messagesApi && efforts.length → reasoningEffort;
+ * efforts.length && adaptiveThinking → adaptive;
+ * maxThinkingBudget → only the high/max tiers (the core only generates variants for these two; low/medium/xhigh send no parameters);
+ * unknown shape / nothing matched → null (no invented parameters).
  */
 export function deriveThinkingParam(shape: CopilotThinkingShape | undefined, effort: string): ThinkingParam {
   if (!shape || !effort || effort === "off") return null

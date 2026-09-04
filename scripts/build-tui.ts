@@ -1,10 +1,14 @@
-// [2026-09-02]-[TUI 产物构建三要素：①Bun.build 的 outfile 直写会落盘过期缓存产物 → 内存产物手动
-// Bun.write；②bun 内建 JSX 转换无 solid 响应式语义（表达式立即求值，组件只渲染一次→面板冻结）→
-// 必须挂 @opentui/solid/bun-plugin 的 solidTransform（其 onLoad 会把 target=node 误解析的
-// solid-js/dist/server.js 重定向为客户端 solid.js，故 src 用裸 "solid-js" 即可）；
-// ③运行时裸 "solid-js"/"@opentui/solid" 会被宿主 runtime-plugin 精确重写到宿主实例
-// （opentui:runtime-module:*），深路径不匹配重写规则→双实例图谱互不订阅→UI 全冻结，禁用深路径]-
-// [影响 TUI 面板实时刷新；服务器产物 dist/opencode-switchman.js 不走此脚本]
+// [2026-09-04]-[English localization: translate comments and messages; no logic change]
+// [2026-09-02]-[Three essentials for building the TUI bundle: ① Bun.build's direct outfile write can
+// flush a stale cached artifact to disk → build in memory and manually Bun.write; ② bun's built-in JSX
+// transform has no solid reactivity semantics (expressions evaluate eagerly, components render once →
+// frozen panels) → must attach @opentui/solid/bun-plugin's solidTransform (its onLoad redirects
+// solid-js/dist/server.js — misresolved under target=node — to the client-side solid.js, so src can
+// import bare "solid-js"); ③ at runtime, bare "solid-js"/"@opentui/solid" are precisely rewritten to
+// the host instances by the host runtime-plugin (opentui:runtime-module:*); deep paths do not match
+// the rewrite rules → two disconnected reactive graphs that never subscribe to each other → UI fully
+// frozen, so deep paths are forbidden]-
+// [Affects live TUI panel refresh; the server bundle dist/opencode-switchman.js does not use this script]-
 import { createSolidTransformPlugin } from "@opentui/solid/bun-plugin"
 
 const outfile = process.argv[2] || "dist/opencode-switchman-tui.js"
@@ -21,8 +25,9 @@ if (!result.success) {
 }
 const code = await result.outputs[0].text()
 await Bun.write(outfile, code)
-// 后置校验：①JSX 必须由 solid 转换处理（产出 createComponent）②solid-js 必须是裸导入
-// （运行时才会被宿主重写到宿主实例，保证与宿主 effect 同一响应式图谱）③禁深路径
+// Post-conditions: ① JSX must be handled by the solid transform (produces createComponent)
+// ② solid-js must be a bare import (only then does the host runtime rewrite it to the host instance,
+// keeping it on the same reactive graph as the host's effects) ③ deep paths are forbidden
 if (!code.includes("_$createComponent") && !code.includes("createComponent")) {
   console.error("post-condition failed: solid JSX transform did not run (no createComponent output)")
   process.exit(1)

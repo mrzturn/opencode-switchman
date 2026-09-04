@@ -1,10 +1,11 @@
-// 模型策展能力分表（S/A/B/C 四档）＋ baseScore 追溯匹配
-// [2026-08-29]-[校准日期 2026-08-29，参考 LMArena/SWE-bench，手动校准；base 压倒一切软系数]
-// 匹配顺序：精确键 → 最长前缀 → family 中位数 → 全局 0.7；返回 source 供决策日志追溯。
+// [2026-09-04]-[English localization: translate comments and status messages; no logic change]
+// Curated model capability score table (S/A/B/C four tiers) + baseScore traceable matching
+// [2026-08-29]-[calibration date 2026-08-29, referencing LMArena/SWE-bench, manually calibrated; base outweighs all soft factors]
+// Match order: exact key -> longest prefix -> family median -> global 0.7; returns source for decision-log traceability.
 export type Tier = "S" | "A" | "B" | "C"
 export type CapabilityLevel = "L1" | "L2" | "L3" | "L4" | "L5"
 
-/** 业务能力等级：global 仅为未知模型的排序兜底，不可视为已验证的 B 级能力。 */
+/** Capability level for business use: global is only an ordering fallback for unknown models, not verified B-level capability. */
 export function capabilityLevelOf(tier: Tier, source?: string): CapabilityLevel {
   if (source === "global") return "L1"
   if (tier === "S") return "L5"
@@ -17,7 +18,7 @@ export const CAPABILITY_LEVEL_RANK: Record<CapabilityLevel, number> = {
   L1: 1, L2: 2, L3: 3, L4: 4, L5: 5,
 }
 
-/** tier 分组序（排序主键；跨模块共用：scoring 与 lane-policy） */
+/** Tier group order (primary sort key; shared across modules: scoring and lane-policy) */
 export const TIER_RANK: Record<Tier, number> = { S: 0, A: 1, B: 2, C: 3 }
 
 export const TIER_SCORE: Record<Tier, number> = {
@@ -27,16 +28,16 @@ export const TIER_SCORE: Record<Tier, number> = {
   C: 0.55,
 }
 
-// 键=小写 modelId（不含 provider 前缀）；变体（-codex/-luna/-sol/-terra/-vision/-preview）走前缀匹配
+// key=lowercase modelId (no provider prefix); variants (-codex/-luna/-sol/-terra/-vision/-preview) match by prefix
 export const MODEL_TIERS: Record<string, Tier> = {
-  // ---- S 档 ----
+  // ---- S tier ----
   "claude-opus-4.8": "S",
   "claude-opus-5": "S",
   "gpt-5.5": "S",
-  "gpt-5.6": "S", // gpt-5.6-codex/-luna/-sol/-terra 前缀命中
-  "gemini-3.1-pro": "S", // gemini-3.1-pro-preview 前缀命中
+  "gpt-5.6": "S", // matched via the gpt-5.6-codex/-luna/-sol/-terra prefix
+  "gemini-3.1-pro": "S", // matched via the gemini-3.1-pro-preview prefix
   "deepseek-v4-pro": "S",
-  // ---- A 档 ----
+  // ---- A tier ----
   "claude-sonnet-4.6": "A",
   "claude-sonnet-5": "A",
   "claude-opus-4.7": "A",
@@ -46,11 +47,11 @@ export const MODEL_TIERS: Record<string, Tier> = {
   "grok-4.6": "A",
   "kimi-k3": "A",
   "gpt-5.6-mini": "A",
-  // ---- B 档 ----
+  // ---- B tier ----
   "glm-5.3-flash": "B",
   "glm-5-turbo": "B",
   "glm-4.7": "B",
-  "deepseek-v4-flash": "B", // -vision 前缀命中
+  "deepseek-v4-flash": "B", // matched via the -vision prefix
   "gemini-3.5-flash": "B",
   "gemini-3.6-flash": "B",
   "gemini-3.7-flash": "B",
@@ -58,29 +59,32 @@ export const MODEL_TIERS: Record<string, Tier> = {
   "mai-code-1.1": "B",
   "grok-4.5": "B",
   "gpt-5-mini": "B",
-  // ---- C 档 ----
+  // ---- C tier ----
   "glm-4.5-air": "C",
   "glm-4.6v": "C",
   "glm-5v-turbo": "C",
   "glm-5.1": "C",
-  // 其余 free/mini/legacy 走 family 中位数 / 全局兜底
+  // remaining free/mini/legacy go through family median / global fallback
 }
 
-/** 全局中位数（family 未知时的兜底分） */
+/** Global median (fallback score when the family is unknown) */
 export const GLOBAL_MEDIAN_SCORE = 0.7
 
-/** [2026-08-31]-[去厂商化：未知组惩罚——精确/前缀/family 近似归类全链未命中（global 兜底）的模型系数，
- *  使其同 tier 排已知模型之后、链内只作尾部填充（lane-policy 与 scoring 共用，放此处避免环依赖）] */
+/** [2026-08-31]-[de-vendorization: unknown-group penalty -- coefficient for models missing the entire
+ *  exact/prefix/family approximate-classification chain (global fallback), so they rank after known models
+ *  within the same tier and only fill tail slots in a lane (shared by lane-policy and scoring, placed here
+ *  to avoid circular imports)] */
 export const UNKNOWN_PENALTY = 0.75
 
-// ---- family 判定（与 catalog.familyOf 同源；provider→family 映射隐含于 modelId 前缀：
-//  zhipuai/glm 系→glm- 前缀、deepseek 系→deepseek- 前缀、github-copilot 按 modelId 自身前缀）----
+// ---- family determination (same source as catalog.familyOf; the provider->family mapping is implied by the
+//  modelId prefix: zhipuai/glm family -> glm- prefix, deepseek family -> deepseek- prefix, github-copilot by
+//  the modelId's own prefix) ----
 function familyOfModel(modelId: string): string {
   const m = /^(claude|gpt|gemini|grok|kimi|glm|deepseek|mai)/.exec(modelId)
   return m ? m[1] : modelId.split(/[^a-zA-Z0-9]/)[0] || "unknown"
 }
 
-// family 中位数：由表内同族条目分数求中位（偶数取两中项均值）
+// family median: median of same-family entry scores in the table (even counts average the two middle items)
 const FAMILY_MEDIAN: Record<string, number> = (() => {
   const byFamily: Record<string, number[]> = {}
   for (const key of Object.keys(MODEL_TIERS)) {
@@ -109,10 +113,10 @@ export interface BaseScoreResult {
   source: "exact" | "prefix" | "family" | "global"
 }
 
-/** 策展能力分（base）：精确 → 最长前缀 → family 中位数 → 全局 0.7 */
+/** Curated capability score (base): exact -> longest prefix -> family median -> global 0.7 */
 export function baseScore(modelId: string): BaseScoreResult {
   const key0 = String(modelId ?? "").toLowerCase().trim()
-  // 防御：容忍偶发带 provider 前缀的入参
+  // defensive: tolerate occasional provider-prefixed input
   const key = key0.includes("/") ? key0.slice(key0.lastIndexOf("/") + 1) : key0
   if (!key) return { score: GLOBAL_MEDIAN_SCORE, tier: "C", source: "global" }
 
