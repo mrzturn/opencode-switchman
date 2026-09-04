@@ -16,6 +16,24 @@ writeFileSync(
   JSON.stringify({ source: "artificial-analysis", version: "fixed-empty", fetched_at: Date.now() / 1000, thresholds: { S: 62, A: 55, B: 45 }, models: {} }),
 )
 writeFileSync(join(process.env.SWITCHMAN_STATE, "model-catalog.json"), JSON.stringify({ fetched_at: Date.now(), etag: null, index: {} }))
+// [2026-09-04]-[hermetic 修复：预置全部 TTL 缓存断网。此前仅隔离 state 目录不够——
+//  干净 HOME 无凭据 → warmup 探针把 52 组合写成 unknown 落盘 model-matrix.json → 闸2 unknown
+//  fail-open 提前 return（gates.ts「非 down 不拦截」）跳过闸3-7，META/语义/复审 deny 全部失效；
+//  真 HOME 有凭据则探针/配额/成本/自更新真连网才绿。矩阵全组合预置 ok（新鲜 generated_at < PROBE_TTL
+//  不再触发刷新）让六闸确定性走到闸6/闸7；costs/selfupdate/quota 同理防后台网络刷新]-[CI 干净环境全绿且零联网]
+for (const [file, body] of Object.entries({
+  "model-matrix.json": {
+    generated_at: new Date().toISOString(),
+    combos: Object.fromEntries(loadManifest().shells.map((s) => [s.matrixKey, { status: "ok", latency_ms: 100, checked_at: new Date().toISOString() }])),
+  },
+  "costs.json": { scores: {}, fetched_at: Date.now() / 1000 },
+  "selfupdate.json": { checked_at: new Date().toISOString(), mode: "prod", current: "0.0.0-test", latest: "0.0.0-test", outdated: false },
+  "glm-quota.json": { status: "ok", fetched_at: Date.now() / 1000 },
+  "copilot-quota.json": { status: "ok", fetched_at: Date.now() / 1000 },
+  "ds-balance.json": { status: "ok", fetched_at: Date.now() / 1000 },
+} as Record<string, unknown>)) {
+  writeFileSync(join(process.env.SWITCHMAN_STATE, file), JSON.stringify(body))
+}
 afterAll(() => {
   if (prevState === undefined) delete process.env.SWITCHMAN_STATE
   else process.env.SWITCHMAN_STATE = prevState
@@ -25,6 +43,7 @@ afterAll(() => {
 
 import { SwitchmanPlugin } from "../src/index"
 import { loadManifest, stateDir } from "../src/state"
+
 
 type Hooks = Awaited<ReturnType<typeof SwitchmanPlugin>>
 const pluginInput = { client: { provider: { list: async () => [] } } } as any
