@@ -152,7 +152,7 @@ v0.2.0 evolves switchman from a fixed multi-provider dispatcher into a live, cap
 - **Capability-aware routing**: dynamically classifies models into capability tiers, keeps stronger tiers ahead of weaker tiers, then uses effort fit, health, water level, peak timing, explicit billing, and unknown-model confidence as transparent tie-breakers.
 - **Provider-neutral policy**: any official or custom OpenCode provider can participate. Explicit `billing: "subscription" | "api"` replaces vendor-specific routing preferences.
 - **Safer live operations**: real-dispatch isolation, retirement of repeatedly missing models, route-decision audit logs, and clearer restart/update guidance make routing failures observable and self-healing.
-- **Simpler configuration and upgrades**: all plugin settings now live in generated `opencode-switchman.jsonc`; legacy tuple options are diagnosed and supported for one compatibility release. `/handover` preserves the active model, agent, and reasoning setting in a new compact session.
+- **Simpler configuration and upgrades**: all plugin settings now live in generated `opencode-switchman.jsonc`; legacy tuple options are diagnosed and supported for one compatibility release. `/handover` runs directly (no AI round-trip): it forks the full current session into a `[backup]`-titled backup and compacts the current session in place, staying in the same session (unlike the built-in `/fork`, which switches to the forked session).
 
 See the complete, user-facing release notes and migration guide in [CHANGELOG.md](./CHANGELOG.md).
 

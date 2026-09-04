@@ -1,7 +1,9 @@
 // opencode-switchman 插件入口——唯一 OpenCode API 适配层（v1.2）
-// 钩子面：config(壳注入+凭证收集+/handover 命令注入) / chat.params(会话→agent 映射) /
+// 钩子面：config(壳注入+凭证收集) / chat.params(会话→agent 映射) /
 //         experimental.chat.system.transform(调度员规程＋横幅注入，壳子代理跳过) /
-//         tool.execute.before(六闸 deny) / event(失败记账→熔断) / tool(handover 交接工具)
+//         tool.execute.before(六闸 deny) / event(失败记账→熔断)
+// [2026-09-04]-[/handover 改为 TUI 直接执行（fork 备份+当前会话压缩，不经 AI），主插件不再注册
+//  会话式命令与 handover 工具（见 src/tui.tsx runHandoverBackup）]
 // [fail-open 铁律：任何钩子异常只写 stderr，绝不阻塞主流程；核心逻辑全部在纯函数层]
 import type { Plugin } from "@opencode-ai/plugin"
 import { watch, statSync, writeFileSync } from "node:fs"
@@ -9,7 +11,6 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { AGENTS_MD } from "./assets/agents-md"
 import { DELEGATION_TEMPLATE } from "./assets/delegation-template"
-import { createHandoverTool, HANDOVER_COMMAND_TEMPLATE, HANDOVER_COMMAND_DESCRIPTION } from "./handover"
 import {
   loadContext, buildRegistry, loadManifest, laneShells, paths,
   cleanExpired, ensureStateDir, stateDir, loadSupersetShells, writeJsonAtomic,
@@ -708,8 +709,6 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   }
 
   return {
-    tool: { handover: createHandoverTool(input) },
-
     config: async (cfg: Record<string, any>) => {
       try {
         // [2026-08-31]-[配置钩子首步装载用户水位配置；路由快照本启动内一致]-[fail-open]
@@ -727,15 +726,16 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         creds.copilotToken = creds.copilotToken ?? readAuthStore().githubToken
         // [2026-08-29]-[一键升级命令资产：prod 注册 /switchman-update，local 删除残留——legacy/动态两路都生效]-
         ensureUpdateCommands(detectLoadMode())
-        // [2026-08-31]-[/handover 交接命令：cfg.command 运行期注入，覆盖同名用户自定义命令时以用户为准]-
         // [2026-09-03]-[/poolConfig-chat //modelRank-chat：会话式配置入口（AI 交互换算 CLI 命令）；
         //  手动交互弹窗由 TUI 插件承载，保留原名 /poolConfig //modelRank，两者互补]-
         cfg.command = {
-          handover: { template: HANDOVER_COMMAND_TEMPLATE, description: HANDOVER_COMMAND_DESCRIPTION },
           "poolConfig-chat": { template: poolConfigCommandMd(pluginCliPath("switchman-config.js")), description: "会话式配置各任务池参与模型（economy/mechanical/main/hard/vision/review）；手动弹窗用 /poolConfig" },
           "modelRank-chat": { template: modelRankCommandMd(pluginCliPath("switchman-config.js")), description: "会话式配置模型能力排名（手动排名优先于基础能力分）；手动弹窗用 /modelRank" },
-          // [2026-09-04]-[移除插件 /fork 注册：opencode 内置 session.fork（消息手选 fork 弹窗）已占用 /fork，
-          //  插件自定义命令与之重复且走 AI 对话链路，与内置手选体验冲突；直接删除避免双入口]-
+          // [2026-09-04]-[移除 /handover 会话式注册：改为 TUI palette 直接执行（fork 备份+压缩当前
+          //  会话，不经 AI）；另 opencode 内置 session.fork（消息手选 fork 弹窗）已占用 /fork，
+          //  插件不再注册同名命令避免双入口]-
+          // [2026-09-03]-[/poolConfig-chat //modelRank-chat：会话式配置入口（AI 交互换算 CLI 命令）；
+          //  手动交互弹窗由 TUI 插件承载，保留原名 /poolConfig //modelRank，两者互补]-
           ...cfg.command,
         }
         // [2026-09-03]-[能力排名/任务池选配 watch：手动改配置即时刷新横幅与侧栏，不等下一条聊天消息；legacy/动态两路都生效]-[配置改动即时可见]

@@ -494,6 +494,68 @@ function RankActionsDialog(props: { api: TuiPluginApi; model: string; modelKey: 
   )
 }
 
+// ---- [2026-09-04]-[/handover 直接执行版（不经 AI 对话链路，替代原 cfg.command 会话式交接）：
+//  ① session.fork 全量复制当前会话为备份（不传 messageID=复制全部消息）；② 备份标题加 [backup]
+//  标记（fork 计数后缀保证多次备份标题唯一）；③ 对当前会话执行 summarize 压缩（沿用最后一条
+//  assistant 消息的 provider/model）；④ 不切换会话——这是与内置 /fork 的核心区别（fork 后跳到新会话）]----
+
+async function runHandoverBackup(api: TuiPluginApi): Promise<void> {
+  const route = api.route.current
+  const sessionID = route.name === "session" && typeof route.params?.sessionID === "string" ? route.params.sessionID : undefined
+  if (!sessionID) {
+    api.ui.toast({ variant: "error", message: "/handover：当前不在会话中，无可备份的会话" })
+    return
+  }
+  const session = api.state.session.get(sessionID)
+  const directory = session?.directory || api.state.path.directory
+  api.ui.toast({ variant: "info", message: "/handover：正在全量备份当前会话并压缩…" })
+  try {
+    const forkRes = await api.client.session.fork({ sessionID, directory })
+    if (forkRes.error || !forkRes.data?.id) throw new Error(`session.fork 失败: ${forkRes.error ?? "未返回新会话 ID"}`)
+    const backupID = forkRes.data.id
+    // [backup] 标记：失败只降级为无标记备份，不阻断压缩
+    try {
+      await api.client.session.update({
+        sessionID: backupID,
+        directory,
+        title: `[backup] ${forkRes.data.title ?? sessionID}`,
+      })
+    } catch { /* fail-open */ }
+    // 压缩模型：TUI 内存态最后一条 assistant 消息 → 空态回退 REST session.messages
+    let model: { providerID: string; modelID: string } | undefined
+    for (const m of [...api.state.session.messages(sessionID)].reverse()) {
+      const info: any = (m as any)?.info ?? m
+      if (info?.providerID && info?.modelID) {
+        model = { providerID: info.providerID, modelID: info.modelID }
+        break
+      }
+    }
+    if (!model) {
+      const msgsRes: any = await api.client.session.messages({ sessionID, directory }).catch(() => null)
+      for (const entry of [...(msgsRes?.data ?? [])].reverse()) {
+        const info: any = entry?.info ?? entry
+        if (info?.providerID && info?.modelID) {
+          model = { providerID: info.providerID, modelID: info.modelID }
+          break
+        }
+      }
+    }
+    let compacted = false
+    if (model) {
+      const sumRes = await api.client.session.summarize({ sessionID, directory, providerID: model.providerID, modelID: model.modelID })
+      compacted = !sumRes.error
+    }
+    api.ui.toast({
+      variant: "success",
+      message: compacted
+        ? `已全量备份为会话 ${backupID.slice(0, 8)}…（[backup] 标记）并压缩当前会话；仍在原会话，未切换`
+        : `已全量备份为会话 ${backupID.slice(0, 8)}…（[backup] 标记）；未取到模型信息，跳过当前会话压缩`,
+    })
+  } catch (exc) {
+    api.ui.toast({ variant: "error", message: `/handover 失败：${exc instanceof Error ? exc.message : exc}` })
+  }
+}
+
 const tui: TuiPlugin = async (api) => {
   api.slots.register({
     slots: {
@@ -505,10 +567,20 @@ const tui: TuiPlugin = async (api) => {
   // [2026-09-03]-[/poolConfig //modelRank slash 命令（手动弹窗入口；会话式为 /poolConfig-chat
   //  //modelRank-chat）：namespace=palette 才会出现在 "/" 面板
   //  （宿主 useCommandSlashes 只取 palette 命名空间的 slashName）；老版本无 registerLayer 时
-  //  fail-open 仅缺弹窗入口（会话式 cfg.command 版本不受影响）]
+  //  fail-open 仅缺弹窗入口（会话式 cfg.command 版本不受影响）
+  // [2026-09-04]-[/handover：直接执行（fork 备份+当前会话压缩，不切会话），无 AI 交互、无会话式变体]
   try {
     api.keymap.registerLayer({
       commands: [
+        {
+          name: "switchman.handover",
+          title: "备份并压缩当前会话",
+          desc: "全量 fork 当前会话为备份（标题加 [backup] 标记）并压缩当前会话；不切换会话（区别于内置 /fork）",
+          category: "switchman",
+          namespace: "palette",
+          slashName: "handover",
+          run: () => void runHandoverBackup(api),
+        },
         {
           name: "switchman.pool-config",
           title: "任务池选配",
