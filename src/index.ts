@@ -628,6 +628,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           handover: { template: HANDOVER_COMMAND_TEMPLATE, description: HANDOVER_COMMAND_DESCRIPTION },
           "poolConfig-chat": { template: poolConfigCommandMd(pluginCliPath("switchman-config.js")), description: "会话式配置各任务池参与模型（economy/mechanical/main/hard/vision/review）；手动弹窗用 /poolConfig" },
           "modelRank-chat": { template: modelRankCommandMd(pluginCliPath("switchman-config.js")), description: "会话式配置模型能力排名（手动排名优先于基础能力分）；手动弹窗用 /modelRank" },
+          // [2026-09-04]-[移除插件 /fork 注册：opencode 内置 session.fork（消息手选 fork 弹窗）已占用 /fork，
+          //  插件自定义命令与之重复且走 AI 对话链路，与内置手选体验冲突；直接删除避免双入口]-
           ...cfg.command,
         }
         // [2026-09-03]-[能力排名/任务池选配 watch：手动改配置即时刷新横幅与侧栏，不等下一条聊天消息；legacy/动态两路都生效]-[配置改动即时可见]
