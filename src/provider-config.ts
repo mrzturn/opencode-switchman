@@ -124,7 +124,7 @@ export function renderDefaultConfigJsonc(): string {
   },
   // Activation matrix: auto=detect desktop/cli by client; legacy=static shells.json; watch=watch config-surface changes and recompute in real time (changing watch requires a restart).
   "matrix": { "mode": "auto", "watch": true },
-  // Four-line routing banner / dispatcher protocol (AGENTS.md) system-prompt injection.
+  // Four-line routing banner / dispatcher protocol (bundled in src/assets/agents-md.ts) system-prompt injection.
   "banner": { "enabled": true },
   "rules": { "enabled": true },
   // Custom six-lane candidate chains (override builtin preference order); keys=economy/mechanical/main/hard/vision/review, values are arrays of shell names.

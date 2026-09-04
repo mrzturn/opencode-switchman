@@ -332,7 +332,7 @@ bun run mode:prod --version 0.2.0  # 指定版本回切（免联网）
 ## 文档
 
 - [技术方案（契约/算法/实测记录）](./docs/2026-08-28-opencode-switchman-技术方案.md)
-- [调度员规程 AGENTS.md](./AGENTS.md)（随包经系统提示自动注入，无需手动安装）
+- 调度员规程：内置于 [`src/assets/agents-md.ts`](./src/assets/agents-md.ts)，随包经系统提示自动注入（仅英文，无需手动安装；仓库根目录的 [AGENTS.md](./AGENTS.md) 仅为插件开发指南）
 - 委派模板 DELEGATION_V1：安装后见状态目录 `delegation-template.md`
 
 ## License

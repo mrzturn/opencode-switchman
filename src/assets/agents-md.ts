@@ -1,9 +1,11 @@
-// Dispatcher protocol bundled with the package (same source as the repo AGENTS.md; do not hand-edit — after changing AGENTS.md, sync here)
+// Dispatcher protocol bundled with the package (single source of truth, English-only; the repo AGENTS.md is a dev-only
+// guide for this plugin and is no longer synced here — edit this file directly)
+// [2026-09-04]-[decouple from repo AGENTS.md: AGENTS.md repurposed as dev-only; production protocol lives solely here]
 // [2026-09-04]-[English localization: translate protocol assets; no semantic change]
 // [2026-09-04]-[protocol slim-down v2: after mechanizing the watermark rules (context-watch hard gate + [WATERMARK:SESSION]
 //  measured line), removed the advisory long text; added the built-in explore/general ban and the minimal delegation sample;
 //  {{DELEGATION_FLOOR}}/{{SOFT}}/{{HARD}}/{{FORCE}} are interpolated by the index.ts transform per user jsonc (defaults
-//  3k/60k/80k/100k); the repo AGENTS.md is the default literal version]
+//  3k/60k/80k/100k)]
 export const AGENTS_MD = `# Global Protocol (master dispatcher rules; opencode-switchman subagent rules are embedded in the shell definitions)
 
 > This protocol ships with the opencode-switchman plugin and is injected into the system prompt automatically by default (bundled with the package, updated with versions); scope: opencode with the opencode-switchman plugin installed.

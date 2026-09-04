@@ -315,7 +315,7 @@ export interface SwitchmanOptions {
   cost?: { enabled?: boolean }
   billingWindow?: BillingWindowConfig
   banner?: { enabled?: boolean }
-  /** Dispatcher protocol system-prompt injection (bundled builtin; when off, depends on the user installing AGENTS.md themselves) */
+  /** Dispatcher protocol system-prompt injection (bundled builtin; when off, depends on the user installing the protocol text in their own AGENTS.md themselves) */
   rules?: RulesOptions
   lanes?: Partial<Record<Lane, string[]>>
   matrix?: MatrixOptions

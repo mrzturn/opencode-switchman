@@ -332,7 +332,7 @@ Both commands sync three configs (line-level surgery that preserves comments and
 ## Documentation
 
 - [Technical spec (contracts / algorithms / field-test notes)](./docs/2026-08-28-opencode-switchman-technical-design.md)
-- [Dispatcher rules AGENTS.md](./AGENTS.md) (bundled and injected via system prompt; no manual install needed)
+- Dispatcher rules: bundled in [`src/assets/agents-md.ts`](./src/assets/agents-md.ts) and injected via system prompt (English-only, no manual install needed; the repo's own [AGENTS.md](./AGENTS.md) is a dev-only contribution guide)
 - DELEGATION_V1 template: see `delegation-template.md` in the state directory after installation
 
 ## License

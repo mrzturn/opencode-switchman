@@ -939,9 +939,10 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         }
         // [v1.2] dispatcher rules bundled with the package: injected into the system prompt every turn (in-memory, cannot be lost to local file edits,
         // coexists by concatenation with the user's own global/project AGENTS.md, neither overwriting the other)
-        // [2026-09-02]-[dedup: skip re-injection when the project/global AGENTS.md already carries the same text (e.g. this plugin repo's own dev
-        //  scenario, saving ~2.2k tokens/session). opencode concatenates the assembled system section into system[0] before transform fires
-        //  (session/llm/request.ts prepare), so AGENTS.md content is detectable; if not assembled, detection misses and injection proceeds (fail-safe)]-
+        // [2026-09-02]-[dedup: skip re-injection when a project/global AGENTS.md already carries the same text (a user who manually installed
+        //  the protocol, saving ~2.2k tokens/session). opencode concatenates the assembled system section into system[0] before transform fires
+        //  (session/llm/request.ts prepare), so AGENTS.md content is detectable; if not assembled, detection misses and injection proceeds (fail-safe)]
+        //  [2026-09-04]-[repo AGENTS.md is now a dev-only guide, so this branch no longer fires for this repo's own dev sessions]-
         const rulesMarker = "# Global Protocol (master dispatcher rules"
         const rulesAlreadyPresent = Array.isArray(output.system)
           && output.system.some((p) => typeof p === "string" && p.includes(rulesMarker))
