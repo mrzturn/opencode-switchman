@@ -145,10 +145,12 @@ const POOL_PROVIDER_ID: Record<"glm" | "copilot" | "deepseek", string> = {
 }
 
 /** 8-cell progress bar (█ used + ░ left), pct=null returns empty string (no bar when the row has no numeric concept) */
+// [2026-09-04]-[Clamp to ≥1 filled cell for any pct>0: rounding used to collapse small quotas (e.g. MCP 5%) to an
+//  all-empty track, contradicting the printed percentage]
 function bar8(pct: number | null | undefined): string {
   if (typeof pct !== "number" || Number.isNaN(pct)) return ""
   const p = Math.max(0, Math.min(100, pct))
-  const filled = Math.round((p / 100) * 8)
+  const filled = p > 0 ? Math.max(1, Math.round((p / 100) * 8)) : 0
   return "█".repeat(filled) + "░".repeat(8 - filled)
 }
 

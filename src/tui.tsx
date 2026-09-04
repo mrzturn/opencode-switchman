@@ -1,22 +1,26 @@
 /** @jsxImportSource @opentui/solid */
-// TUI 侧边栏实时状态面板：
-// - 上半区：各任务档位（lane）实时最佳候选模型，轮询读取 route-snapshot.json
-//   （由 src/index.ts bannerLines() 与横幅同源计算后覆盖写入 src/state.ts writeRouteSnapshot）。
-// - 下半区：最新一条通知，轮询读取 status-log.json（src/state.ts appendStatusLog 写入）。
-// 替代原先阻塞输入框的 stderr 横幅（console.error 刷屏）。
-// [2026-08-31]-[新增 TUI Slot 插件；需用户在 tui.json 的 plugin 数组里显式加入本包，TUI 插件无目录自动发现]
-// [2026-09-01]-[通知区收窄为仅显示最后一条；新增最佳候选面板，与通知区上下分栏展示]
+// TUI sidebar live status panel:
+// - Top section: real-time best candidate model per task lane, polling route-snapshot.json
+//   (computed by bannerLines() in src/index.ts — same source as the banner — and overwritten via writeRouteSnapshot in src/state.ts).
+// - Bottom section: latest notice, polling status-log.json (written by appendStatusLog in src/state.ts).
+// Replaces the old stderr banner that blocked the input box (console.error spam).
+// [2026-08-31]-[New TUI Slot plugin; users must add this package explicitly to the plugin array in tui.json — TUI plugins have no directory auto-discovery]
+// [2026-09-01]-[Notice area narrowed to the last entry only; best-candidate panel added, stacked above the notice area]
+// [2026-09-04]-[English localization: translate panel/dialog copy and comments; RESTART_HINT_RE now matches the English
+//  "restart opencode" notice (emitters were localized in the same sweep); no other behavior change]
 import type { TuiPlugin, TuiPluginModule, TuiPluginApi } from "@opencode-ai/plugin/tui"
-// [2026-09-02]-[solid-js 必须裸导入：宿主 runtime-plugin 仅对精确 specifier（"solid-js"/"@opentui/solid"）
-// 做运行时重写（opentui:runtime-module:* → 宿主实例）；深路径 "solid-js/dist/solid.js" 不匹配重写规则，
-// 会加载第二份 solid 实例→两份图谱互不订阅→面板挂载后全冻结。构建期 server.js 误解析由
-// @opentui/solid/bun-plugin 的 onLoad 重定向（server.js→solid.js 客户端构建）解决]-[影响 TUI 面板实时刷新]
+// [2026-09-02]-[solid-js must be imported bare: the host runtime-plugin only rewrites exact specifiers
+//  ("solid-js"/"@opentui/solid") at runtime (opentui:runtime-module:* → host instance); the deep path "solid-js/dist/solid.js"
+//  misses the rewrite rule and loads a second solid instance → two reactive graphs that never subscribe to each other →
+//  the whole panel freezes after mount. Build-time misresolution of server.js is handled by the onLoad redirect in
+//  @opentui/solid/bun-plugin (server.js → solid.js client build)]-[impacts live refresh of the TUI panel]
 import { createSignal, createMemo, onCleanup, For } from "solid-js"
 import { readFileSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { join, relative, isAbsolute, sep } from "node:path"
-// [2026-09-03]-[/poolConfig //modelRank 交互弹窗：任务池选配勾选与能力排名直接读写用户覆盖层
-//  （pool-config.json / capability-rank.json），与插件主进程 mtime 热加载同源生效]
+// [2026-09-03]-[/poolConfig //modelRank interactive dialogs: task-pool pick lists and capability ranking read/write the
+//  user override layer (pool-config.json / capability-rank.json) directly, taking effect in sync with the plugin main
+//  process mtime hot reload]
 import { loadPoolConfig, writePoolConfig, resetPoolConfig, loadCapabilityRank, writeCapabilityRank } from "./user-overrides"
 import { allModelRows, rankViewRows } from "./config-cli"
 import { LANE_ORDER, type Lane } from "./types"
@@ -25,7 +29,7 @@ import { runHandover, type HandoverPort } from "./handover-core"
 type StatusLogEntry = { ts: string; text: string }
 type RouteSnapshotEntry = { lane: string; best: string | null; degraded: boolean }
 type RouteSnapshot = { ts: string; entries: RouteSnapshotEntry[] }
-// [2026-09-02]-[v2：一 provider 一条目块＋rows 子行（进度条/重置时间），与 banner.ts providerStatusEntries 同构]
+// [2026-09-02]-[v2: one block per provider plus rows sub-lines (progress bar / reset time), isomorphic to providerStatusEntries in banner.ts]
 type QuotaBriefRow = { label: string; text: string; usedPct: number | null; tail?: string }
 type QuotaBriefEntry = { pool: string; label: string; rows: QuotaBriefRow[]; observeOnly: boolean; peakActive: boolean; stale: boolean }
 type QuotaBrief = { ts: string; entries: QuotaBriefEntry[] }
@@ -39,7 +43,7 @@ function readStatusLog(): StatusLogEntry[] {
     const p = join(statusLogPath(), "status-log.json")
     const raw = JSON.parse(readFileSync(p, "utf8"))
     if (Array.isArray(raw)) return raw
-  } catch { /* fail-open：文件不存在或坏则空列表 */ }
+  } catch { /* fail-open: missing or corrupt file → empty list */ }
   return []
 }
 
@@ -48,50 +52,56 @@ function readRouteSnapshot(): RouteSnapshotEntry[] {
     const p = join(statusLogPath(), "route-snapshot.json")
     const raw = JSON.parse(readFileSync(p, "utf8")) as RouteSnapshot
     if (raw && Array.isArray(raw.entries)) return raw.entries
-  } catch { /* fail-open：文件不存在或坏则空列表 */ }
+  } catch { /* fail-open: missing or corrupt file → empty list */ }
   return []
 }
 
-// [2026-09-01]-[侧边栏「水位/峰值」面板：与 route-snapshot 同轮询节奏，读 quota-brief.json
-//  （src/banner.ts providerStatusEntries → src/state.ts writeQuotaBrief 落盘，observe=false 的 provider
-//  在写入侧已过滤，此处拿到的即「用户配置 observe:true」的全量条目）]
+// [2026-09-01]-[Sidebar "watermark/peak" panel: polls quota-brief.json at the same cadence as route-snapshot
+//  (src/banner.ts providerStatusEntries → writeQuotaBrief in src/state.ts persists it; providers with observe=false
+//  are already filtered on the write side, so entries here are exactly the observe:true set from user config)]
 function readQuotaBrief(): QuotaBriefEntry[] {
   try {
     const p = join(statusLogPath(), "quota-brief.json")
     const raw = JSON.parse(readFileSync(p, "utf8")) as QuotaBrief
     if (raw && Array.isArray(raw.entries)) return raw.entries
-  } catch { /* fail-open：文件不存在或坏则空列表 */ }
+  } catch { /* fail-open: missing or corrupt file → empty list */ }
   return []
 }
 
-// [2026-09-01]-[标题旁「需要重启更新识别」标注：直接读 active-matrix.json（manager.recompute 每次落盘，
-// 与状态实时同源），非空即代表本轮有新 provider/模型未完成壳注册，重启完成后此文件自然清空该字段]
+// [2026-09-01]-["restart required" tag next to the title: reads active-matrix.json directly (manager.recompute persists
+//  it every run, same source as live status); non-empty means new providers/models await shell registration this round,
+//  and the field clears naturally once a restart completes]
 function readRestartRequired(): string[] {
   try {
     const p = join(statusLogPath(), "active-matrix.json")
     const raw = JSON.parse(readFileSync(p, "utf8")) as { restartRequired?: string[] }
     if (Array.isArray(raw?.restartRequired)) return raw.restartRequired
-  } catch { /* fail-open：文件不存在或坏则视为无需重启 */ }
+  } catch { /* fail-open: missing or corrupt file → treated as no restart needed */ }
   return []
 }
 
 const POLL_MS = 2000
 const SHOW_LAST = 1
-const RESTART_HINT_RE = /重启[^；：，。、（）()]*/g
+const RESTART_HINT_RE = /restart opencode[^;]*/gi
 const MARQUEE_MS = 150
 const TITLE = "switchman"
-// [2026-09-02]-[任务档位/推荐模型固定配色：橙=lane 类型，绿=推荐模型名，与水位渐变绿色系呼应但语义独立]
-const LANE_COLOR = "#f59e0b"
-const MODEL_COLOR = "#22c55e"
-const NOTICE_HEADER_COLOR = "#7dd3fc"
+// [2026-09-02]-[Fixed palette for lanes/recommended models: orange = lane type, green = recommended model name; echoes
+//  the watermark greens but keeps independent semantics]
+// [2026-09-04]-[Brightened to the 400-level palette to match the new waterColor stops; the notice header drops its
+//  standalone cyan (clashed with the warm body palette) and now renders like a functional muted heading]
+const LANE_COLOR = "#fbbf24"
+const MODEL_COLOR = "#4ade80"
 
-// [2026-09-02]-[水位渐变色：绿(充裕)→黄(过半)→红(耗尽)，三段线性插值；usedPct=null（数据未就绪/不可算）时
-//  调用方回退中性色，不在此处兜底避免误导"绿色"表示确定安全]
+// [2026-09-02]-[Watermark gradient: green (plenty) → yellow (past half) → red (exhausted), three-segment linear
+//  interpolation; usedPct=null (data not ready / not computable) → the caller falls back to a neutral color; no
+//  fallback here, to avoid a misleading "green" implying definite safety]
+// [2026-09-04]-[Brightened stops to the 400-level palette: the old 500-level olive mid-tones were the dimmest text
+//  in the panel; the sidebar needs contrast headroom]
 function waterColor(pct: number | null): string | null {
   if (pct === null || Number.isNaN(pct)) return null
   const p = Math.max(0, Math.min(100, pct))
   const stops: Array<[number, [number, number, number]]> = [
-    [0, [34, 197, 94]], [50, [234, 179, 8]], [100, [239, 68, 68]],
+    [0, [74, 222, 128]], [50, [250, 204, 21]], [100, [248, 113, 113]],
   ]
   let lo = stops[0]!, hi = stops[stops.length - 1]!
   for (let i = 0; i < stops.length - 1; i++) {
@@ -104,7 +114,8 @@ function waterColor(pct: number | null): string | null {
   return `#${hex(lerp(lo[1][0], hi[1][0]))}${hex(lerp(lo[1][1], hi[1][1]))}${hex(lerp(lo[1][2], hi[1][2]))}`
 }
 
-// [2026-09-02]-[子行标签显宽对齐：CJK 按 2 列计（padEnd 按码元数会把「周」与「5h」错开一列）]
+// [2026-09-02]-[Display-width alignment for sub-row labels: CJK counts as 2 columns (padEnd by code units would
+//  misalign a CJK glyph vs "5h" by one column)]
 function dispWidth(s: string): number {
   let w = 0
   for (const ch of s) w += (ch.codePointAt(0) ?? 0) > 0xff ? 2 : 1
@@ -114,7 +125,20 @@ function padEndW(s: string, width: number): string {
   return s + " ".repeat(Math.max(0, width - dispWidth(s)))
 }
 
-// [2026-09-02]-[彩虹走马灯：HSV→hex，色相随时间偏移滚动，饱和度/明度固定出高识别度亮色]
+// [2026-09-04]-[Quota sub-row bar split: banner puts the 8-cell bar at the head of r.text; splitting it out lets the
+//  █ fill keep the waterColor gradient while the ░ track renders muted, so the fill boundary stays readable instead
+//  of dissolving into a same-color dotted track; non-bar rows pass through untouched]
+function splitBarText(text: string): { fill: string; track: string; rest: string } {
+  const m = /^([█░]+)(.*)$/.exec(text)
+  if (!m) return { fill: "", track: "", rest: text }
+  const bar = m[1]!
+  const cut = bar.indexOf("░")
+  return cut === -1
+    ? { fill: bar, track: "", rest: m[2]! }
+    : { fill: bar.slice(0, cut), track: bar.slice(cut), rest: m[2]! }
+}
+
+// [2026-09-02]-[Rainbow marquee: HSV→hex, hue rolling over time, fixed saturation/value for a high-visibility bright color]
 function hsvToHex(h: number, s: number, v: number): string {
   const hh = ((h % 360) + 360) % 360
   const c = v * s
@@ -132,8 +156,9 @@ function hsvToHex(h: number, s: number, v: number): string {
   return `#${hex(to255(r))}${hex(to255(g))}${hex(to255(b))}`
 }
 
-// [2026-09-01]-[通知含"重启"提示（restartRequired/provider.list 后台探测）时高亮为 error 色，
-// 一眼分辨"需要动手重启"与普通状态播报；纯字符串切分渲染，不引入 markdown/ansi 解析]
+// [2026-09-01]-[When a notice carries a "restart opencode" hint (restartRequired / provider.list background probe),
+//  highlight it in error color to tell "manual restart needed" apart from ordinary status chatter at a glance;
+//  rendered by plain string splitting, no markdown/ansi parsing]
 function noticeSegments(text: string): { text: string; alert: boolean }[] {
   const matches = [...text.matchAll(RESTART_HINT_RE)]
   if (matches.length === 0) return [{ text, alert: false }]
@@ -149,10 +174,11 @@ function noticeSegments(text: string): { text: string; alert: boolean }[] {
   return segments
 }
 
-// [2026-09-02]-[补回被本面板 single_winner 覆盖的内置 footer 内容：项目路径+git 分支+版本行。
-//  本插件 order 缺省 0 < 内置 internal:sidebar-footer 的 100，sidebar_footer 槽 single_winner 只渲染
-//  链首条目，内置的 path:branch/version 行整体消失；此处按内置同款逻辑（session.directory 优先、
-//  目录与 TUI cwd 一致才显示 vcs.branch、abbreviateHome 缩写）在面板底部补渲染]
+// [2026-09-02]-[Restore the built-in footer content shadowed by this panel's single_winner: project path + git branch
+//  + version line. This plugin's default order 0 < the built-in internal:sidebar-footer's 100, and the sidebar_footer
+//  slot's single_winner only renders the chain head, so the built-in path:branch/version lines vanish entirely;
+//  re-render them at the panel bottom with the same logic as the built-in one (session.directory first, vcs.branch
+//  shown only when the directory matches the TUI cwd, abbreviateHome shortening)]
 function abbreviateHome(input: string, home: string): string {
   if (!home) return input
   const rel = relative(home, input)
@@ -161,9 +187,10 @@ function abbreviateHome(input: string, home: string): string {
   return "~" + sep + rel
 }
 
-// [2026-09-02]-[分支实时刷新：api.state.vcs.branch 依赖 opencode 服务端 .git/HEAD watcher→vcs.branch.updated
-//  事件链，实测切换分支后长期滞留旧值；改为插件侧直读目标目录 .git/HEAD 自证当前分支（含 worktree 的
-//  .git 文件 gitdir 指针），detached HEAD 与非 git 目录返回 undefined 与内置 footer 语义一致]
+// [2026-09-02]-[Live branch refresh: api.state.vcs.branch depends on the opencode server's .git/HEAD watcher → the
+//  vcs.branch.updated event chain, which in practice lingers on stale values after a branch switch; instead the plugin
+//  reads the target directory's .git/HEAD directly (including the .git-file gitdir pointer for worktrees); detached
+//  HEAD and non-git directories return undefined, matching the built-in footer semantics]
 function gitBranch(dir: string): string | undefined {
   try {
     const dotGit = join(dir, ".git")
@@ -194,8 +221,9 @@ function ViewInner(props: { api: TuiPluginApi; sessionID: string }) {
   const [quotaBrief, setQuotaBrief] = createSignal<QuotaBriefEntry[]>(readQuotaBrief())
   const [restartRequired, setRestartRequired] = createSignal<string[]>(readRestartRequired())
   const [tick, setTick] = createSignal(0)
-  // [2026-09-02]-[分支信号：每轮轮询直读 .git/HEAD（session 目录优先回退 TUI 目录）；另订阅
-  //  vcs.branch.updated 事件在事件链正常时即时刷新，事件丢失由轮询兜底；直读失败回退 api.state.vcs]
+  // [2026-09-02]-[Branch signal: re-read .git/HEAD every poll cycle (session directory first, TUI directory as
+  //  fallback); also subscribes to vcs.branch.updated for instant refresh when the event chain works, with polling as
+  //  the safety net; falls back to api.state.vcs when the direct read fails]
   const [gitDirBranch, setGitDirBranch] = createSignal<string | undefined>(gitBranch(props.api.state.path.directory))
   const refreshBranch = () => {
     const session = props.api.state.session.get(props.sessionID)
@@ -209,7 +237,8 @@ function ViewInner(props: { api: TuiPluginApi; sessionID: string }) {
     setRestartRequired(readRestartRequired())
     refreshBranch()
   }, POLL_MS)
-  // [2026-09-02]-[标题彩虹走马灯需要比数据轮询快得多的独立心跳，二者职责/频率不同，不共用一个 timer]
+  // [2026-09-02]-[The title rainbow marquee needs its own heartbeat far faster than data polling; separate duties and
+  //  frequencies, no shared timer]
   const marqueeTimer = setInterval(() => setTick((t) => (t + 1) % 360), MARQUEE_MS)
   onCleanup(() => {
     clearInterval(timer)
@@ -218,8 +247,9 @@ function ViewInner(props: { api: TuiPluginApi; sessionID: string }) {
   onCleanup(props.api.event.on("vcs.branch.updated", refreshBranch))
   const theme = () => props.api.theme.current
   const recent = () => entries().slice(-SHOW_LAST)
-  // 与内置 sidebar-footer 同款取值：会话目录优先回退 TUI 目录；分支优先取插件侧直读值（实时），
-  // 直读失败回退 api.state.vcs（仅会话目录=TUI cwd 时可信）
+  // Same values as the built-in sidebar-footer: session directory first with TUI directory fallback; branch prefers
+  // the plugin's direct read (real-time), falling back to api.state.vcs (trustworthy only when the session directory
+  // equals the TUI cwd)
   const location = createMemo(() => {
     const session = props.api.state.session.get(props.sessionID)
     const dir = session?.directory || props.api.state.path.directory
@@ -233,9 +263,17 @@ function ViewInner(props: { api: TuiPluginApi; sessionID: string }) {
 
   return (
     <box flexDirection="column" gap={0}>
-      {/* [2026-09-02]-[v2 块状布局：头部行=✓+provider 名+高峰/滞后/仅观察标注；子行缩进，进度条+百分比
-          按 waterColor 绿→红渐变一眼读状态，重置/刷新时间弱化色尾随] */}
-      {quotaBrief().length > 0 && (
+      {/* [2026-09-02]-[v2 block layout: header row = ✓ + provider name + peak/stale/observe-only tags; indented
+          sub-rows, progress bar + percentage colored by the waterColor green→red gradient for at-a-glance status,
+          reset/refresh time trailing in muted color] */}
+      {/* [2026-09-04]-[Layout pass: quota sub-rows pad labels to a global 8-column grid (bars and values align across
+          provider blocks; fixes glued "refresh2026-10-01"/"balanceexhausted"), the ░ track renders muted under the
+          colored fill, tails get a leading space, sections (quota/routes/notice/footer) are separated by one blank
+          line each, and per-entry ·observe-only tags collapse when every provider is observe-only (the [WATERMARK]
+          banner already carries the full detail)] */}
+      {quotaBrief().length > 0 && (() => {
+        const allObserve = quotaBrief().every((q) => q.observeOnly)
+        return (
         <box flexDirection="column" gap={0}>
           <For each={quotaBrief()}>
             {(q) => (
@@ -243,26 +281,33 @@ function ViewInner(props: { api: TuiPluginApi; sessionID: string }) {
                 <text>
                   {!q.observeOnly && <span style={{ fg: MODEL_COLOR }}>✓ </span>}
                   <b><span style={{ fg: theme().text }}>{q.label}</span></b>
-                  {q.peakActive && <span style={{ fg: theme().warning }}> ·高峰</span>}
-                  {q.stale && <span style={{ fg: theme().warning }}> ·滞后</span>}
-                  {q.observeOnly && <span style={{ fg: theme().textMuted }}> ·仅观察</span>}
+                  {q.peakActive && <span style={{ fg: theme().warning }}> ·peak</span>}
+                  {q.stale && <span style={{ fg: theme().warning }}> ·stale</span>}
+                  {q.observeOnly && !allObserve && <span style={{ fg: theme().textMuted }}> ·observe-only</span>}
                 </text>
                 <For each={q.rows}>
-                  {(r) => (
-                    <text>
-                      <span style={{ fg: theme().textMuted }}>{r.label ? `  ${padEndW(r.label, 4)}` : "  "}</span>
-                      <span style={{ fg: waterColor(r.usedPct) ?? theme().textMuted }}>{r.text}</span>
-                      {r.tail && <span style={{ fg: theme().textMuted }}>{r.tail}</span>}
-                    </text>
-                  )}
+                  {(r) => {
+                    const { fill, track, rest } = splitBarText(r.text)
+                    const value = waterColor(r.usedPct)
+                    return (
+                      <text>
+                        <span style={{ fg: theme().textMuted }}>{r.label ? `  ${padEndW(r.label, 8)}` : "  "}</span>
+                        <span style={{ fg: value ?? theme().textMuted }}>{fill}</span>
+                        <span style={{ fg: theme().textMuted }}>{track}</span>
+                        <span style={{ fg: value ?? theme().textMuted }}>{rest}</span>
+                        {r.tail && <span style={{ fg: theme().textMuted }}> {r.tail}</span>}
+                      </text>
+                    )
+                  }}
                 </For>
               </box>
             )}
           </For>
         </box>
-      )}
+        )
+      })()}
       {routes().length > 0 && (
-        <box flexDirection="column" gap={0}>
+        <box paddingTop={1} flexDirection="column" gap={0}>
           <text>
             <b>
               <For each={[...TITLE]}>
@@ -270,14 +315,14 @@ function ViewInner(props: { api: TuiPluginApi; sessionID: string }) {
               </For>
             </b>
             {restartRequired().length > 0 && (
-              <span style={{ fg: theme().error }}> 【需要重启更新识别】</span>
+              <span style={{ fg: theme().error }}> [RESTART REQUIRED]</span>
             )}
           </text>
           <For each={routes()}>
             {(r: RouteSnapshotEntry) => (
               <text fg={theme().textMuted}>
                 <span style={{ fg: LANE_COLOR }}>{r.lane.padEnd(10)} </span>
-                <span style={{ fg: MODEL_COLOR }}>{r.best ?? "全不可用"}</span>
+                <span style={{ fg: MODEL_COLOR }}>{r.best ?? "none available"}</span>
                 {r.degraded ? <span style={{ fg: theme().warning }}>*</span> : ""}
               </text>
             )}
@@ -285,8 +330,8 @@ function ViewInner(props: { api: TuiPluginApi; sessionID: string }) {
         </box>
       )}
       {recent().length > 0 && (
-        <box flexDirection="column" gap={0}>
-          <text fg={NOTICE_HEADER_COLOR}>
+        <box paddingTop={1} flexDirection="column" gap={0}>
+          <text fg={theme().textMuted}>
             <b>notice</b>
           </text>
           <For each={recent()}>
@@ -301,7 +346,8 @@ function ViewInner(props: { api: TuiPluginApi; sessionID: string }) {
           </For>
         </box>
       )}
-      {/* [2026-09-02]-[与通知区间留一行空隙区分两块；分支名用绿色与推荐模型色统一] */}
+      {/* [2026-09-02]-[One blank line separating this block from the notice area; branch name in green to match the
+          recommended-model color] */}
       <box flexShrink={0} paddingTop={1} flexDirection="column" gap={0}>
         <text>
           <span style={{ fg: theme().textMuted }}>{location().parent}/</span>
@@ -321,17 +367,18 @@ function ViewInner(props: { api: TuiPluginApi; sessionID: string }) {
   )
 }
 
-// ---- [2026-09-03]-[/poolConfig //modelRank 交互弹窗：DialogSelect 选中不关窗（宿主 submit 只回调），
-//  勾选语义=onSelect 原地切换 + writeJsonAtomic 落盘 + toast 回执；层间跳转用 dialog.replace
-//  （与宿主内置弹窗同模式）；Esc 由宿主 DialogSelect 自带关闭。非 TUI 客户端走 cfg.command 会话式]----
+// ---- [2026-09-03]-[/poolConfig //modelRank interactive dialogs: DialogSelect stays open on selection (host submit
+//  only fires the callback); checkbox semantics = onSelect toggles in place + writeJsonAtomic persists + toast
+//  receipt; cross-layer navigation via dialog.replace (same pattern as the host's built-in dialogs); Esc closes via
+//  the host DialogSelect itself. Non-TUI clients go through the cfg.command chat variants]----
 
 function openPoolConfigDialog(api: TuiPluginApi): void {
   api.ui.dialog.replace(() => <PoolPickerDialog api={api} />)
 }
 
 function PoolPickerDialog(props: { api: TuiPluginApi }) {
-  // [2026-09-03 语义修正]-[池=任务池 lane（economy/mechanical/main/hard/vision/review），非 provider 池：
-  //  选配各 lane 参与模型让六档候选体现差异化；同模型可重复参与多个 lane]
+  // [2026-09-03 semantic fix]-[Pool = task lane (economy/mechanical/main/hard/vision/review), not a provider pool:
+  //  pick the participating models per lane so the six-lane candidates differ; the same model may join multiple lanes]
   const lanes = createMemo(() => {
     const allow = loadPoolConfig()
     const total = allModelRows().length
@@ -343,13 +390,13 @@ function PoolPickerDialog(props: { api: TuiPluginApi }) {
   })
   return (
     <props.api.ui.DialogSelect
-      title="任务池选配（选择任务池；Esc 退出）"
+      title="Task pools (pick a task pool; Esc to exit)"
       options={lanes().map((p) => ({
         title: `${p.sel ? "✎ " : ""}${p.lane}`,
         value: p.lane,
         description: p.sel
-          ? `手动选配 ${p.sel.size}/${p.total} 参与模型`
-          : "未配置：系统默认（全部可用模型参与）",
+          ? `manual selection: ${p.sel.size}/${p.total} models participating`
+          : "not configured: system default (all available models participate)",
         onSelect: () => props.api.ui.dialog.replace(() => <PoolModelsDialog api={props.api} lane={p.lane} />),
       }))}
     />
@@ -358,7 +405,8 @@ function PoolPickerDialog(props: { api: TuiPluginApi }) {
 
 function PoolModelsDialog(props: { api: TuiPluginApi; lane: Lane }) {
   const rows = createMemo(() => allModelRows())
-  // 初始勾选：已手动配置→配置清单；未配置→系统默认全量（首次切换即物化为显式清单）
+  // Initial checkboxes: manually configured → the configured list; unconfigured → system default full set (the first
+  // toggle materializes it as an explicit list)
   const [selected, setSelected] = createSignal<ReadonlySet<string>>(
     new Set(loadPoolConfig()[props.lane] ?? rows().map((r) => r.key)),
   )
@@ -367,13 +415,14 @@ function PoolModelsDialog(props: { api: TuiPluginApi; lane: Lane }) {
     try {
       writePoolConfig(props.lane, [...cur])
     } catch (exc) {
-      // 防御：未知 lane/IO 异常不中断弹窗（当前 lane 来自 LANE_ORDER 不可达，兜底未来改动）
-      props.api.ui.toast({ variant: "error", message: `写入失败：${exc instanceof Error ? exc.message : exc}` })
+      // Defensive: unknown lane/IO errors must not break the dialog (current lanes come from LANE_ORDER so this is
+      // unreachable; guards future changes)
+      props.api.ui.toast({ variant: "error", message: `write failed: ${exc instanceof Error ? exc.message : exc}` })
       return
     }
     props.api.ui.toast({
       variant: added ? "success" : "info",
-      message: `${added ? "已加入" : "已移出"} ${props.lane} 任务池：${key}（即时生效，侧栏同步刷新）`,
+      message: `${added ? "Added" : "Removed"} ${key} ${added ? "to" : "from"} the ${props.lane} pool (effective immediately, sidebar refreshes)`,
     })
   }
   const toggle = (key: string) => {
@@ -381,9 +430,10 @@ function PoolModelsDialog(props: { api: TuiPluginApi; lane: Lane }) {
     const added = !cur.has(key)
     if (added) cur.add(key)
     else {
-      // 至少保留一个参与模型；恢复系统默认请用「清除配置」（空清单=未配置=默认全量）
+      // Keep at least one participating model; to restore the system default use "Clear config" (empty list =
+      // unconfigured = default full set)
       if (cur.size <= 1) {
-        props.api.ui.toast({ variant: "warning", message: "至少保留一个参与模型；恢复系统默认请用「清除配置」" })
+        props.api.ui.toast({ variant: "warning", message: 'Keep at least one participating model; use "Clear config" to restore the system default' })
         return
       }
       cur.delete(key)
@@ -396,31 +446,31 @@ function PoolModelsDialog(props: { api: TuiPluginApi; lane: Lane }) {
     try {
       writePoolConfig(props.lane, [...cur])
     } catch (exc) {
-      props.api.ui.toast({ variant: "error", message: `写入失败：${exc instanceof Error ? exc.message : exc}` })
+      props.api.ui.toast({ variant: "error", message: `write failed: ${exc instanceof Error ? exc.message : exc}` })
       return
     }
-    props.api.ui.toast({ variant: "success", message: `${props.lane} 任务池已全量选配` })
+    props.api.ui.toast({ variant: "success", message: `${props.lane} pool: all models selected` })
   }
   const reset = () => {
     resetPoolConfig(props.lane)
     setSelected(new Set(rows().map((r) => r.key)))
-    props.api.ui.toast({ variant: "success", message: `${props.lane} 任务池配置已清除（恢复系统默认候选集）` })
+    props.api.ui.toast({ variant: "success", message: `${props.lane} pool config cleared (system default candidate set restored)` })
   }
   const nSel = () => selected().size
   const options = createMemo(() => [
-    { title: "← 返回任务池列表", value: "__back", onSelect: () => props.api.ui.dialog.replace(() => <PoolPickerDialog api={props.api} />) },
-    { title: "☑ 全部选配", value: "__all", onSelect: () => bulk() },
-    { title: "✕ 清除配置（恢复系统默认：全部可用模型参与）", value: "__reset", onSelect: reset },
+    { title: "← Back to pool list", value: "__back", onSelect: () => props.api.ui.dialog.replace(() => <PoolPickerDialog api={props.api} />) },
+    { title: "☑ Select all", value: "__all", onSelect: () => bulk() },
+    { title: "✕ Clear config (system default: all available models participate)", value: "__reset", onSelect: reset },
     ...rows().map((r) => ({
       title: `${selected().has(r.key) ? "[x]" : "[ ]"} ${r.modelId}`,
       value: r.key,
-      description: `${r.tier}档${r.source === "manual" ? " · 手动排名" : ""}`,
+      description: `${r.tier}-tier${r.source === "manual" ? " · manual rank" : ""}`,
       onSelect: () => toggle(r.key),
     })),
   ])
   return (
     <props.api.ui.DialogSelect
-      title={`${props.lane} 任务池选配（${nSel()}/${rows().length} 参与；选中即切换，可跨池重复）`}
+      title={`${props.lane} pool selection (${nSel()}/${rows().length} participating; select toggles, duplicates across pools allowed)`}
       options={options()}
       flat
     />
@@ -435,11 +485,11 @@ function RankPickerDialog(props: { api: TuiPluginApi }) {
   const rows = createMemo(() => rankViewRows())
   return (
     <props.api.ui.DialogSelect
-      title="模型能力排名（#1 最强，命中者优先于基础能力分；选择模型进行调整）"
+      title="Model capability ranking (#1 strongest; manual hits take precedence over base scores; pick a model to adjust)"
       options={rows().map((r, i) => ({
         title: `#${String(i + 1).padStart(2, "0")} ${r.modelId}`,
         value: r.key,
-        description: `${r.tier}档 · ${r.source === "manual" ? "手动排名" : "基础能力分"}`,
+        description: `${r.tier}-tier · ${r.source === "manual" ? "manual rank" : "base capability score"}`,
         onSelect: () => props.api.ui.dialog.replace(() => <RankActionsDialog api={props.api} model={r.modelId} modelKey={r.key} />),
       }))}
       flat
@@ -452,11 +502,12 @@ function RankActionsDialog(props: { api: TuiPluginApi; model: string; modelKey: 
   const at = () => rank().indexOf(props.modelKey)
   const apply = (next: string[], message: string) => {
     writeCapabilityRank(next)
-    props.api.ui.toast({ variant: "success", message: `${message}（即时生效，侧栏同步刷新）` })
+    props.api.ui.toast({ variant: "success", message: `${message} (effective immediately, sidebar refreshes)` })
     props.api.ui.dialog.replace(() => <RankPickerDialog api={props.api} />)
   }
   const move = (delta: -1 | 0 | 1) => {
-    // delta 0=置顶；±1=相邻换位（未排名模型上移/下移=按目标位插入）
+    // delta 0 = pin to top; ±1 = swap with the neighbor (moving an unranked model up/down = insert at the target
+    // position)
     const cur = rank()
     const i = cur.indexOf(props.modelKey)
     if (delta === 0) {
@@ -467,40 +518,41 @@ function RankActionsDialog(props: { api: TuiPluginApi; model: string; modelKey: 
       if (i >= 0) cur.splice(i, 1)
       cur.splice(target, 0, props.modelKey)
     }
-    apply(cur, delta === 0 ? `已置顶 ${props.model}` : `已调整 ${props.model} 排名至 #${cur.indexOf(props.modelKey) + 1}`)
+    apply(cur, delta === 0 ? `Pinned ${props.model} to top` : `Moved ${props.model} to rank #${cur.indexOf(props.modelKey) + 1}`)
   }
   const ranked = () => at() >= 0
   const options = createMemo(() => {
     const list = [
-      { title: "▲ 置顶（设为最强）", value: "top", onSelect: () => move(0) },
+      { title: "▲ Pin to top (set as strongest)", value: "top", onSelect: () => move(0) },
       ...(ranked() && at() > 0
-        ? [{ title: "↑ 上移一位", value: "up", onSelect: () => move(-1) }]
+        ? [{ title: "↑ Move up one", value: "up", onSelect: () => move(-1) }]
         : []),
       ...(ranked() && at() < rank().length - 1
-        ? [{ title: "↓ 下移一位", value: "down", onSelect: () => move(1) }]
+        ? [{ title: "↓ Move down one", value: "down", onSelect: () => move(1) }]
         : []),
       ...(ranked()
-        ? [{ title: "✕ 移出排名（回退基础能力分）", value: "out", onSelect: () => apply(rank().filter((k) => k !== props.modelKey), `已移出 ${props.model}`) }]
-        : [{ title: "＋ 加入排名（末尾）", value: "in", onSelect: () => move(1) }]),
-      { title: "← 返回排名列表", value: "__back", onSelect: () => props.api.ui.dialog.replace(() => <RankPickerDialog api={props.api} />) },
+        ? [{ title: "✕ Remove from ranking (fall back to base score)", value: "out", onSelect: () => apply(rank().filter((k) => k !== props.modelKey), `Removed ${props.model}`) }]
+        : [{ title: "＋ Add to ranking (at the end)", value: "in", onSelect: () => move(1) }]),
+      { title: "← Back to ranking list", value: "__back", onSelect: () => props.api.ui.dialog.replace(() => <RankPickerDialog api={props.api} />) },
     ]
     return list
   })
   return (
     <props.api.ui.DialogSelect
-      title={`${props.model}（当前 ${ranked() ? `手动排名 #${at() + 1}` : "未手动排名"}）`}
+      title={`${props.model} (currently ${ranked() ? `manual rank #${at() + 1}` : "not manually ranked"})`}
       options={options()}
       flat
     />
   )
 }
 
-// ---- [2026-09-04]-[/handover 直接执行版（不经 AI 对话链路，替代原 cfg.command 会话式交接）：
-//  核心编排抽至 src/handover-core.ts（与主插件 tool.execute.after 自动触发共用）；
-//  此处仅 v2 SDK 适配（api.client 平铺参数）＋ toast 回执。行为：全量 fork 备份（[backup] 标记）
-//  → 压缩当前会话 → 不切换会话（与内置 /fork 区分）]----
+// ---- [2026-09-04]-[/handover direct-execution variant (bypasses the AI conversation chain, replacing the old
+//  cfg.command chat-style handover): core orchestration extracted to src/handover-core.ts (shared with the
+//  tool.execute.after auto trigger in the main plugin); this file keeps only the v2 SDK adapter (flat params on
+//  api.client) + toast receipts. Behavior: full fork backup ([backup] title tag) → compact the current session → no
+//  session switch (distinct from built-in /fork)]----
 
-/** v2 SDK 适配器（TUI api.client，参数平铺；RequestResult fields 非抛错） */
+/** v2 SDK adapter (TUI api.client, flat params; RequestResult fields instead of throwing) */
 function v2HandoverPort(api: TuiPluginApi): HandoverPort {
   return {
     async forkFull(sessionID, directory) {
@@ -513,7 +565,7 @@ function v2HandoverPort(api: TuiPluginApi): HandoverPort {
       return !res?.error
     },
     async lastAssistantModel(sessionID, directory) {
-      // TUI 内存态优先（零成本）→ 空态回退 REST session.messages
+      // TUI in-memory state first (zero cost) → fall back to REST session.messages when empty
       for (const m of [...api.state.session.messages(sessionID)].reverse()) {
         const info: any = (m as any)?.info ?? m
         if (info?.providerID && info?.modelID) return { providerID: String(info.providerID), modelID: String(info.modelID) }
@@ -542,17 +594,17 @@ async function runHandoverBackup(api: TuiPluginApi): Promise<void> {
   const route = api.route.current
   const sessionID = route.name === "session" && typeof route.params?.sessionID === "string" ? route.params.sessionID : undefined
   if (!sessionID) {
-    api.ui.toast({ variant: "error", message: "/handover：当前不在会话中，无可备份的会话" })
+    api.ui.toast({ variant: "error", message: "/handover: not in a session, nothing to back up" })
     return
   }
   const session = api.state.session.get(sessionID)
   const directory = session?.directory || api.state.path.directory
-  api.ui.toast({ variant: "info", message: "/handover：正在全量备份当前会话并压缩…" })
+  api.ui.toast({ variant: "info", message: "/handover: backing up the current session in full and compacting…" })
   const result = await runHandover(v2HandoverPort(api), sessionID, directory)
   if (result.ok) {
     api.ui.toast({
       variant: "success",
-      message: `${result.message}；仍在原会话，未切换`,
+      message: `${result.message}; still in the original session, not switched`,
     })
   } else {
     api.ui.toast({ variant: "error", message: `/handover ${result.message}` })
@@ -567,18 +619,19 @@ const tui: TuiPlugin = async (api) => {
       },
     },
   })
-  // [2026-09-03]-[/poolConfig //modelRank slash 命令（手动弹窗入口；会话式为 /poolConfig-chat
-  //  //modelRank-chat）：namespace=palette 才会出现在 "/" 面板
-  //  （宿主 useCommandSlashes 只取 palette 命名空间的 slashName）；老版本无 registerLayer 时
-  //  fail-open 仅缺弹窗入口（会话式 cfg.command 版本不受影响）
-  // [2026-09-04]-[/handover：直接执行（fork 备份+当前会话压缩，不切会话），无 AI 交互、无会话式变体]
+  // [2026-09-03]-[/poolConfig //modelRank slash commands (manual dialog entry points; chat variants are
+  //  /poolConfig-chat //modelRank-chat): namespace=palette is required to appear in the "/" panel
+  //  (the host useCommandSlashes only takes slashName from the palette namespace); on older hosts without
+  //  registerLayer, fail-open = only the dialog entry goes missing (the chat cfg.command variants are unaffected)
+  // [2026-09-04]-[/handover: direct execution (fork backup + compaction of the current session, no session switch),
+  //  no AI interaction, no chat variant]
   try {
     api.keymap.registerLayer({
       commands: [
         {
           name: "switchman.handover",
-          title: "备份并压缩当前会话",
-          desc: "全量 fork 当前会话为备份（标题加 [backup] 标记）并压缩当前会话；不切换会话（区别于内置 /fork）",
+          title: "Back up and compact the current session",
+          desc: "Full fork of the current session as a backup ([backup] title tag) plus compaction of the current session; no session switch (distinct from built-in /fork)",
           category: "switchman",
           namespace: "palette",
           slashName: "handover",
@@ -586,8 +639,8 @@ const tui: TuiPlugin = async (api) => {
         },
         {
           name: "switchman.pool-config",
-          title: "任务池选配",
-          desc: "选配各任务池（economy/mechanical/main/hard/vision/review）参与模型",
+          title: "Task pool selection",
+          desc: "Pick the participating models per task pool (economy/mechanical/main/hard/vision/review)",
           category: "switchman",
           namespace: "palette",
           slashName: "poolConfig",
@@ -595,8 +648,8 @@ const tui: TuiPlugin = async (api) => {
         },
         {
           name: "switchman.model-rank",
-          title: "模型能力排名",
-          desc: "手动能力排名（优先于基础能力分，越靠前能力越强）",
+          title: "Model capability ranking",
+          desc: "Manual capability ranking (takes precedence over base scores; earlier = stronger)",
           category: "switchman",
           namespace: "palette",
           slashName: "modelRank",
