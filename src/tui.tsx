@@ -20,6 +20,7 @@ import { join, relative, isAbsolute, sep } from "node:path"
 import { loadPoolConfig, writePoolConfig, resetPoolConfig, loadCapabilityRank, writeCapabilityRank } from "./user-overrides"
 import { allModelRows, rankViewRows } from "./config-cli"
 import { LANE_ORDER, type Lane } from "./types"
+import { runHandover, type HandoverPort } from "./handover-core"
 
 type StatusLogEntry = { ts: string; text: string }
 type RouteSnapshotEntry = { lane: string; best: string | null; degraded: boolean }
@@ -495,9 +496,47 @@ function RankActionsDialog(props: { api: TuiPluginApi; model: string; modelKey: 
 }
 
 // ---- [2026-09-04]-[/handover 直接执行版（不经 AI 对话链路，替代原 cfg.command 会话式交接）：
-//  ① session.fork 全量复制当前会话为备份（不传 messageID=复制全部消息）；② 备份标题加 [backup]
-//  标记（fork 计数后缀保证多次备份标题唯一）；③ 对当前会话执行 summarize 压缩（沿用最后一条
-//  assistant 消息的 provider/model）；④ 不切换会话——这是与内置 /fork 的核心区别（fork 后跳到新会话）]----
+//  核心编排抽至 src/handover-core.ts（与主插件 tool.execute.after 自动触发共用）；
+//  此处仅 v2 SDK 适配（api.client 平铺参数）＋ toast 回执。行为：全量 fork 备份（[backup] 标记）
+//  → 压缩当前会话 → 不切换会话（与内置 /fork 区分）]----
+
+/** v2 SDK 适配器（TUI api.client，参数平铺；RequestResult fields 非抛错） */
+function v2HandoverPort(api: TuiPluginApi): HandoverPort {
+  return {
+    async forkFull(sessionID, directory) {
+      const res = await api.client.session.fork({ sessionID, directory })
+      const data = res?.data
+      return data?.id ? { id: String(data.id), title: typeof data.title === "string" ? data.title : undefined } : null
+    },
+    async setTitle(sessionID, directory, title) {
+      const res = await api.client.session.update({ sessionID, directory, title })
+      return !res?.error
+    },
+    async lastAssistantModel(sessionID, directory) {
+      // TUI 内存态优先（零成本）→ 空态回退 REST session.messages
+      for (const m of [...api.state.session.messages(sessionID)].reverse()) {
+        const info: any = (m as any)?.info ?? m
+        if (info?.providerID && info?.modelID) return { providerID: String(info.providerID), modelID: String(info.modelID) }
+      }
+      const res: any = await api.client.session.messages({ sessionID, directory }).catch(() => null)
+      const rows: any[] = Array.isArray(res?.data) ? res.data : []
+      for (const row of [...rows].reverse()) {
+        const info: any = row?.info ?? row
+        if (info?.providerID && info?.modelID) return { providerID: String(info.providerID), modelID: String(info.modelID) }
+      }
+      return null
+    },
+    async compact(sessionID, directory, model) {
+      const res = await api.client.session.summarize({
+        sessionID,
+        directory,
+        providerID: model.providerID,
+        modelID: model.modelID,
+      })
+      return !res?.error
+    },
+  }
+}
 
 async function runHandoverBackup(api: TuiPluginApi): Promise<void> {
   const route = api.route.current
@@ -509,50 +548,14 @@ async function runHandoverBackup(api: TuiPluginApi): Promise<void> {
   const session = api.state.session.get(sessionID)
   const directory = session?.directory || api.state.path.directory
   api.ui.toast({ variant: "info", message: "/handover：正在全量备份当前会话并压缩…" })
-  try {
-    const forkRes = await api.client.session.fork({ sessionID, directory })
-    if (forkRes.error || !forkRes.data?.id) throw new Error(`session.fork 失败: ${forkRes.error ?? "未返回新会话 ID"}`)
-    const backupID = forkRes.data.id
-    // [backup] 标记：失败只降级为无标记备份，不阻断压缩
-    try {
-      await api.client.session.update({
-        sessionID: backupID,
-        directory,
-        title: `[backup] ${forkRes.data.title ?? sessionID}`,
-      })
-    } catch { /* fail-open */ }
-    // 压缩模型：TUI 内存态最后一条 assistant 消息 → 空态回退 REST session.messages
-    let model: { providerID: string; modelID: string } | undefined
-    for (const m of [...api.state.session.messages(sessionID)].reverse()) {
-      const info: any = (m as any)?.info ?? m
-      if (info?.providerID && info?.modelID) {
-        model = { providerID: info.providerID, modelID: info.modelID }
-        break
-      }
-    }
-    if (!model) {
-      const msgsRes: any = await api.client.session.messages({ sessionID, directory }).catch(() => null)
-      for (const entry of [...(msgsRes?.data ?? [])].reverse()) {
-        const info: any = entry?.info ?? entry
-        if (info?.providerID && info?.modelID) {
-          model = { providerID: info.providerID, modelID: info.modelID }
-          break
-        }
-      }
-    }
-    let compacted = false
-    if (model) {
-      const sumRes = await api.client.session.summarize({ sessionID, directory, providerID: model.providerID, modelID: model.modelID })
-      compacted = !sumRes.error
-    }
+  const result = await runHandover(v2HandoverPort(api), sessionID, directory)
+  if (result.ok) {
     api.ui.toast({
       variant: "success",
-      message: compacted
-        ? `已全量备份为会话 ${backupID.slice(0, 8)}…（[backup] 标记）并压缩当前会话；仍在原会话，未切换`
-        : `已全量备份为会话 ${backupID.slice(0, 8)}…（[backup] 标记）；未取到模型信息，跳过当前会话压缩`,
+      message: `${result.message}；仍在原会话，未切换`,
     })
-  } catch (exc) {
-    api.ui.toast({ variant: "error", message: `/handover 失败：${exc instanceof Error ? exc.message : exc}` })
+  } else {
+    api.ui.toast({ variant: "error", message: `/handover ${result.message}` })
   }
 }
 

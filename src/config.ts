@@ -13,7 +13,7 @@ export interface ConfigDiagnostic { code: string; level: "error" | "warn" | "inf
 export interface UserQuotaConfig { glmFiveHourReservePct: number; deepseekLowBalanceWarnCny: number }
 export interface UserCapabilityConfig { enabled: boolean; source: "auto" | "artificial-analysis" | "openrouter"; apiKey?: string; tierThresholds?: CapabilityTierThresholds | "quantile"; lmarenaCheck: boolean }
 export interface UserMatrixConfig { mode: "auto" | "app" | "tui" | "legacy"; watch: boolean }
-export interface UserContextConfig { gates: boolean; softTokens: number; hardTokens: number; forceTokens: number }
+export interface UserContextConfig { gates: boolean; softTokens: number; hardTokens: number; forceTokens: number; autoHandover: boolean }
 export interface UserConfig {
   version: number
   providers: Record<string, ProviderUserConfig>
@@ -43,7 +43,7 @@ export function defaultBehaviorConfig(): Pick<UserConfig, "quota" | "cost" | "ca
     matrix: { mode: "auto", watch: true },
     banner: { enabled: true },
     rules: { enabled: true, delegationFloor: DEFAULT_DELEGATION_FLOOR },
-    context: { gates: true, softTokens: DEFAULT_CONTEXT_TOKENS.soft, hardTokens: DEFAULT_CONTEXT_TOKENS.hard, forceTokens: DEFAULT_CONTEXT_TOKENS.force },
+    context: { gates: true, softTokens: DEFAULT_CONTEXT_TOKENS.soft, hardTokens: DEFAULT_CONTEXT_TOKENS.hard, forceTokens: DEFAULT_CONTEXT_TOKENS.force, autoHandover: true },
     builtinAgents: { mode: "deny" },
     injection: { mode: "chain" },
     lanes: {},
@@ -161,6 +161,8 @@ export function validateUserConfig(value: unknown): { config: UserConfig; diagno
   const tokensOk = [tk.softTokens, tk.hardTokens, tk.forceTokens].every((n) => Number.isInteger(n) && n > 0) && tk.softTokens < tk.hardTokens && tk.hardTokens < tk.forceTokens
   if (!tokensOk) bad("context（soft<hard<force 需为正整数）", () => { filled.context = structuredClone(defaults.context) })
   if (typeof tk.gates !== "boolean") bad("context.gates", () => { filled.context.gates = defaults.context.gates })
+  // [2026-09-04]-[auto-handover 开关：超强制压缩水位后 tool.execute.after 自动 /handover（默认 true）]
+  if (typeof tk.autoHandover !== "boolean") bad("context.autoHandover", () => { filled.context.autoHandover = defaults.context.autoHandover })
   if (filled.builtinAgents.mode !== "deny" && filled.builtinAgents.mode !== "allow") bad("builtinAgents.mode", () => { filled.builtinAgents.mode = defaults.builtinAgents.mode })
   if (filled.injection.mode !== "chain" && filled.injection.mode !== "all") bad("injection.mode", () => { filled.injection.mode = defaults.injection.mode })
   if (!["auto", "artificial-analysis", "openrouter"].includes(filled.capability.source)) bad("capability.source", () => { filled.capability.source = defaults.capability.source })

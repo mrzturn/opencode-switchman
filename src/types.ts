@@ -286,6 +286,9 @@ export interface ContextOptions {
   hardTokens?: number
   /** 强制压缩水位（token）：横幅注入强制压缩指令，读取类同硬水位拦截 */
   forceTokens?: number
+  /** [2026-09-04]-[超强制压缩水位后由 tool.execute.after 自动 /handover（fork 备份+压缩当前会话，
+   *  任务以摘要上下文自动继续）；默认 true，false 时仅横幅提示依赖手动 /handover] */
+  autoHandover?: boolean
 }
 // [2026-09-04]-[内置 subagent 封堵：explore/general 与壳路由竞争且原 fail-open 放行，
 //  默认 deny 附 economy/main 改派建议；allow 恢复旧行为]

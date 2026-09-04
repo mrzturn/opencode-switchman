@@ -94,7 +94,7 @@ describe("config：新行为段校验", () => {
   test("缺省：context 60/80/100k、gates on、builtinAgents deny、injection chain、floor 3000", () => {
     const { config, diagnostics } = validateUserConfig(base)
     expect(diagnostics.filter((d) => d.level === "error")).toEqual([])
-    expect(config.context).toEqual({ gates: true, softTokens: 60_000, hardTokens: 80_000, forceTokens: 100_000 })
+    expect(config.context).toEqual({ gates: true, softTokens: 60_000, hardTokens: 80_000, forceTokens: 100_000, autoHandover: true })
     expect(config.builtinAgents.mode).toBe("deny")
     expect(config.injection.mode).toBe("chain")
     expect(config.rules.delegationFloor).toBe(3_000)

@@ -1,7 +1,7 @@
 // opencode-switchman 插件入口——唯一 OpenCode API 适配层（v1.2）
 // 钩子面：config(壳注入+凭证收集) / chat.params(会话→agent 映射) /
 //         experimental.chat.system.transform(调度员规程＋横幅注入，壳子代理跳过) /
-//         tool.execute.before(六闸 deny) / event(失败记账→熔断)
+//         tool.execute.before(六闸 deny) / tool.execute.after(auto-handover：force 水位自动备份压缩) / event(失败记账→熔断)
 // [2026-09-04]-[/handover 改为 TUI 直接执行（fork 备份+当前会话压缩，不经 AI），主插件不再注册
 //  会话式命令与 handover 工具（见 src/tui.tsx runHandoverBackup）]
 // [fail-open 铁律：任何钩子异常只写 stderr，绝不阻塞主流程；核心逻辑全部在纯函数层]
@@ -25,6 +25,7 @@ import {
   glmExhausted, copilotExhausted, deepseekExhausted, firstCandidate,
 } from "./lane"
 import { READ_CLASS_TOOLS, estimateContextTokens, thresholdsOf, watermarkLevel, readGateDecision } from "./context-watch"
+import { runHandover, v1HandoverPort } from "./handover-core"
 import { logDecision, BILLING_API_BOOST } from "./scoring"
 import type { WaterFactor, DecisionRecord } from "./scoring"
 import { quotaView, readAuthStore, markCopilotGatewayExhausted } from "./quota"
@@ -76,6 +77,10 @@ interface Credentials { glmKey?: string; dsKey?: string; copilotToken?: string; 
 
 export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   const raw = rawOptions ?? {}
+  // [2026-09-04]-[auto-handover：捕获主插件输入面（v1 client + 项目目录），供 tool.execute.after
+  //  自动 /handover 用（钩子参数 input 会遮蔽外层命名）]
+  const pluginClient = input.client
+  const pluginDirectory = input.directory
   // 老 options 只在显式存在时覆盖新文件 observe，避免默认值反向覆盖用户配置。
   const rawQuota = (raw as any).quota
   const legacyObserve: Partial<Record<Pool, boolean>> = {}
@@ -126,6 +131,11 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   //  超线后读取类工具分级闸（先提醒后硬拦），把规程自报水位变成机制执行]
   const sessionWatermark = new Map<string, { tokens: number; at: number }>()
   const readNudged = new Map<string, Set<string>>()
+  // [2026-09-04]-[auto-handover 守卫：inflight 防并发（工具可并行，多个 after 同超线只触发一次）；
+  //  冷却 10 分钟防「压缩后摘要+尾巴仍超线→再压缩」抖动（实测水位待下一轮 assistant 消息才回落）]
+  const handoverInflight = new Set<string>()
+  const handoverCooldown = new Map<string, number>()
+  const HANDOVER_COOLDOWN_MS = 10 * 60_000
 
   function isShellOrInternalSession(sessionID: string | undefined): boolean {
     if (!sessionID) return false
@@ -148,6 +158,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       if (level === "ok") return base
       if (level === "soft") return `${base}——已超软水位：新的读取/扫描必须委派 economy 壳（scouter/clerk），自读将被拦截提醒`
       if (level === "hard") return `${base}——已超硬水位：read/glob/grep/list 已禁自读、bash 仅验证类放行；扫描一律委派 economy，请收尾交付`
+      // [2026-09-04]-[force 档文案分流：auto-handover 开启时静候自动压缩（横幅只报事实，省 token）；
+      //  关闭时维持旧指令（依赖手动 /handover）]
+      if (options.context?.autoHandover !== false) return `${base}——【强制】已超强制压缩水位：auto-handover 即将自动全量备份并压缩本会话（任务自动继续），静候，禁止新增读取与委派`
       return `${base}——【强制】已超强制压缩水位：立即执行 /handover 或上下文压缩，禁止新增读取与委派`
     } catch { return null }
   }
@@ -673,7 +686,10 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       } else if (level === "hard") {
         msg = `${head}：${input.tool} 已禁自读——读取/扫描必须委派 economy 壳${hint ? `（如 ${hint}）` : ""}；git/测试/lint 等验证类命令仍可运行；请收尾交付`
       } else {
-        msg = `${head}：必须立即执行上下文压缩（/handover 或摘要归档拆新会话），禁止新增读取与委派`
+        // [2026-09-04]-[force 档 deny 文案：auto-handover 开启时告知静候（勿与自动压缩对抗）]
+        msg = options.context?.autoHandover !== false
+          ? `${head}：已超强制压缩水位——auto-handover 将自动备份并压缩本会话（任务自动继续），静候，禁止新增读取与委派`
+          : `${head}：必须立即执行上下文压缩（/handover 或摘要归档拆新会话），禁止新增读取与委派`
       }
       denySkip.add(input.callID)
       appendStatusLog(`读取水位闸 ${action}（${input.tool}，~${kk(wm.tokens)}，${level}）`)
@@ -994,6 +1010,35 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       } catch (exc) {
         if (denySkip.has(input.callID)) throw exc // deny 原样上抛（阻断派发）
         appendStatusLog(`六闸 fail-open（放行）: ${exc}`)
+      }
+    },
+
+    // [2026-09-04]-[auto-handover：tool.execute.after 在工具执行路径内被 await → 与主循环天然串行
+    //  （无双烧/竞态）。仅强制压缩水位（force）触发：软/硬水位维持 deny+提示让模型显式收尾（摘要
+    //  保真度更高），force 时模型已无读取能力、任务大概率未完——fork 全量备份 + summarize 压缩当前
+    //  会话；压缩写入后宿主 agent 循环下一步经 filterCompactedEffect 重读消息（prompt.ts while 循环
+    //  每步重取），任务以「摘要+保留尾巴（tool_use/result 配对完整）」上下文自动继续，无需重新 prompt]
+    "tool.execute.after": async (hookInput) => {
+      const sid = hookInput.sessionID
+      try {
+        if (options.context?.autoHandover === false) return
+        if (!sid || isShellOrInternalSession(sid)) return
+        const wm = sessionWatermark.get(sid)
+        if (!wm) return
+        if (watermarkLevel(wm.tokens, thresholdsOf(options.context)) !== "force") return
+        if (handoverInflight.has(sid)) return
+        if (Date.now() - (handoverCooldown.get(sid) ?? 0) < HANDOVER_COOLDOWN_MS) return
+        handoverInflight.add(sid)
+        appendStatusLog(`auto-handover 触发（${hookInput.tool} 执行后，~${kk(wm.tokens)} 超强制压缩水位）：全量备份并压缩当前会话`)
+        const result = await runHandover(v1HandoverPort(pluginClient), sid, pluginDirectory)
+        handoverCooldown.set(sid, Date.now())
+        appendStatusLog(`auto-handover ${result.ok ? "完成" : "失败"}：${result.message}`)
+        // 压缩后软水位一次性提醒重新武装；实测水位待下一轮 assistant 消息回落（冷却期兜底防抖）
+        if (result.ok) readNudged.delete(sid)
+      } catch (exc) {
+        appendStatusLog(`auto-handover fail-open: ${exc}`)
+      } finally {
+        if (sid) handoverInflight.delete(sid)
       }
     },
 
