@@ -1,6 +1,6 @@
 {
   "name": "opencode-switchman",
-  "version": "0.2.7",
+  "version": "1.0.0",
   "description": "OpenCode orchestration plugin: six-lane shell matrix dispatch (hard ROUTE_META validation / breaker self-healing / probes / three-pool quota awareness / cost-aware tiebreaker)",
   "license": "MIT",
   "repository": {

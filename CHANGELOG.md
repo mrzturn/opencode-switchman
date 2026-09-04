@@ -2,11 +2,15 @@
 
 This project follows [Semantic Versioning](https://semver.org/). Release notes describe user-visible behavior; implementation details remain in the technical specification and commit history.
 
-## [Unreleased]
+## [1.0.0] - 2026-09-04
+
+First stable release: the English-first global surface is complete (code, comments, bundled assets, docs, and UI copy), ready for publication beyond the Chinese-language user base.
 
 ### Changed
 
 - **English localization** — protocol assets (dispatcher rules, delegation template), runtime messages, code comments, and docs translated to English; no behavior change. Banner anchors renamed: `[路由]`→`[ROUTES]`, `[水位]`→`[WATERMARK]`, `[水位·会话]`→`[WATERMARK:SESSION]`, `[限制]`→`[LIMITS]`, `[更新]`→`[UPDATE]` (inline markers `【调度】`→`[DISPATCH]`, `【强制】`→`[MANDATORY]`). The technical design doc is now `docs/2026-08-28-opencode-switchman-technical-design.md` (full English translation; the Chinese original path removed). The Chinese README remains at `README.zh.md`; historical Chinese entries below are preserved as-is.
+
+- **Sidebar panel layout/color polish** — quota sub-row labels pad to a global 8-column grid so progress bars and values align across provider blocks (fixes glued label-value pairs like `refresh2026-10-01`/`balanceexhausted`), the `░` track renders muted under the gradient fill with a leading space before reset-time tails, the watermark gradient and lane/model palette are brightened to the 400-level for contrast, sections get one blank line of separation, and per-provider `·observe-only` tags collapse when every provider is observe-only. Progress bars clamp to at least one filled cell for any pct>0, so small quotas (e.g. MCP 5%) no longer render an empty bar.
 
 ## [0.2.7] - 2026-09-04
 
