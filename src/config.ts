@@ -13,6 +13,7 @@ export interface ConfigDiagnostic { code: string; level: "error" | "warn" | "inf
 export interface UserQuotaConfig { glmFiveHourReservePct: number; deepseekLowBalanceWarnCny: number }
 export interface UserCapabilityConfig { enabled: boolean; source: "auto" | "artificial-analysis" | "openrouter"; apiKey?: string; tierThresholds?: CapabilityTierThresholds | "quantile"; lmarenaCheck: boolean }
 export interface UserMatrixConfig { mode: "auto" | "app" | "tui" | "legacy"; watch: boolean }
+export interface UserContextConfig { gates: boolean; softTokens: number; hardTokens: number; forceTokens: number }
 export interface UserConfig {
   version: number
   providers: Record<string, ProviderUserConfig>
@@ -21,21 +22,30 @@ export interface UserConfig {
   capability: UserCapabilityConfig
   matrix: UserMatrixConfig
   banner: { enabled: boolean }
-  rules: { enabled: boolean }
+  rules: { enabled: boolean; delegationFloor: number }
+  context: UserContextConfig
+  builtinAgents: { mode: "deny" | "allow" }
+  injection: { mode: "chain" | "all" }
   lanes: Partial<Record<Lane, string[]>>
   extensions: Record<string, unknown>
 }
 export interface LoadedUserConfig { path: string; config: UserConfig; diagnostics: ConfigDiagnostic[]; generated: boolean }
 
+export const DEFAULT_CONTEXT_TOKENS = { soft: 60_000, hard: 80_000, force: 100_000 } as const
+export const DEFAULT_DELEGATION_FLOOR = 3_000
+
 /** 行为段出厂缺省（fillMissing 基线；类型坏值才回退并报 SWM037） */
-export function defaultBehaviorConfig(): Pick<UserConfig, "quota" | "cost" | "capability" | "matrix" | "banner" | "rules" | "lanes"> {
+export function defaultBehaviorConfig(): Pick<UserConfig, "quota" | "cost" | "capability" | "matrix" | "banner" | "rules" | "context" | "builtinAgents" | "injection" | "lanes"> {
   return {
     quota: { glmFiveHourReservePct: 90, deepseekLowBalanceWarnCny: 10 },
     cost: { enabled: true },
     capability: { enabled: true, source: "auto", lmarenaCheck: false },
     matrix: { mode: "auto", watch: true },
     banner: { enabled: true },
-    rules: { enabled: true },
+    rules: { enabled: true, delegationFloor: DEFAULT_DELEGATION_FLOOR },
+    context: { gates: true, softTokens: DEFAULT_CONTEXT_TOKENS.soft, hardTokens: DEFAULT_CONTEXT_TOKENS.hard, forceTokens: DEFAULT_CONTEXT_TOKENS.force },
+    builtinAgents: { mode: "deny" },
+    injection: { mode: "chain" },
     lanes: {},
   }
 }
@@ -144,6 +154,15 @@ export function validateUserConfig(value: unknown): { config: UserConfig; diagno
     if (typeof (filled[section] as any)[field] !== "boolean") bad(`${section}.${field}`, () => { (filled[section] as any)[field] = (defaults[section] as any)[field] })
   }
   if (!["auto", "app", "tui", "legacy"].includes(filled.matrix.mode)) bad("matrix.mode", () => { filled.matrix.mode = defaults.matrix.mode })
+  // [2026-09-04]-[新行为段校验：rules.delegationFloor 正数；context 三水位正整数且 soft<hard<force
+  //  （违序整段回退缺省）；builtinAgents/injection 枚举（默认 deny/chain）]
+  if (typeof filled.rules.delegationFloor !== "number" || !(filled.rules.delegationFloor >= 0)) bad("rules.delegationFloor", () => { filled.rules.delegationFloor = defaults.rules.delegationFloor })
+  const tk = filled.context
+  const tokensOk = [tk.softTokens, tk.hardTokens, tk.forceTokens].every((n) => Number.isInteger(n) && n > 0) && tk.softTokens < tk.hardTokens && tk.hardTokens < tk.forceTokens
+  if (!tokensOk) bad("context（soft<hard<force 需为正整数）", () => { filled.context = structuredClone(defaults.context) })
+  if (typeof tk.gates !== "boolean") bad("context.gates", () => { filled.context.gates = defaults.context.gates })
+  if (filled.builtinAgents.mode !== "deny" && filled.builtinAgents.mode !== "allow") bad("builtinAgents.mode", () => { filled.builtinAgents.mode = defaults.builtinAgents.mode })
+  if (filled.injection.mode !== "chain" && filled.injection.mode !== "all") bad("injection.mode", () => { filled.injection.mode = defaults.injection.mode })
   if (!["auto", "artificial-analysis", "openrouter"].includes(filled.capability.source)) bad("capability.source", () => { filled.capability.source = defaults.capability.source })
   if (filled.capability.apiKey !== undefined && typeof filled.capability.apiKey !== "string") bad("capability.apiKey", () => { filled.capability.apiKey = undefined })
   // lanes：每条值须为 string[]；单条坏值只回退该 lane（其余保留）
@@ -198,7 +217,13 @@ export function resolveEffectiveOptions(raw: unknown, cfg: UserConfig): { option
     cost: { enabled: has(o.cost, "enabled") ? o.cost!.enabled! : cfg.cost.enabled },
     billingWindow: o.billingWindow,
     banner: { enabled: has(o.banner, "enabled") ? o.banner!.enabled! : cfg.banner.enabled },
-    rules: { enabled: has(o.rules, "enabled") ? o.rules!.enabled! : cfg.rules.enabled },
+    rules: {
+      enabled: has(o.rules, "enabled") ? o.rules!.enabled! : cfg.rules.enabled,
+      delegationFloor: num(o.rules?.delegationFloor) ?? cfg.rules.delegationFloor,
+    },
+    context: has(o, "context") ? { ...cfg.context, ...o.context } : cfg.context,
+    builtinAgents: has(o, "builtinAgents") ? { ...cfg.builtinAgents, ...o.builtinAgents } : cfg.builtinAgents,
+    injection: has(o, "injection") ? { ...cfg.injection, ...o.injection } : cfg.injection,
     lanes: has(o, "lanes") ? o.lanes : cfg.lanes,
     matrix: {
       mode: has(o.matrix, "mode") ? o.matrix!.mode! : cfg.matrix.mode,
@@ -212,7 +237,7 @@ export function resolveEffectiveOptions(raw: unknown, cfg: UserConfig): { option
       lmarenaCheck: has(o.capability, "lmarenaCheck") ? o.capability!.lmarenaCheck! : cfg.capability.lmarenaCheck,
     },
   }
-  for (const section of ["cost", "banner", "rules", "lanes", "matrix", "capability"] as const) if (has(o, section)) legacySections.push(section)
+  for (const section of ["cost", "banner", "rules", "lanes", "matrix", "capability", "context", "builtinAgents", "injection"] as const) if (has(o, section)) legacySections.push(section)
   return { options, legacySections }
 }
 export function routePolicy(config: UserConfig, legacy?: Partial<Record<Pool, boolean>>): RoutePolicy {

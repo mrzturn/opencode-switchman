@@ -4,6 +4,22 @@
 
 This project follows [Semantic Versioning](https://semver.org/). Release notes describe user-visible behavior; implementation details remain in the technical specification and commit history.
 
+## [0.2.6] - 2026-09-04
+
+### Added
+
+- **Measured session watermark gate (`context.*`)** — delegation bias fix, mechanism level. The dispatcher rules previously relied on the main model self-reporting context watermarks (60k/80k/100k), which it cannot actually measure: sessions routinely sailed past 100k on self-served reads. The plugin now tracks each main session's context size from `message.updated` token usage (input + cache.read + reasoning + output) and injects a live `[水位·会话]` line every turn. Past `softTokens` (default 60k), read-class tools (`read`/`glob`/`grep`/`list`/`bash`) get a one-time deny nudge per tool naming the current economy chain head to re-dispatch to; past `hardTokens` (80k) they are denied outright, with `bash` only letting verification and delivery commands through (git, test/lint/typecheck, build — delivery and verification are never blocked); past `forceTokens` (100k) the banner demands immediate compaction. Shell subagent sessions are exempt (they *are* the delegated workers). Thresholds and the gate itself are configurable (`context.gates/softTokens/hardTokens/forceTokens`).
+
+- **Built-in subagent block (`builtinAgents.mode=deny`, default)** — opencode core's task-tool description actively advertises `explore`/`general` for exactly the exploration tasks the economy lane exists for, and the dispatch gate fail-opened them. They are now denied with an economy/main re-dispatch hint; set `builtinAgents.mode="allow"` to restore the old pass-through.
+
+- **Injection face modes (`injection.mode`)** — `chain` (new default) injects the six lane chains ∪ favorites/visible models into the task-tool description, saving ~6-10k tokens per session versus injecting every usable model; naming an off-chain model gets the existing `denyUninjected` hint (enable it in model management). `all` restores the previous behavior. Startup-level: restart to apply.
+
+- `rules.delegationFloor` (default 3000, was a hardcoded 6k in the rules text) is now a jsonc knob interpolated into the bundled rules on injection.
+
+### Changed
+
+- **Bundled dispatcher rules slimmed ~45%** (≈2.2k → ≈1.2k tokens/session): watermark prose replaced by the plugin-enforced mechanism (the `[水位·会话]` line carries live numbers and directives), the four-dimension classification collapsed into a stricter "default-delegate" rule (self-do only for L/M cognition with <200-line single-file reads or <50-line edits), a minimal fill-in delegation sample is now inline, and the rules explicitly forbid built-in `explore`/`general`. `rules.delegationFloor` and the three watermark thresholds are interpolated from user config.
+
 ## [0.2.5] - 2026-09-03
 
 ### Added
@@ -94,6 +110,22 @@ The release documentation uses these repository assets:
 [English](#changelog)
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。此处记录面向使用者的行为变化；实现细节见技术方案与提交历史。
+
+## [0.2.6] - 2026-09-04
+
+### 新增
+
+- **会话上下文水位实测闸（`context.*`）**——派发偏向修复（机制层）。此前水位规则全靠主模型自报（它实际上测不了自己多少 token，会话常常自读冲过 100k）。插件现从 `message.updated` 的 token usage 实测每个主会话上下文（input+cache.read+reasoning+output），每轮注入 `[水位·会话]` 实时行：超 `softTokens`（默认 60k）读取类工具（read/glob/grep/list/bash）每工具首次 deny 提醒并附 economy 链首改派建议；超 `hardTokens`（80k）一律拦截，bash 仅放行验证与交付类命令（git 全系/测试/lint/typecheck/构建——交付与验证不被阻塞）；超 `forceTokens`（100k）横幅强制要求立即压缩。壳子代理会话豁免（它们就是被委派的执行体）。阈值与总开关可配（`context.gates/softTokens/hardTokens/forceTokens`）。
+
+- **内置 subagent 封堵（`builtinAgents.mode=deny`，默认）**——opencode 核心的 task 工具描述会主动推销 explore/general，恰好与 economy 档抢同类的探索任务，而派发闸此前对非壳名 fail-open 放行。现默认 deny 并附 economy/main 改派建议；设 `builtinAgents.mode="allow"` 恢复旧行为。
+
+- **注入面模式（`injection.mode`）**——`chain`（新默认）＝task 工具描述只注入六档链精选∪favorites/可见集，每会话省约 6-10k token；点名链外模型走既有 `denyUninjected` 提示（去模型管理开启即可）。`all` 恢复全量注入旧行为。启动级配置，重启生效。
+
+- `rules.delegationFloor`（默认 3000，原规程硬编码 6k）成为 jsonc 配置项，注入规程时插值。
+
+### 变更
+
+- **内置调度员规程瘦身约 45%**（≈2.2k → ≈1.2k token/会话）：水位长文由插件机制取代（`[水位·会话]` 行携带实时数字与分级指令）；四维分类压缩为更严的「默认委派」规则（自做仅限认知 L/M 且单文件读取 <200 行或改动 <50 行）；新增最小委派样例内联；显式禁用内置 explore/general。委派底价与三水位阈值按用户配置插值。
 
 ## [0.2.4] - 2026-09-02
 

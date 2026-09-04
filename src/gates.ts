@@ -219,6 +219,27 @@ export function noteUnknownAgent(agent: string): string {
   return `[opencode-switchman] unknown subagent_type='${agent}'：放行（不在壳清单，内置代理不受路由管辖）`
 }
 
+/** [2026-09-04]-[内置 subagent 封堵：explore/general 与壳路由同场竞争且原 fail-open 放行，
+ *  主模型探索任务被核心工具描述引去内置 agent；默认 deny 附 economy/main 改派建议] */
+export const BUILTIN_SUBAGENTS: Readonly<Record<string, import("./types").Lane>> = {
+  explore: "economy",
+  general: "main",
+}
+
+export function builtinAgentDeny(
+  agent: string,
+  mode: "deny" | "allow",
+  laneHead: (lane: import("./types").Lane) => string | null,
+): string | null {
+  if (mode !== "deny") return null
+  const lane = BUILTIN_SUBAGENTS[agent]
+  if (!lane) return null
+  const cand = laneHead(lane)
+  const role = lane === "economy" ? "scouter" : "generic"
+  const target = cand ? `，请改派 ${cand}（ROUTE_META role=${role}）` : "，请按横幅 [路由] 链首选壳派发"
+  return `[opencode-switchman] 内置代理 '${agent}' 不参与壳路由（统一走壳派发保住配额感知/异族复审/水位闸）${target}；确需内置代理：opencode-switchman.jsonc 设 builtinAgents.mode="allow" 后重启`
+}
+
 /** 壳命名形态判定（仅用于「未注入超集」deny 的形态识别；isShell 判定一律走注册表，禁启发式） */
 export function shellLikeName(agent: string): boolean {
   return /^[a-z][a-z0-9]*-mx-[a-z0-9]+-[a-z]+(-ro)?$/.test(agent)

@@ -18,11 +18,12 @@ import {
   writeQuotaBrief,
   loadProviderCache, saveProviderCache, nowIso,
 } from "./state"
-import { checkShell, noteUnknownAgent, shellLikeName, denyUninjected } from "./gates"
+import { checkShell, noteUnknownAgent, shellLikeName, denyUninjected, builtinAgentDeny } from "./gates"
 import {
   computeLane, billingWindow, billingWindowForConfig, poolStates, routingAdvice,
   glmExhausted, copilotExhausted, deepseekExhausted, firstCandidate,
 } from "./lane"
+import { READ_CLASS_TOOLS, estimateContextTokens, thresholdsOf, watermarkLevel, readGateDecision } from "./context-watch"
 import { logDecision, BILLING_API_BOOST } from "./scoring"
 import type { WaterFactor, DecisionRecord } from "./scoring"
 import { quotaView, readAuthStore, markCopilotGatewayExhausted } from "./quota"
@@ -34,7 +35,7 @@ import { buildBanner, shortName, providerStatusEntries } from "./banner"
 import { refreshSelfUpdate, updateBannerText, ensureUpdateCommands, detectLoadMode, pluginCliPath } from "./selfupdate"
 import { loadPoolConfig, overrideSummary } from "./user-overrides"
 import { poolConfigCommandMd, modelRankCommandMd } from "./commands-md"
-import { billingOfProvider, loadUserConfig, resolveEffectiveOptions, routingPeakActive, routePolicy } from "./config"
+import { billingOfProvider, loadUserConfig, resolveEffectiveOptions, routingPeakActive, routePolicy, DEFAULT_DELEGATION_FLOOR } from "./config"
 import { poolForProviderId } from "./provider-config"
 import { runDoctor } from "./doctor"
 import {
@@ -120,6 +121,35 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   const conflictNames = new Set<string>()
   let supersetDefs: ShellDefinition[] = []
   let degradedModelCount = 0
+  // [2026-09-04]-[会话上下文水位实测：message.updated token usage → 主会话（非壳/非内部）水位；
+  //  超线后读取类工具分级闸（先提醒后硬拦），把规程自报水位变成机制执行]
+  const sessionWatermark = new Map<string, { tokens: number; at: number }>()
+  const readNudged = new Map<string, Set<string>>()
+
+  function isShellOrInternalSession(sessionID: string | undefined): boolean {
+    if (!sessionID) return false
+    if (dynamic) return manager?.skipSystemInjection(sessionID) === true
+    const agent = sessionAgent.get(sessionID) ?? ""
+    return /-mx-/.test(agent) || agent === "title" || agent === "compaction" || agent === "summary"
+  }
+
+  function kk(n: number): string { return `${Math.round(n / 1000)}k` }
+
+  /** [水位·会话] 横幅行：ok 档只报数字（省 token），超线后附分级指令 */
+  function sessionWatermarkLine(sessionID: string | undefined): string | null {
+    try {
+      if (!sessionID || isShellOrInternalSession(sessionID)) return null
+      const wm = sessionWatermark.get(sessionID)
+      if (!wm) return null
+      const t = thresholdsOf(options.context)
+      const level = watermarkLevel(wm.tokens, t)
+      const base = `[水位·会话] 本会话上下文实测 ~${kk(wm.tokens)}（软${kk(t.soft)}/硬${kk(t.hard)}/压${kk(t.force)}）`
+      if (level === "ok") return base
+      if (level === "soft") return `${base}——已超软水位：新的读取/扫描必须委派 economy 壳（scouter/clerk），自读将被拦截提醒`
+      if (level === "hard") return `${base}——已超硬水位：read/glob/grep/list 已禁自读、bash 仅验证类放行；扫描一律委派 economy，请收尾交付`
+      return `${base}——【强制】已超强制压缩水位：立即执行 /handover 或上下文压缩，禁止新增读取与委派`
+    } catch { return null }
+  }
 
   function clearBannerCache(): void {
     bannerCache = null
@@ -576,8 +606,84 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     return out
   }
 
-  /** deny 附言：首候选（过全组闸后的链首壳）；[2026-08-31]-[终审P1-3：与横幅同源——接受 gateExtras 补足运行期输入] */
-  function firstCandidateHint(agent: string, ctx: ReturnType<typeof loadContext>, extras?: { water?: WaterFactor; glmPeak?: boolean; states?: Record<string, unknown> }): string | null {
+  // [2026-09-04]-[运行期闸输入装配提取：task 六闸/内置封堵/读取水位闸共用（water/glmPeak/states）]
+  function gateExtrasSnapshot(): { water?: WaterFactor; glmPeak?: boolean; states?: Record<string, unknown> } {
+    try {
+      const peak = billingWindowForConfig(new Date(), userConfig.config, legacyBillingWindow)
+      const qv = quotaView(creds as any, { observe: {
+        glm: policy.glm.observe,
+        deepseek: policy.deepseek.observe,
+        copilot: policy.copilot.observe,
+      } })
+      return {
+        water: { ...waterFactorOf(qv), routing: Object.fromEntries(Object.entries(policy).map(([k, v]) => [k, v.routing])) as Partial<Record<Pool, boolean>> },
+        glmPeak: peak.glmPeak,
+        states: poolStates(qv, peak, policy),
+      }
+    } catch { return {} }
+  }
+
+  /** 指定 lane 链首候选（内置封堵/读取闸附言用；与横幅同源） */
+  function laneHeadCandidate(lane: Lane, ctx: ReturnType<typeof loadContext>): string | null {
+    try {
+      const lanes = dynamicLaneMap(ctx)
+      const extras = gateExtrasSnapshot()
+      return firstCandidate(lane, lanes[lane] ?? [], {
+        registry: buildRegistry(ctx),
+        matrix: ctx.matrix?.combos ?? null,
+        routing: routingWithRealFailures(ctx.routing),
+        quotaExhausted: quotaExhaustedFlags(),
+        billingBoostOf,
+        peakOf: peakOfProvider,
+        costs: options.cost!.enabled ? costOf : undefined,
+        water: extras.water,
+        glmPeak: extras.glmPeak,
+        states: extras.states as any,
+        poolConfig: loadPoolConfig(),
+      } as any, undefined)
+    } catch { return null }
+  }
+
+  /** [2026-09-04]-[读取水位闸：soft=每工具一次性拦截提醒（附 economy 改派建议），hard/force=read 类
+   *  一律拦截、bash 仅验证类放行；壳子代理会话豁免（它们就是被委派的执行体）] */
+  function handleReadGate(input: { tool: string; sessionID?: string; callID: string }, output: { args?: any }): void {
+    try {
+      if (options.context?.gates !== true) return
+      const sid = input.sessionID
+      if (!sid || isShellOrInternalSession(sid)) return
+      const wm = sessionWatermark.get(sid)
+      if (!wm) return
+      const t = thresholdsOf(options.context)
+      const level = watermarkLevel(wm.tokens, t)
+      if (level === "ok") return
+      const nudged = readNudged.get(sid) ?? new Set<string>()
+      const action = readGateDecision({
+        tool: input.tool, level, alreadyNudged: nudged.has(input.tool),
+        bashCommand: input.tool === "bash" ? String(output.args?.command ?? "") : undefined,
+      })
+      if (action === "allow") return
+      if (action === "nudge") { nudged.add(input.tool); readNudged.set(sid, nudged) }
+      const { ctx } = currentContext()
+      const hint = laneHeadCandidate("economy", ctx)
+      const head = `[opencode-switchman] 本会话上下文实测 ~${kk(wm.tokens)} 已超${level === "force" ? "强制压缩" : level === "hard" ? "硬" : "软"}水位（软${kk(t.soft)}/硬${kk(t.hard)}/压${kk(t.force)}）`
+      let msg: string
+      if (level === "soft") {
+        msg = `${head}：${input.tool} 自读首次拦截（本会话该工具此后放行）——新的读取/扫描请委派 economy 壳${hint ? `（如 ${hint}，ROUTE_META role=scouter）` : ""}，只要结论+file:line 摘要`
+      } else if (level === "hard") {
+        msg = `${head}：${input.tool} 已禁自读——读取/扫描必须委派 economy 壳${hint ? `（如 ${hint}）` : ""}；git/测试/lint 等验证类命令仍可运行；请收尾交付`
+      } else {
+        msg = `${head}：必须立即执行上下文压缩（/handover 或摘要归档拆新会话），禁止新增读取与委派`
+      }
+      denySkip.add(input.callID)
+      appendStatusLog(`读取水位闸 ${action}（${input.tool}，~${kk(wm.tokens)}，${level}）`)
+      throw new Error(msg)
+    } catch (exc) {
+      if (denySkip.has(input.callID)) throw exc
+      appendStatusLog(`读取水位闸 fail-open（放行）: ${exc}`)
+    }
+  }
+
+  /** deny 附言：首候选（过全组闸后的链首壳）；[2026-08-31]-[终审P1-3：与横幅同源——接受 gateExtras 补足运行期输入] */  function firstCandidateHint(agent: string, ctx: ReturnType<typeof loadContext>, extras?: { water?: WaterFactor; glmPeak?: boolean; states?: Record<string, unknown> }): string | null {
     try {
       const lanes = dynamicLaneMap(ctx)
       const lane = (Object.keys(lanes) as Lane[]).find((l) => lanes[l]?.includes(agent)) ?? "main"
@@ -689,14 +795,16 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         supersetDefs = buildShells(supersetModels, metaIndex, {
           roAliases: true, degradedFamilyByProvider: true, markDegraded: true,
         })
-        // [2026-09-02]-[上下文瘦身修正：注入面=可用全集（provider 已连接且可对话的 supersetModels）
-        //  ∪六档链精选∪自定义 lane——链竞争不再裁掉可用模型（此前 glm-5.3-flash 等被裁导致 favorites
-        //  误报「无效模型」、vision 链空转）；favorites 链内同档优先（用户显式意图压过乘积分）]-
-        //  [token 影响回归 ~6-10k/会话，由维护者显式取舍：正确性（favorites/视觉/点名可达）优先]
+        // [2026-09-04]-[注入面模式可配：chain（默认）=六档链精选∪favorites/可见集（task 工具描述
+        //  省 6-10k token/会话；链外模型点名走 denyUninjected 提示去模型管理开启）；
+        //  all=可用全集（旧行为，任何可用模型可点名）。cfg.agent 一次性生效，改配置需重启]
+        const injectKeepModels = options.injection!.mode === "all"
+          ? new Set(supersetModels)
+          : new Set(validConfiguredModels)
         const fullSupersetCount = supersetDefs.length
         supersetDefs = selectInjectableDefs(supersetDefs, {
           customLanes: (options.lanes as Record<string, readonly string[]> | null) ?? null,
-          keepModels: new Set(supersetModels),
+          keepModels: injectKeepModels,
           preferredModels: new Set(validConfiguredModels.map((m) => m.slice(m.indexOf("/") + 1))),
           capabilityOf: (modelId) => baseScoreDynamic(modelId),
           billingBoostOf, unknownOf: unknownOfModel,
@@ -747,7 +855,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         })
         manager.recompute(configured)
         manager.start()
-        appendStatusLog(`已注入 ${injected.size} 只超集壳（可用面 ${fullSupersetCount}→精选∪全量保留，${supersetModels.length} 模型×档位，模式=${runMode}，冲突 ${conflicts.size}；激活门控运行中）`)
+        appendStatusLog(`已注入 ${injected.size} 只壳（模式=${runMode}，注入面=${options.injection!.mode}=${fullSupersetCount}→精选后 ${supersetDefs.length}，冲突 ${conflicts.size}；激活门控运行中）`)
         // [2026-08-29]-[配置钩子触发自更新检查]-[检查异步且失败不阻塞启动]
         refreshSelfUpdate().then((state) => { if (state?.outdated) clearBannerCache() }).catch(() => {})
       } catch (exc) {
@@ -796,9 +904,22 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         const rulesMarker = "# 全局规程（主调度员守则"
         const rulesAlreadyPresent = Array.isArray(output.system)
           && output.system.some((p) => typeof p === "string" && p.includes(rulesMarker))
-        if (options.rules!.enabled && !rulesAlreadyPresent) output.system.push(AGENTS_MD.trimEnd())
+        if (options.rules!.enabled && !rulesAlreadyPresent) {
+          // [2026-09-04]-[规程插值：委派底价与三水位阈值来自用户 jsonc（缺省 3k/60k/80k/100k）]
+          const t = thresholdsOf(options.context)
+          output.system.push(AGENTS_MD.trimEnd()
+            .replaceAll("{{DELEGATION_FLOOR}}", String(options.rules!.delegationFloor ?? DEFAULT_DELEGATION_FLOOR))
+            .replaceAll("{{SOFT}}", kk(t.soft))
+            .replaceAll("{{HARD}}", kk(t.hard))
+            .replaceAll("{{FORCE}}", kk(t.force)))
+        }
         if (options.banner!.enabled) {
           for (const line of bannerLines()) output.system.push(line)
+        }
+        // [2026-09-04]-[实测会话水位行：主会话每轮注入（ok 档只报数字）；rules/banner 全关时尊重零注入意愿]
+        if (options.rules!.enabled || options.banner!.enabled) {
+          const wmLine = sessionWatermarkLine(input.sessionID)
+          if (wmLine) output.system.push(wmLine)
         }
       } catch (exc) {
         appendStatusLog(`规程/横幅 fail-open: ${exc}`)
@@ -806,7 +927,11 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     },
 
     "tool.execute.before": async (input, output) => {
-      if (input.tool !== "task") return
+      // [2026-09-04]-[读取水位闸：task 之外的读取类/bash 工具按实测会话水位分级拦截]
+      if (input.tool !== "task") {
+        if (input.tool === "bash" || READ_CLASS_TOOLS.has(input.tool)) handleReadGate(input as any, output as any)
+        return
+      }
       try {
         const { ctx, registry } = currentContext()
         cleanRoutingExpired()
@@ -825,24 +950,17 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           : null
         // [2026-08-31]-[终审P1-3：deny 附言候选与横幅同源——补 water/glmPeak/states 运行期输入
         //  （quotaView 为缓存读，与 quotaExhaustedFlags 同 TTL，不新增网络成本）]
-        let gateExtras: { water?: WaterFactor; glmPeak?: boolean; states?: Record<string, unknown> } = {}
-        try {
-          const peak = billingWindowForConfig(new Date(), userConfig.config, legacyBillingWindow)
-          const qv = quotaView(creds as any, { observe: {
-            glm: policy.glm.observe,
-            deepseek: policy.deepseek.observe,
-            copilot: policy.copilot.observe,
-          } })
-          gateExtras = {
-            water: { ...waterFactorOf(qv), routing: Object.fromEntries(Object.entries(policy).map(([k, v]) => [k, v.routing])) as Partial<Record<Pool, boolean>> },
-            glmPeak: peak.glmPeak,
-            states: poolStates(qv, peak, policy),
-          }
-        } catch { /* fail-open：hint 候选缺 water/states 仍可工作 */ }
+        const gateExtras = gateExtrasSnapshot()
         if (!shell) {
           if (dynamic && shellLikeName(agent)) {
             const hint = firstCandidateHint(agent, ctx, gateExtras)
             throw new Error(denyUninjected(agent, activationGate?.restartRequired ?? [], hint))
+          }
+          // [2026-09-04]-[内置 subagent 封堵：explore/general 与壳路由竞争，默认 deny 附改派建议]
+          const builtinDeny = builtinAgentDeny(agent, options.builtinAgents!.mode ?? "deny", (lane) => laneHeadCandidate(lane, ctx))
+          if (builtinDeny) {
+            denySkip.add(input.callID)
+            throw new Error(builtinDeny)
           }
           appendStatusLog(noteUnknownAgent(agent))
           return
@@ -891,11 +1009,27 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           }
           return
         }
+        // [2026-09-04]-[会话上下文水位实测：message.updated → 最近 assistant 消息 token usage
+        //  （input+cache.read+reasoning+output ≈ 下一轮上下文）；壳/内部会话不计入]
+        if (event.type === "message.updated") {
+          const props = (event as any).properties
+          const sid = props?.sessionID
+          const info = props?.info
+          if (typeof sid === "string" && info?.role === "assistant" && !isShellOrInternalSession(sid)) {
+            const est = estimateContextTokens(info)
+            if (est !== null) sessionWatermark.set(sid, { tokens: est, at: Date.now() })
+          }
+          return
+        }
         // [2026-08-29]-[修复复审P1-session.deleted 形状：properties={info:{id}}（sdk types.gen.ts:576-580）；
         //  清理会话注册表（仅动态矩阵；非壳会话移除→重算）]
-        if (dynamic && event.type === "session.deleted") {
+        if (event.type === "session.deleted") {
           const sid = sessionDeletedId((event as any).properties)
-          if (sid && manager?.noteSessionDeleted(sid)) manager.scheduleRecompute(50, "session")
+          if (sid) {
+            sessionWatermark.delete(sid)
+            readNudged.delete(sid)
+            if (dynamic && manager?.noteSessionDeleted(sid)) manager.scheduleRecompute(50, "session")
+          }
           return
         }
         if (event.type !== "message.part.updated") return

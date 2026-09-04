@@ -275,6 +275,29 @@ export interface MatrixOptions {
       /** 监听 opencode state 目录变更重算（默认 true；激活变化对派发闸「下一请求生效」，非实时改写已发请求） */
   watch?: boolean
 }
+// [2026-09-04]-[派发偏向修复：会话上下文水位由插件实测（message.updated token usage），
+//  超线读取类工具先提醒后硬拦——把规程里的自报水位变成机制执行]
+export interface ContextOptions {
+  /** 水位闸总开关（默认 true）；关闭后仅横幅提示不拦截 */
+  gates?: boolean
+  /** 软水位（token）：读取类工具首次被拦提醒改派 economy（一次性），之后放行 */
+  softTokens?: number
+  /** 硬水位（token）：read/glob/grep/list 一律 deny；bash 仅放行验证类命令 */
+  hardTokens?: number
+  /** 强制压缩水位（token）：横幅注入强制压缩指令，读取类同硬水位拦截 */
+  forceTokens?: number
+}
+// [2026-09-04]-[内置 subagent 封堵：explore/general 与壳路由竞争且原 fail-open 放行，
+//  默认 deny 附 economy/main 改派建议；allow 恢复旧行为]
+export interface BuiltinAgentsOptions { mode?: "deny" | "allow" }
+// [2026-09-04]-[注入面模式：chain=六档链精选∪favorites∪可见集（省 6-10k/会话，链外模型
+//  点名走 denyUninjected 提示）；all=可用全集（旧行为，任何可用模型可点名）]
+export interface InjectionOptions { mode?: "chain" | "all" }
+export interface RulesOptions {
+  enabled?: boolean
+  /** 委派底价（token）：预期收益低于该值可自做；注入规程时插值到 {{DELEGATION_FLOOR}} */
+  delegationFloor?: number
+}
 // [2026-09-01]-[配置面统一收敛到 opencode-switchman.jsonc：元组 options 降级为兼容 shim
 //  （显式配置优先一代并报 SWM044）；死字段 providers.*（凭证收集实际走 poolForProviderId）移除]
 export interface SwitchmanOptions {
@@ -283,8 +306,11 @@ export interface SwitchmanOptions {
   billingWindow?: BillingWindowConfig
   banner?: { enabled?: boolean }
   /** 调度员规程系统提示注入（随包内置；关闭后依赖用户自行安装 AGENTS.md） */
-  rules?: { enabled?: boolean }
+  rules?: RulesOptions
   lanes?: Partial<Record<Lane, string[]>>
   matrix?: MatrixOptions
   capability?: CapabilityOptions
+  context?: ContextOptions
+  builtinAgents?: BuiltinAgentsOptions
+  injection?: InjectionOptions
 }
