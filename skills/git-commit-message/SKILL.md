@@ -8,7 +8,7 @@ description: Generate convention-compliant Git commit messages. Trigger whenever
 
 Core rule: **deliver text only; never run `git add` / `git commit` / `git push`**.
 
-Language: **English by default**. Use Chinese only when the project's rules (AGENTS.md etc.) or the user explicitly request it.
+Language: **English by default**. Use the project's configured language when a switchman [LANG] line or the project's rules (AGENTS.md etc.) explicitly specify one, or when the user explicitly requests it.
 
 ## Flow
 

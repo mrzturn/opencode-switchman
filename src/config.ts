@@ -4,6 +4,7 @@ import { dirname, join } from "node:path"
 import { canonicalKeyOf, defaultProviderConfig, genericProviderDefaults, PROVIDER_KEYS, renderDefaultConfigJsonc, resolveProviderKey } from "./provider-config"
 import type { PeakRange, ProviderKey, ProviderUserConfig } from "./provider-config"
 import type { CapabilityTierThresholds, Lane, Pool, RoutePolicy, SwitchmanOptions } from "./types"
+import { DEFAULT_LANG_CANDIDATES } from "./types"
 
 export interface ConfigDiagnostic { code: string; level: "error" | "warn" | "info"; path?: string; hint?: string }
 // [2026-09-04]-[English localization: translate CLI messages and comments; no logic change]
@@ -32,6 +33,8 @@ export interface UserConfig {
   relay: { image: boolean }
   // [2026-09-05]-[artifact workspace: .switchman/<date>/<sessionId>-<title>/ per-project artifact coordination]
   workspace: { enabled: boolean; dirname: string }
+  // [2026-09-05]-[project language preference: conversation/comments/docs language — first-run ask + per-turn [LANG] iron-rule line]
+  lang: { enabled: boolean; ask: boolean; candidates: string[] }
   lanes: Partial<Record<Lane, string[]>>
   extensions: Record<string, unknown>
 }
@@ -41,7 +44,7 @@ export const DEFAULT_CONTEXT_TOKENS = { soft: 60_000, hard: 80_000, force: 100_0
 export const DEFAULT_DELEGATION_FLOOR = 3_000
 
 /** Factory defaults for behavior sections (fillMissing baseline; only bad-typed values fall back and report SWM037) */
-export function defaultBehaviorConfig(): Pick<UserConfig, "quota" | "cost" | "capability" | "matrix" | "banner" | "rules" | "context" | "builtinAgents" | "injection" | "dispatch" | "relay" | "workspace" | "lanes"> {
+export function defaultBehaviorConfig(): Pick<UserConfig, "quota" | "cost" | "capability" | "matrix" | "banner" | "rules" | "context" | "builtinAgents" | "injection" | "dispatch" | "relay" | "workspace" | "lang" | "lanes"> {
   return {
     quota: { glmFiveHourReservePct: 90, deepseekLowBalanceWarnCny: 10 },
     cost: { enabled: true },
@@ -55,6 +58,7 @@ export function defaultBehaviorConfig(): Pick<UserConfig, "quota" | "cost" | "ca
     dispatch: { autoRedirect: true },
     relay: { image: true },
     workspace: { enabled: true, dirname: ".switchman" },
+    lang: { enabled: true, ask: true, candidates: [...DEFAULT_LANG_CANDIDATES] },
     lanes: {},
   }
 }
@@ -180,6 +184,10 @@ export function validateUserConfig(value: unknown): { config: UserConfig; diagno
     const dn = String(filled.workspace.dirname ?? "")
     if (!dn.trim() || dn !== dn.trim() || /[/\\]/.test(dn) || dn === "." || dn === "..") bad("workspace.dirname", () => { filled.workspace.dirname = defaults.workspace.dirname })
   }
+  // [2026-09-05]-[project language preference: enabled/ask booleans; candidates = non-empty trimmed bounded strings (fallback to defaults)]
+  if (typeof filled.lang.enabled !== "boolean") bad("lang.enabled", () => { filled.lang.enabled = defaults.lang.enabled })
+  if (typeof filled.lang.ask !== "boolean") bad("lang.ask", () => { filled.lang.ask = defaults.lang.ask })
+  if (!Array.isArray(filled.lang.candidates) || filled.lang.candidates.length === 0 || !filled.lang.candidates.every((c: unknown) => typeof c === "string" && c.trim() === c && !!c.trim() && c.length <= 48)) bad("lang.candidates", () => { filled.lang.candidates = structuredClone(defaults.lang.candidates) })
   if (!["auto", "artificial-analysis", "openrouter"].includes(filled.capability.source)) bad("capability.source", () => { filled.capability.source = defaults.capability.source })
   if (filled.capability.apiKey !== undefined && typeof filled.capability.apiKey !== "string") bad("capability.apiKey", () => { filled.capability.apiKey = undefined })
   // lanes: each value must be string[]; a single bad value only falls back that lane (rest kept)
@@ -246,6 +254,8 @@ export function resolveEffectiveOptions(raw: unknown, cfg: UserConfig): { option
     relay: has(o, "relay") ? { ...cfg.relay, ...o.relay } : cfg.relay,
     // [2026-09-05]-[artifact workspace switch: same merge pattern; dirname falls back to the default when emptied]
     workspace: has(o, "workspace") ? { ...cfg.workspace, ...o.workspace } : cfg.workspace,
+    // [2026-09-05]-[project language preference switch: same merge pattern (jsonc baseline, tuple explicit keys override)]
+    lang: has(o, "lang") ? { ...cfg.lang, ...o.lang } : cfg.lang,
     lanes: has(o, "lanes") ? o.lanes : cfg.lanes,
     matrix: {
       mode: has(o.matrix, "mode") ? o.matrix!.mode! : cfg.matrix.mode,
@@ -259,7 +269,7 @@ export function resolveEffectiveOptions(raw: unknown, cfg: UserConfig): { option
       lmarenaCheck: has(o.capability, "lmarenaCheck") ? o.capability!.lmarenaCheck! : cfg.capability.lmarenaCheck,
     },
   }
-  for (const section of ["cost", "banner", "rules", "lanes", "matrix", "capability", "context", "builtinAgents", "injection", "dispatch", "relay", "workspace"] as const) if (has(o, section)) legacySections.push(section)
+  for (const section of ["cost", "banner", "rules", "lanes", "matrix", "capability", "context", "builtinAgents", "injection", "dispatch", "relay", "workspace", "lang"] as const) if (has(o, section)) legacySections.push(section)
   return { options, legacySections }
 }
 export function routePolicy(config: UserConfig, legacy?: Partial<Record<Pool, boolean>>): RoutePolicy {

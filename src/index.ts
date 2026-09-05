@@ -37,7 +37,7 @@ import { injectShells, injectShellDefs, selectInjectableDefs } from "./shells"
 import { buildBanner, shortName, providerStatusEntries } from "./banner"
 import { refreshSelfUpdate, updateBannerText, ensureUpdateCommands, detectLoadMode, pluginCliPath } from "./selfupdate"
 import { loadPoolConfig, overrideSummary } from "./user-overrides"
-import { poolConfigCommandMd, modelRankCommandMd, expertCommandMd } from "./commands-md"
+import { poolConfigCommandMd, modelRankCommandMd, expertCommandMd, langCommandMd } from "./commands-md"
 import { billingOfProvider, loadUserConfig, resolveEffectiveOptions, routingPeakActive, routePolicy, DEFAULT_DELEGATION_FLOOR } from "./config"
 import { poolForProviderId } from "./provider-config"
 import { runDoctor } from "./doctor"
@@ -47,9 +47,10 @@ import {
   noteModelNotFound, retiredModelKeys, filterRetiredShells,
 } from "./breaker"
 import { classifyFailure } from "./failclass"
-import { LANE_ORDER } from "./types"
+import { LANE_ORDER, DEFAULT_LANG_CANDIDATES } from "./types"
 import type { SwitchmanOptions, Lane, LaneResult, Pool, ShellRegEntry, ModelKey } from "./types"
 import { WorkspaceTracker, DEFAULT_WORKSPACE_DIRNAME, type EnsuredWorkspace } from "./workspace"
+import { loadLangConfig, renderLangLine, renderAskDirective, saveLangFromQuestion } from "./lang-config"
 import { detectMode, readConfigured, normalizeProviderListResponse } from "./activation"
 import type { MatrixModeOption } from "./activation"
 // [2026-08-29]-[event/parameter shape-extraction pure functions moved to helpers.ts: the entry must not export non-plugin functions, otherwise
@@ -159,6 +160,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     () => ({ enabled: options.workspace?.enabled !== false, dirname: options.workspace?.dirname || DEFAULT_WORKSPACE_DIRNAME }),
     pluginDirectory,
   )
+  // [2026-09-05]-[project language preference: per-session first-ask latch (released on capture/session delete);
+  //  the config itself is re-read from disk EVERY turn, so "configured = never ask again" holds across restarts]
+  const langAsked = new Set<string>()
 
   function isShellOrInternalSession(sessionID: string | undefined): boolean {
     if (!sessionID) return false
@@ -870,6 +874,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           //  selection is read live from the [ROUTES] banner at execution time (no stale CLI snapshot), dispatch goes
           //  through the standard six gates + auto-redirect]
           "expert": { template: expertCommandMd(), description: "Dispatch the requirement to the strongest available expert for an answer or design (review pool preferred; falls back to the hard pool's top model on its read-only shell)" },
+          // [2026-09-05]-[/switchman-lang: show/reconfigure the project language preference (marker-question re-ask
+          //  flows through the same plugin-side capture; see commands-md.langCommandMd)]
+          "switchman-lang": { template: langCommandMd(options.workspace?.dirname || DEFAULT_WORKSPACE_DIRNAME), description: "Show or reconfigure this project's language preference (conversation / code comments & commit messages / documents)" },
           // [2026-09-04]-[removed the /handover conversational registration: moved to direct TUI palette execution (fork backup + compaction of the
           //  current session, no AI in the loop); opencode's built-in session.fork (message-selection fork dialog) also occupies /fork,
           //  so the plugin no longer registers a same-name command, avoiding dual entries]-
@@ -1084,6 +1091,17 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           const todoLine = sessionTodoLine(input.sessionID)
           if (todoLine) output.system.push(todoLine)
         }
+        // [2026-09-05]-[project language preference: per-turn [LANG] iron-rule line (settings.json → AGENTS.md marker,
+        //  disk re-read every turn = mechanism-enforced stickiness); unconfigured → first-turn-only ask directive
+        //  (latched per session; the question-tool answers are captured and persisted plugin-side, never by the model)]
+        if (options.lang!.enabled) {
+          const loaded = loadLangConfig(pluginDirectory, options.workspace?.dirname || DEFAULT_WORKSPACE_DIRNAME)
+          if (loaded) output.system.push(renderLangLine(loaded.cfg, loaded.source))
+          else if (options.lang!.ask !== false && input.sessionID && !langAsked.has(input.sessionID)) {
+            langAsked.add(input.sessionID)
+            output.system.push(renderAskDirective(options.lang!.candidates ?? DEFAULT_LANG_CANDIDATES))
+          }
+        }
       } catch (exc) {
         appendStatusLog(`rules/banner fail-open: ${exc}`)
       }
@@ -1286,7 +1304,18 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     //  only after the whole compaction loop has run on the host session loop, which stays blocked while this hook is awaited, so awaiting
     //  it self-deadlocks until a user interrupt (7m25s/1m40s hangs, both ended the second the user intervened). The measured watermark
     //  falls back with the next assistant message once filterCompacted truncates the pre-compaction history]
-    "tool.execute.after": async (hookInput) => {
+    "tool.execute.after": async (hookInput, hookOutput) => {
+      // [2026-09-05]-[project language preference capture: our marker question answered → the plugin persists the config
+      //  itself (the model never writes the settings file); unrelated tools fall through, fail-open everywhere]
+      if (hookInput.tool === "question") {
+        try {
+          const saved = saveLangFromQuestion(hookInput.args, (hookOutput as any)?.output, pluginDirectory, options.workspace?.dirname || DEFAULT_WORKSPACE_DIRNAME)
+          if (saved) {
+            langAsked.delete(hookInput.sessionID)
+            appendStatusLog(`project language preference saved (${saved.rel}): conversation=${saved.cfg.conversation} comments=${saved.cfg.comments} docs=${saved.cfg.docs}`)
+          }
+        } catch { /* fail-open */ }
+      }
       const sid = hookInput.sessionID
       try {
         if (options.context?.autoHandover === false) return
@@ -1378,6 +1407,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             readNudged.delete(sid)
             sessionTodos.delete(sid)
             workspace.forget(sid)
+            langAsked.delete(sid)
             if (dynamic && manager?.noteSessionDeleted(sid)) manager.scheduleRecompute(50, "session")
           }
           return

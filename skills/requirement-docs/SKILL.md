@@ -8,7 +8,7 @@ description: Unified spec for technical docs — requirements analysis, PRD, des
 
 Goal: centralized archiving, unified naming, consistent structure; understand existing code before proposing solutions.
 
-Language: **English by default** (keep technical terms as-is). Chinese only when the project's rules (AGENTS.md etc.) or the user explicitly request it.
+Language: **English by default** (keep technical terms as-is). Use the project's configured language when a switchman [LANG] line or the project's rules (AGENTS.md etc.) explicitly specify one, or when the user explicitly requests it.
 
 ## 1. Flow (every time)
 

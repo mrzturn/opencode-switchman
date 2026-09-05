@@ -8,6 +8,7 @@
 // [2026-09-05]-[/expert expert consultation: no CLI round-trip — selection follows the live [ROUTES] banner chain
 // (review head preferred; hard head's -ro face as fallback), dispatch goes through the standard six gates + auto-redirect]
 import { paths } from "./state"
+import { LANG_SETTINGS_FILE } from "./lang-config"
 
 const q = (p: string): string => JSON.stringify(p)
 
@@ -57,6 +58,30 @@ export function modelRankCommandMd(cliPath: string): string {
     "Note: `#number` is only valid against the most recent list output; if the ranking may have changed between two operations, re-run list before converting numbers.",
     "",
     `Config file: ${paths().capabilityRank} (safe to hand-edit; models array order = capability descending, hot-reloaded on save).`,
+    "",
+  ].join("\n")
+}
+
+// [2026-09-05]-[/switchman-lang: show/reconfigure the project language preference — reads the settings file fresh via a
+//  `!` block; re-ask goes through the same marker-question flow (plugin captures and overwrites, the model never edits
+//  the file); reset = delete the file (next session asks again); AGENTS.md marker applies only while the file is absent]
+export function langCommandMd(workspaceDirname: string): string {
+  const rel = `${workspaceDirname}/${LANG_SETTINGS_FILE}`
+  return [
+    "---",
+    "description: show or reconfigure this project's language preference (conversation / code comments & commit messages / documents)",
+    "---",
+    "",
+    `!\`cat "${rel}" 2>/dev/null || echo "(not configured)"\``,
+    "",
+    `The file above is this project's language preference (\`lang.conversation\` = replies & reasoning, \`lang.comments\` = code comments AND commit messages, \`lang.docs\` = generated documents). A switchman \`[LANG]\` line enforces it every turn as a project-level iron rule; a user language request applies to a single reply only, then reverts.`,
+    "If the user wants to change it: call the question tool ONCE with exactly these three questions (question texts verbatim, marker included — the plugin captures the answers and overwrites the file automatically):",
+    `1. question "switchman-lang 1/3: Conversation language for this project (your replies and reasoning)?" — single-choice with the current candidate languages, custom free input allowed`,
+    `2. question "switchman-lang 2/3: Language for code comments and commit messages?" — same options`,
+    `3. question "switchman-lang 3/3: Language for generated documents (plans, PRD, design docs, reports)?" — same options`,
+    "After the tool returns, confirm the saved preferences in one line.",
+    `If the user asks to reset: run \`rm "${rel}"\` — the next session will ask again.`,
+    `Alternatively the user may hand-edit ${rel}, or add a read-only marker line \`switchman:lang conversation=<..> comments=<..> docs=<..>\` to AGENTS.md (marker applies only while the settings file is absent).`,
     "",
   ].join("\n")
 }

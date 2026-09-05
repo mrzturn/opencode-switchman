@@ -318,6 +318,19 @@ export interface RulesOptions {
   /** Delegation floor (tokens): self-execution allowed when expected benefit is below it; interpolated into {{DELEGATION_FLOOR}} when injecting the protocol */
   delegationFloor?: number
 }
+// [2026-09-05]-[project language preference: per-project conversation/comments/docs language — first-run interactive
+//  ask (question tool; answers captured and persisted by the plugin itself), then a per-turn [LANG] iron-rule line;
+//  storage = <workspace-dirname>/settings.json, AGENTS.md marker read-only fallback (see src/lang-config.ts)]
+export interface LangOptions {
+  /** Master switch (default true): [LANG] line injection + first-run ask when unconfigured */
+  enabled?: boolean
+  /** First-run interactive ask when unconfigured (default true; false = never ask, [LANG] line appears only once configured) */
+  ask?: boolean
+  /** Candidate language labels offered in the ask (custom free input always allowed besides these) */
+  candidates?: string[]
+}
+/** Factory default ask candidates (labels; users may configure their own via jsonc lang.candidates) */
+export const DEFAULT_LANG_CANDIDATES: readonly string[] = ["English", "简体中文", "日本語", "Español", "Français", "Deutsch"]
 // [2026-09-01]-[Config surface consolidated into opencode-switchman.jsonc: tuple options demoted to a compatibility shim
 //  (explicit config wins over gen-1 and reports SWM044); dead field providers.* (credential collection actually goes through poolForProviderId) removed]
 export interface SwitchmanOptions {
@@ -336,4 +349,5 @@ export interface SwitchmanOptions {
   dispatch?: DispatchOptions
   relay?: RelayOptions
   workspace?: WorkspaceOptions
+  lang?: LangOptions
 }
