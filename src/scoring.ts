@@ -197,7 +197,9 @@ function isGated(s: Rankable, ctx: RankContext): boolean {
   if (shell && ctx.retiredModels?.has(`${shell.provider}/${shell.modelId}`)) return true
   if (shell?.comboKey && ctx.realFailedCombos?.has(shell.comboKey)) return true
   if (shell && ctx.quotaExhausted?.[shell.pool as Pool] && ctx.routePolicy?.[shell.pool as Pool]?.routing !== false) return true
-  if (ctx.lane === "review" && ctx.producerFamily && shell && String(shell.family) === String(ctx.producerFamily).toLowerCase()) return true
+  // [2026-09-05]-[review same-family hard drop removed: family moved from elimination to ordering — cross-family
+  //  candidates rank ahead via famClassOf below and a same-family shell is a last-resort DOWNGRADED self-review seat
+  //  (denied at the dispatch gate only while a cross-family reviewer exists on the chain)]
   if ((ctx.modality === "image" || ctx.modality === "vision") && shell && !shell.vision) return true
   if (ctx.capability === "rw" && shell?.capability === "ro") return true
   return false
@@ -239,6 +241,12 @@ export function rankCandidates<T extends Rankable>(
   //  same-level-first / cross-level fallback) — when the lane has thinking-level candidates, off shells no longer lead,
   //  immediate included (latency only orders within a partition; "thinking vs not" is a quality floor, not a soft factor)]
   const offClassOf = (s: T): number => ((s.effort ?? "off") === "off" ? 1 : 0)
+  // [2026-09-05]-[review family deprioritization: 1 = same family as the ROUTE_META producer on the review lane.
+  //  Prepended as the FIRST comparator key of both sorts → cross-family always ranks ahead of same-family on the
+  //  review chain. Callers without producerFamily (banner/sidebar) compute 0 for every candidate and are unaffected.]
+  const famClassOf = (s: T): number =>
+    ctx.lane === "review" && ctx.producerFamily &&
+    String(ctx.registry?.[s.key]?.family ?? "") === String(ctx.producerFamily).toLowerCase() ? 1 : 0
   const thinking = survivors.filter((s) => offClassOf(s) === 0)
   const offPool = survivors.filter((s) => offClassOf(s) === 1)
   const scoreCompare = (a: T, b: T): number => {
@@ -264,6 +272,10 @@ export function rankCandidates<T extends Rankable>(
       if (da !== null && db !== null && da !== db) return da - db
       return scoreCompare(a, b)
     })
+    // [2026-09-05]-[review last-resort seats: when no S(L5) primary and no A(L4) fallback survives the hard gates
+    //  (e.g. all pools except B-tier models are alive), the review group would go empty → runtime mirror of the
+    //  computeLaneChain generation-time last-resort: take the best 2 remaining candidates so a chain still exists]
+    if (ctx.lane === "review" && fallbackPool.length === 0) return pool.slice(0, 2)
     return fallbackPool.slice(0, 2)
   }
   survivors.length = 0
@@ -271,6 +283,7 @@ export function rankCandidates<T extends Rankable>(
   const inputOrder = new Map(survivors.map((s, i) => [s.key, i]))
   if (ctx.immediate) {
     survivors.sort((a, b) =>
+      famClassOf(a) - famClassOf(b) ||
       offClassOf(a) - offClassOf(b) ||
       (a.latencyMs ?? Number.POSITIVE_INFINITY) - (b.latencyMs ?? Number.POSITIVE_INFINITY) ||
       (inputOrder.get(a.key) ?? 0) - (inputOrder.get(b.key) ?? 0))
@@ -282,6 +295,9 @@ export function rankCandidates<T extends Rankable>(
       return typeof v === "number" ? v : Number.POSITIVE_INFINITY
     }
     survivors.sort((a, b) => {
+        // [2026-09-05]-[review family deprioritization: cross-family first, same-family sinks to the chain tail (no effect without producerFamily)]
+        const famDiff = famClassOf(a) - famClassOf(b)
+        if (famDiff !== 0) return famDiff
         // The off partition sinks to bottom as a whole; within-partition ordering keeps the original baseline.
         const offDiff = offClassOf(a) - offClassOf(b)
         if (offDiff !== 0) return offDiff

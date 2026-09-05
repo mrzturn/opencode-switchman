@@ -299,7 +299,10 @@ export function computeLane(lane: Lane, base: string[], p: ComputeLaneParams): L
     }
     if (reason === null && regOk && shell) {
       if (agentDownPure(name, routing, registry)) reason = "breaker"
-      else if (lane === "review" && p.producerFamily && shell.family === String(p.producerFamily).toLowerCase()) reason = "hetero-family"
+      // [2026-09-05]-[review same-family drop removed ("hetero-family"): family moved from elimination to ordering —
+      //  rankCandidates sinks same-family shells to the chain tail (famClass first comparator), so same-family shells
+      //  are last-resort DOWNGRADED self-review seats instead of being dropped; the review chain no longer empties
+      //  when no cross-family reviewer is alive (cross-family stays strictly preferred)]
       else if ((p.modality === "image" || p.modality === "vision") && !shell.vision) reason = "modality"
       else if (p.capability === "rw" && shell.capability === "ro") reason = "capability"
       else if (exhausted[shell.pool as Pool] && p.routePolicy?.[shell.pool as Pool]?.routing !== false) reason = "pool-exhausted"

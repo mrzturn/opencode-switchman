@@ -101,6 +101,20 @@ describe("candidate-chain algorithm", () => {
     expect(computeLaneChain([mrw], cap, "review")).toEqual(["mrw"])
     expect(computeLaneChain([mrw, mro, nro], cap, "review")).toEqual(["mro", "nro"])
   })
+  test("[2026-09-05] review last-resort seats: only B-tier ro candidates (no S primary / A fallback) → chain stays non-empty and takes the best ro shells; non-review lanes keep the empty-chain terminal semantics", () => {
+    const bRo = [
+      { name: "b1-ro", modelId: "b1", pool: "glm", effort: "high", capability: "ro", vision: false },
+      { name: "b2-ro", modelId: "b2", pool: "glm", effort: "medium", capability: "ro", vision: false },
+      { name: "b3-ro", modelId: "b3", pool: "glm", effort: "high", capability: "ro", vision: false },
+    ]
+    const capB = () => ({ score: 0.7, tier: "B" as const })
+    // review: L5 primary / L4 fallback both empty → top-2 of the tier/score-ordered pool (high effort beats medium)
+    expect(computeLaneChain(bRo, capB, "review")).toEqual(["b1-ro", "b3-ro"])
+    // hard (L4) with only a C(L2) candidate: no primary, no adjacent fallback → chain stays empty (terminal failure protocol unchanged)
+    const cRo = [{ name: "c-ro", modelId: "c1", pool: "glm", effort: "high", capability: "ro", vision: false }]
+    const capC = () => ({ score: 0.55, tier: "C" as const })
+    expect(computeLaneChain(cRo, capC, "hard")).toEqual([])
+  })
   test("same-level first: economy with an L1 available keeps stronger models out of the candidate chain", () => {    const levels = ["l1", "l2", "l5"].map((id) => ({ name: id, modelId: id, pool: "glm", effort: "low", capability: "rw", vision: false }))
     const cap = (id: string) => ({
       l1: { score: 0.55, tier: "C" as const, source: "global" },

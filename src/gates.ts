@@ -191,11 +191,42 @@ export function checkShell(
   }
   const role = meta!.role
 
+  // [2026-09-05]-[review same-family self-review fallback: cross-family reviewers stay strictly preferred; when the
+  //  review chain carries no cross-family candidate at all, a same-family shell is allowed as a last-resort
+  //  self-review seat (DOWNGRADED) instead of an unconditional deny that dead-ends the review lane ("review: none
+  //  available"). The exemption note is attached at the final return so the structural rw/ro + vision gates and the
+  //  fallback-chain checks below still apply to an exempted dispatch; a deny always supersedes the note.]
+  const REVIEW_SELF_REVIEW_NOTE = "[opencode-switchman] DOWNGRADED: no cross-family reviewer available — same-family self-review allowed; declare DOWNGRADED in the review conclusion"
+  let reviewSelfReviewNote: string | null = null
+  // Lazily computed once, only when the review-lane chain is actually needed (same try/catch pattern as the fallback block below)
+  let reviewChain: import("./types").LaneResult | null = null
+  let reviewChainDone = false
+  const reviewChainOf = (): import("./types").LaneResult | null => {
+    if (reviewChainDone) return reviewChain
+    reviewChainDone = true
+    try {
+      // [2026-09-05]-[capability pinned to "ro": the review chain answers "which reviewer shells are alive" (review is
+      //  an ro lane), so the dispatching task's own capability=rw must not filter ro reviewers out — with the raw META
+      //  capability every ro shell would be dropped and the chain would read empty, falsely signalling "no cross-family
+      //  reviewer". producerFamily still flows through for the famClass tail ordering.]
+      reviewChain = computeLane("review" as import("./types").Lane, snap.lanes.review ?? base, { ...buildParams() as any, capability: "ro" })
+    } catch {
+      reviewChain = null
+    }
+    return reviewChain
+  }
+
   // Gate 7 semantic checks
   if (role === "reviewer") {
     const pf = meta!.producer_family
     if (pf && pf === String(shell.family)) {
-      return { deny: `${agent} same family as producer (${pf}); re-review requires a cross-family perspective${hint("review")}`, note: null, redirect: candidateOf("review") }
+      // Deny stays only while a cross-family candidate exists on the review chain; ranking already sinks the
+      // same-family shell to the chain tail (scoring famClass), so cross-family is still served first.
+      const hasCrossFamily = reviewChainOf()?.chain.some((c) => String(c.family ?? "") !== String(pf).toLowerCase()) ?? false
+      if (hasCrossFamily) {
+        return { deny: `${agent} same family as producer (${pf}); re-review requires a cross-family perspective${hint("review")}`, note: null, redirect: candidateOf("review") }
+      }
+      reviewSelfReviewNote = REVIEW_SELF_REVIEW_NOTE
     }
   }
   if (meta!.capability === "rw" && String(shell.capability) === "ro") {
@@ -209,6 +240,16 @@ export function checkShell(
   }
   const capability = baseScoreDynamic(shell.modelId)
   if (!isPrimaryCandidate(lane as import("./types").Lane, capability) && !isFallbackCandidate(lane as import("./types").Lane, capability)) {
+    // [2026-09-05]-[review last-resort seat exemption: a below-fallback shell (e.g. B-tier/L3) holding a last-resort
+    //  review seat — on the chain while the chain carries no L5 primary candidate — is allowed with the DOWNGRADED
+    //  note instead of denying "capability level too low", keeping the review lane dispatchable when only B-tier
+    //  models are alive; other lanes unchanged]
+    if (lane === "review") {
+      const rc = reviewChainOf()
+      const onChain = Boolean(rc?.chain.some((c) => c.shell === agent))
+      const noPrimary = Boolean(rc && !rc.chain.some((c) => isPrimaryCandidate("review" as import("./types").Lane, baseScoreDynamic(snap.registry?.[c.shell]?.modelId ?? ""))))
+      if (onChain && noPrimary) return { deny: null, note: REVIEW_SELF_REVIEW_NOTE, redirect: null }
+    }
     return { deny: `${agent} capability level too low to take ${lane} tasks${hint()}`, note: null, redirect: candidateOf() }
   }
   if (isFallbackCandidate(lane as import("./types").Lane, capability) && meta!.source !== "user") {
@@ -227,8 +268,11 @@ export function checkShell(
   }
   // [2026-08-31]-[de-vendorization: removed the hard deny for source=auto mis-picking pay-as-you-go pools — api billing is
   //  soft-sorted by the billingBoost product factor (after subscription within the same tier); deny now keeps only the META
-  //  format gate and the review cross-family / ro / vision structural gates]
-  return { deny: null, note: null, redirect: null }
+  //  format gate, the review ro / vision structural gates, and the review cross-family deny (kept while a cross-family
+  //  candidate exists on the review chain)]
+  // [2026-09-05]-[review same-family self-review: the last-resort exemption note (no cross-family reviewer on the chain)
+  //  is emitted here after every structural gate passed]
+  return { deny: null, note: reviewSelfReviewNote, redirect: null }
 }
 
 /** Unregistered / non-shell name → fail-open (unknown built-in agents are not governed by routing) */

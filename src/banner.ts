@@ -279,7 +279,9 @@ function limitLine(down: Set<string> | string[] | Map<string, string>, unknownCo
     .sort()
   const downTxt = names.length === 0 ? "none" : `${names.join(", ")} (not dispatchable; deny carries a redirect)`
   // [2026-08-31]-[vendor-neutral: dropped the "DeepSeek tail-fallback only" pool-name business semantics — api/unknown groups sink by billing coefficient]
-  let line = `[LIMITS] down: ${downTxt} | reviewer must be cross-family (producer family ≠ shell family, ROUTE_META enforced) | api-billed & unknown models sink by coefficient (explicit billing=subscription wins)`
+  // [2026-09-05]-[review same-family self-review fallback: cross-family is a preference now — same-family self-review is
+  //  a last-resort DOWNGRADED seat allowed only when no cross-family reviewer exists on the chain (was a hard ROUTE_META deny)]
+  let line = `[LIMITS] down: ${downTxt} | reviewer prefers cross-family (same-family self-review = DOWNGRADED, allowed only when no cross-family reviewer exists) | api-billed & unknown models sink by coefficient (explicit billing=subscription wins)`
   if (unknownCount && unknownCount > 0) line += ` | ${unknownCount} combos unknown (not blocked)`
   if (matrixInfo) {
     line += ` | matrix: ${matrixInfo.mode}${matrixInfo.watch ? "·watch" : ""}/${matrixInfo.configStatus}`

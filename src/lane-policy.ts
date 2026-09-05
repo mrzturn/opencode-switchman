@@ -53,7 +53,10 @@ export const LANE_SPEC: Record<Lane, { efforts: string[]; vision: boolean; ro: b
   main: { efforts: ["medium", "high", "xhigh", "max"], vision: false, ro: false, minimumLevel: "L3" },
   hard: { efforts: ["high", "xhigh", "max", "medium"], vision: false, ro: false, minimumLevel: "L4" },
   vision: { efforts: ["medium", "high", "xhigh", "max"], vision: true, ro: false, minimumLevel: null },
-  // Review prefers S(L5); A(L4) can only serve as a top-2 fill-in candidate and must still pass the ro and cross-family hard gates.
+  // [2026-09-05]-[review same-family fallback: cross-family is a preference, not a hard gate — cross-family candidates
+  //  rank first on the chain and a same-family ro shell is a last-resort DOWNGRADED self-review seat (see buildPartition
+  //  and scoring.rankCandidates); the ro hard gate is unchanged]
+  // Review prefers S(L5); A(L4) can only serve as a top-2 fill-in candidate and must still pass the ro hard gate.
   review: { efforts: ["high", "xhigh", "max", "medium"], vision: false, ro: true, minimumLevel: "L5" },
 }
 
@@ -199,6 +202,12 @@ export function computeLaneChain(shells: readonly LaneAlgorithmShell[], capabili
         //  the same level, and without this key lexicographic order would slice stronger models (53>52) out of the top-2
         //  fallback seats]-[impact: cross-level fallback prefers the real capability index, same source as the ordered main ordering]
         (b.rawScore ?? -Infinity) - (a.rawScore ?? -Infinity) || a.shell.name.localeCompare(b.shell.name))
+    // [2026-09-05]-[review last-resort seats: when no S(L5) primary and no A(L4) fallback candidate exists (e.g. all
+    //  pools except B-tier models are alive), the review partition would go empty → the TUI sidebar showed
+    //  "review: none available" and every reviewer dispatch was denied. Take the best 2 shells of the (already
+    //  tier/score-ordered) pool instead so the chain is never empty while any ro shell exists; same-family seats rank
+    //  last at runtime and the dispatch declares DOWNGRADED. Other lanes unchanged (empty = terminal failure protocol).]
+    if (lane === "review" && primary.length === 0 && fallbacks.length === 0) return pool.slice(0, 2)
     return [...primary.slice(0, 4), ...fallbacks.slice(0, 2)]
   }
   const thinking = ordered.filter(({ shell }) => shell.effort !== "off")

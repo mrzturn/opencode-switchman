@@ -176,6 +176,28 @@ describe("six-gate order", () => {
     expect(d).toContain("same family")
     expect(d).toContain("cross-family")
   })
+  test("15b same-family reviewer with NO cross-family candidate on the review chain → allow with a DOWNGRADED note", () => {
+    // lanes override: the review chain carries only the same-family glm ro shell (e.g. every other pool exhausted);
+    // checkShell called directly because decOf pins lanes to the static manifest
+    const lanes = { ...LANES, review: ["glm-mx-53-high-ro"] }
+    const s = snap()
+    const r = checkShell("glm-mx-53-high-ro", s.registry!["glm-mx-53-high-ro"]!, meta("review", "reviewer", "glm", "ro"), { ...s, lanes })
+    expect(r.deny).toBeNull()
+    expect(r.note).toContain("DOWNGRADED")
+    expect(r.note).toContain("same-family self-review")
+  })
+  test("15c B-tier reviewer on a last-resort chain → allow via the capability-floor exemption (same-family and cross-family producer alike)", () => {
+    const lanes = { ...LANES, review: ["glm-mx-53f-high-ro"] }
+    const s = snap()
+    // same-family producer: gate 7 note path (glm-5.3-flash is B/L3 → neither L5 primary nor L4 fallback)
+    const r = checkShell("glm-mx-53f-high-ro", s.registry!["glm-mx-53f-high-ro"]!, meta("review", "reviewer", "glm", "ro"), { ...s, lanes })
+    expect(r.deny).toBeNull()
+    expect(r.note).toContain("DOWNGRADED")
+    // cross-family producer: capability floor exemption alone (no gate 7 hit)
+    const r2 = checkShell("glm-mx-53f-high-ro", s.registry!["glm-mx-53f-high-ro"]!, meta("review", "reviewer", "claude", "ro"), { ...s, lanes })
+    expect(r2.deny).toBeNull()
+    expect(r2.note).toContain("DOWNGRADED")
+  })
   test("16 rw task dispatched to an ro shell → deny", () => {
     const ro = manifest.shells.find((s) => s.capability === "ro")!.name
     const d = denyOf(ro, meta("review", "planner", "glm", "rw"), snap())
@@ -273,6 +295,18 @@ describe("compute_lane", () => {
     expect(r.chain.map((c) => c.shell)).toEqual(LANES.main)
     expect(r.status.endsWith("*")).toBe(true)
   })
+  test("25 [2026-09-05] review computeLane: same-family shells stay on the chain (no hetero-family drop) and rank after cross-family", () => {
+    const r = computeLane("review", LANES.review, {
+      registry: fullRegistry(), matrix: matrixOk(), routing: { down_agents: {}, down_expiry: {} }, producerFamily: "claude",
+    } as any)
+    expect(r.dropped.every((d) => d.reason !== "hetero-family")).toBe(true)
+    const fams = r.chain.map((c) => c.family)
+    expect(fams).toContain("claude")
+    const firstSame = fams.indexOf("claude")
+    const firstCross = fams.findIndex((f) => f !== "claude")
+    expect(firstCross).toBeGreaterThanOrEqual(0)
+    expect(firstCross).toBeLessThan(firstSame)
+  })
 })
 
 // ================= 4. Breaker (3)=================
@@ -339,6 +373,7 @@ describe("end-to-end and quota verdicts", () => {
     expect(lines[1]).not.toContain("100% left")
     expect(lines[2].startsWith("[LIMITS] ")).toBe(true)
     expect(lines[2]).toContain("down: none")
+    expect(lines[2]).toContain("reviewer prefers cross-family")
     expect(lines[3].startsWith("[UPDATE] ")).toBe(true)
   })
   test("28b sidebar watermark entries: GLM single block with 5h/week/MCP sub-rows, Copilot credits/refresh sub-rows, progress bars and reset times complete", () => {

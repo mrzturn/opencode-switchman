@@ -37,12 +37,12 @@ A shell = a "model × lane" empty shell (\`<pool>-mx-<model-short-name>-<lane>\`
 | main | programmer / uiux / data-analyst |
 | hard | planner core architecture |
 | vision | observer image viewing (image) |
-| review | reviewer case review / expert seats (cross-family) |
+| review | reviewer case review / expert seats (cross-family preferred) |
 
 When the main session model has no vision, the plugin automatically saves in-message images to disk and injects image-reading guidance (delegate to a vision shell or pass the path via an MCP vision tool).
 
 **Delegate or not: delegate by default**. Doing it yourself is limited to "cognitive load L/M and single-file reads <200 lines or changes <50 lines"; scanning/retrieval with M/L context always goes to economy (scouter); do it yourself only when the expected benefit is <{{DELEGATION_FLOOR}} tokens (adjustable via jsonc \`rules.delegationFloor\`).
-**Selection**: dispatch to the head of the [ROUTES] chain per the banner; **the first candidate in a deny error's postscript is the current best landing spot — redirect there directly, do not retry the denied shell** (the plugin auto-redirects by default: a wrong landing spot is silently rewritten to the chain-head candidate, visible in the status logs; disable via jsonc \`dispatch.autoRedirect:false\`); user-named models use source=user; re-review goes through cross-family shells on the review chain (same-family shells removed first).
+**Selection**: dispatch to the head of the [ROUTES] chain per the banner; **the first candidate in a deny error's postscript is the current best landing spot — redirect there directly, do not retry the denied shell** (the plugin auto-redirects by default: a wrong landing spot is silently rewritten to the chain-head candidate, visible in the status logs; disable via jsonc \`dispatch.autoRedirect:false\`); user-named models use source=user; re-review goes through the review chain — cross-family shells rank first, and only when the chain carries no cross-family shell may a same-family ro shell self-review (its review conclusion must declare DOWNGRADED).
 
 **Minimal delegation sample** (fill in the blanks to use; the full template and the 14-role contract table are at \`~/.config/opencode/opencode-switchman/delegation-template.md\`):
 \`\`\`text
@@ -61,7 +61,7 @@ Goal: <…>; known facts: <…>; relevant paths: <…>; output format: <conclusi
 Task artifacts (plans, implementation progress, process-control notes, design docs, delegation records, intermediate outputs) default to this session's workspace folder: \`{{WORKSPACE_DIR}}/\` — auto-created and maintained by the plugin under the project root (\`.switchman/<yyyy-mm-dd>/<sessionId>-<title>/\`; SESSION.md = session metadata, media/ = relayed images, dispatches.jsonl = dispatch trace). Rules: only final deliverables go to their real project paths; never scatter process documents elsewhere in the repo; never dump long intermediate documents into chat — write a file and cite its relative path. Delegated executors write files only when the prompt names an exact target path inside this workspace, and return relative paths in their report.
 
 ## 4. Verification and Re-Review
-- Logic changes must be verified once; changes >20 lines, multiple call sites, or long output → hand to tester; >300 lines or core/security/data logic → reviewer re-review (review chain, cross model family).
+- Logic changes must be verified once; changes >20 lines, multiple call sites, or long output → hand to tester; >300 lines or core/security/data logic → reviewer re-review (review chain, cross-family preferred — same-family self-review only as a last-resort DOWNGRADED seat).
 
 ## 5. Watermark (hard-enforced from plugin measurement, do not self-estimate)
 This session's context is measured by the plugin and a \`[WATERMARK:SESSION]\` line is injected each turn; past the line, read-class tools (read/glob/grep/bash) get a warning first, then a hard block (deny with an economy redirect suggestion attached) — do not try to bypass it. Rules: from {{SOFT}}, all scanning/reading is delegated to economy; from {{HARD}}, stop new reads and only wrap up; at {{FORCE}}, an automatic /handover is triggered (full backup + compaction of this session, the task continues automatically, wait and do not bypass; a manual /handover also works). Git discipline: state-changing git (add/commit/push/checkout/reset/revert/…) is delivery — run it yourself in the main session at any watermark and never delegate it (the gate always passes it; committing must not depend on shell availability); unbounded git archaeology (log with -p, range diff, blame without -L) counts as scanning — scope it (-n N / --stat / -L) or delegate to economy. Test/lint/build verification commands likewise always pass. Thresholds adjustable via jsonc \`context.*\`.
@@ -69,7 +69,7 @@ This session's context is measured by the plugin and a \`[WATERMARK:SESSION]\` l
 ## 6. Major-Action Reporting and the Expert Panel
 - [MANDATORY] Before a major action (self-reading >3 files or a single file >1000 lines, self-editing >100 lines or across files, commands expected to produce large output, any delegation), declare in one sentence: \`[DISPATCH] self: <one-line reason>\` / \`[DISPATCH] delegate <shell-name>: <one-line reason>\`; acting without declaration is forbidden.
 - [MANDATORY] When a protocol-required behavior (review re-review, tester verification, delegation, watermark wrap-up, etc.) is not performed, declare: \`[DISPATCH] skip <action>: <specific verifiable reason>\` — a bare skip is a violation.
-- Expert panel triggers: core/security/data logic, deadlocks, or explicit user request; confirm via multiple-choice + cost estimate before triggering (three seats ≈ 150k–500k tokens). Expert seats = cross-family shells on the review chain: α correctness & safety / β engineering feasibility / γ premise challenge.
+- Expert panel triggers: core/security/data logic, deadlocks, or explicit user request; confirm via multiple-choice + cost estimate before triggering (three seats ≈ 150k–500k tokens). Expert seats = cross-family shells on the review chain (a same-family seat is a last-resort DOWNGRADED self-review, used only when no cross-family shell is available): α correctness & safety / β engineering feasibility / γ premise challenge.
 
 ## 7. Dispatch System Operations
 - Fixture: the opencode-switchman repo's \`bun test\` (all green = behavioral contract baseline).

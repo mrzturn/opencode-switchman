@@ -281,6 +281,30 @@ describe("rankCandidates", () => {
     const r = rankCandidates(shells, ctx({ lane: "review" }))
     expect(r.ranked.map((s) => s.key)).toEqual(["a"])
   })
+  test("[2026-09-05] review same-family deprioritization: with producerFamily set the same-family shell is not dropped and ranks after the cross-family candidate", () => {
+    const shells = [
+      rankable({ key: "glm-a-ro", modelId: "glm-5.3", family: "glm", capability: "ro", latencyMs: 5 }),
+      rankable({ key: "grok-a-ro", modelId: "grok-4.6", pool: "copilot", family: "grok", capability: "ro", latencyMs: 900 }),
+    ]
+    const registry = {
+      "glm-a-ro": shellReg({ name: "glm-a-ro", family: "glm", modelId: "glm-5.3", capability: "ro" }),
+      "grok-a-ro": shellReg({ name: "grok-a-ro", pool: "copilot", provider: "github-copilot", family: "grok", modelId: "grok-4.6", capability: "ro" }),
+    }
+    // no S candidate → both A shells enter as the top-2 fallbacks; cross-family leads despite far worse latency
+    // (family is the first comparator key; without it the faster same-family shell would win)
+    const r = rankCandidates(shells, ctx({ lane: "review", registry, producerFamily: "glm" }))
+    expect(r.ranked.map((s) => s.key)).toEqual(["grok-a-ro", "glm-a-ro"])
+  })
+  test("[2026-09-05] review last-resort seats at runtime: only B-tier candidates (no S/A) survive the gates → the group takes the best 2 instead of going empty", () => {
+    const shells = [
+      rankable({ key: "b1", modelId: "glm-5.3-flash", family: "glm", capability: "ro", latencyMs: 30 }),
+      rankable({ key: "b2", modelId: "glm-5.3-flash", effort: "medium", family: "glm", capability: "ro", latencyMs: 10 }),
+      rankable({ key: "b3", modelId: "glm-4.5-air", effort: "low", family: "glm", capability: "ro", latencyMs: 5 }),
+    ]
+    // glm-5.3-flash=B(L3) and glm-4.5-air=C(L2) — neither L5 primary nor L4 fallback for the review lane
+    const r = rankCandidates(shells, ctx({ lane: "review" }))
+    expect(r.ranked.map((s) => s.key)).toEqual(["b1", "b2"])
+  })
   test("economy with L1/L2 available does not use L5; only when both L1/L2 are unavailable does it fall back upward", () => {
     const shells = [
       rankable({ key: "l1", modelId: "unknown-model", matrixStatus: "ok" }),
