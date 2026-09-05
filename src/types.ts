@@ -303,6 +303,14 @@ export interface DispatchOptions { autoRedirect?: boolean }
 // [2026-09-04]-[Image relay: when the main session model has no vision, images in the message are saved to disk and image-reading guidance is injected
 //  (vision shell/MCP vision tool relay), avoiding host errors; default true]
 export interface RelayOptions { image?: boolean }
+// [2026-09-05]-[Artifact workspace: plugin creates <project>/<dirname>/<yyyy-mm-dd>/<sessionId>-<title>/ per main session and
+//  coordinates plans/progress/process docs/media/dispatch traces into it (protocol-guided; see src/workspace.ts)]
+export interface WorkspaceOptions {
+  /** Master switch (default true); when off no folders are created and the protocol section is neutralized */
+  enabled?: boolean
+  /** Workspace directory name under the project root (default ".switchman"; flat name, no path separators) */
+  dirname?: string
+}
 export interface RulesOptions {
   enabled?: boolean
   /** Delegation floor (tokens): self-execution allowed when expected benefit is below it; interpolated into {{DELEGATION_FLOOR}} when injecting the protocol */
@@ -325,4 +333,5 @@ export interface SwitchmanOptions {
   injection?: InjectionOptions
   dispatch?: DispatchOptions
   relay?: RelayOptions
+  workspace?: WorkspaceOptions
 }

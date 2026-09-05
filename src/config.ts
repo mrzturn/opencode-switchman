@@ -30,6 +30,8 @@ export interface UserConfig {
   // [2026-09-04]-[autoRedirect: silent-redirect-on-deny switch (default true); relay.image: image relay switch (default true)]
   dispatch: { autoRedirect: boolean }
   relay: { image: boolean }
+  // [2026-09-05]-[artifact workspace: .switchman/<date>/<sessionId>-<title>/ per-project artifact coordination]
+  workspace: { enabled: boolean; dirname: string }
   lanes: Partial<Record<Lane, string[]>>
   extensions: Record<string, unknown>
 }
@@ -39,7 +41,7 @@ export const DEFAULT_CONTEXT_TOKENS = { soft: 60_000, hard: 80_000, force: 100_0
 export const DEFAULT_DELEGATION_FLOOR = 3_000
 
 /** Factory defaults for behavior sections (fillMissing baseline; only bad-typed values fall back and report SWM037) */
-export function defaultBehaviorConfig(): Pick<UserConfig, "quota" | "cost" | "capability" | "matrix" | "banner" | "rules" | "context" | "builtinAgents" | "injection" | "dispatch" | "relay" | "lanes"> {
+export function defaultBehaviorConfig(): Pick<UserConfig, "quota" | "cost" | "capability" | "matrix" | "banner" | "rules" | "context" | "builtinAgents" | "injection" | "dispatch" | "relay" | "workspace" | "lanes"> {
   return {
     quota: { glmFiveHourReservePct: 90, deepseekLowBalanceWarnCny: 10 },
     cost: { enabled: true },
@@ -52,6 +54,7 @@ export function defaultBehaviorConfig(): Pick<UserConfig, "quota" | "cost" | "ca
     injection: { mode: "chain" },
     dispatch: { autoRedirect: true },
     relay: { image: true },
+    workspace: { enabled: true, dirname: ".switchman" },
     lanes: {},
   }
 }
@@ -171,6 +174,12 @@ export function validateUserConfig(value: unknown): { config: UserConfig; diagno
   if (typeof tk.autoHandover !== "boolean") bad("context.autoHandover", () => { filled.context.autoHandover = defaults.context.autoHandover })
   if (filled.builtinAgents.mode !== "deny" && filled.builtinAgents.mode !== "allow") bad("builtinAgents.mode", () => { filled.builtinAgents.mode = defaults.builtinAgents.mode })
   if (filled.injection.mode !== "chain" && filled.injection.mode !== "all") bad("injection.mode", () => { filled.injection.mode = defaults.injection.mode })
+  // [2026-09-05]-[artifact workspace: enabled boolean + flat directory name (path separators/".."/absolute values rejected, fallback ".switchman")]
+  if (typeof filled.workspace.enabled !== "boolean") bad("workspace.enabled", () => { filled.workspace.enabled = defaults.workspace.enabled })
+  {
+    const dn = String(filled.workspace.dirname ?? "")
+    if (!dn.trim() || dn !== dn.trim() || /[/\\]/.test(dn) || dn === "." || dn === "..") bad("workspace.dirname", () => { filled.workspace.dirname = defaults.workspace.dirname })
+  }
   if (!["auto", "artificial-analysis", "openrouter"].includes(filled.capability.source)) bad("capability.source", () => { filled.capability.source = defaults.capability.source })
   if (filled.capability.apiKey !== undefined && typeof filled.capability.apiKey !== "string") bad("capability.apiKey", () => { filled.capability.apiKey = undefined })
   // lanes: each value must be string[]; a single bad value only falls back that lane (rest kept)
@@ -235,6 +244,8 @@ export function resolveEffectiveOptions(raw: unknown, cfg: UserConfig): { option
     // [2026-09-04]-[autoRedirect/image-relay switches: jsonc behavior sections are the baseline, tuple explicit keys override (same pattern as builtinAgents)]
     dispatch: has(o, "dispatch") ? { ...cfg.dispatch, ...o.dispatch } : cfg.dispatch,
     relay: has(o, "relay") ? { ...cfg.relay, ...o.relay } : cfg.relay,
+    // [2026-09-05]-[artifact workspace switch: same merge pattern; dirname falls back to the default when emptied]
+    workspace: has(o, "workspace") ? { ...cfg.workspace, ...o.workspace } : cfg.workspace,
     lanes: has(o, "lanes") ? o.lanes : cfg.lanes,
     matrix: {
       mode: has(o.matrix, "mode") ? o.matrix!.mode! : cfg.matrix.mode,
@@ -248,7 +259,7 @@ export function resolveEffectiveOptions(raw: unknown, cfg: UserConfig): { option
       lmarenaCheck: has(o.capability, "lmarenaCheck") ? o.capability!.lmarenaCheck! : cfg.capability.lmarenaCheck,
     },
   }
-  for (const section of ["cost", "banner", "rules", "lanes", "matrix", "capability", "context", "builtinAgents", "injection", "dispatch", "relay"] as const) if (has(o, section)) legacySections.push(section)
+  for (const section of ["cost", "banner", "rules", "lanes", "matrix", "capability", "context", "builtinAgents", "injection", "dispatch", "relay", "workspace"] as const) if (has(o, section)) legacySections.push(section)
   return { options, legacySections }
 }
 export function routePolicy(config: UserConfig, legacy?: Partial<Record<Pool, boolean>>): RoutePolicy {

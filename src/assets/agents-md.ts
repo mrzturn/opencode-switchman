@@ -5,7 +5,8 @@
 // [2026-09-04]-[protocol slim-down v2: after mechanizing the watermark rules (context-watch hard gate + [WATERMARK:SESSION]
 //  measured line), removed the advisory long text; added the built-in explore/general ban and the minimal delegation sample;
 //  {{DELEGATION_FLOOR}}/{{SOFT}}/{{HARD}}/{{FORCE}} are interpolated by the index.ts transform per user jsonc (defaults
-//  3k/60k/80k/100k)]
+//  3k/60k/80k/100k); {{WORKSPACE_DIR}} = the per-session artifact workspace relative path (or a neutralized section
+//  when the workspace is disabled)]
 export const AGENTS_MD = `# Global Protocol (master dispatcher rules; opencode-switchman subagent rules are embedded in the shell definitions)
 
 > This protocol ships with the opencode-switchman plugin and is injected into the system prompt automatically by default (bundled with the package, updated with versions); scope: opencode with the opencode-switchman plugin installed.
@@ -50,17 +51,20 @@ Goal: <…>; known facts: <…>; relevant paths: <…>; output format: <conclusi
 2. Summaries only: conclusions + file:line, no large verbatim quotes; do not make subagents re-check what you have already verified.
 3. Standard orchestration (scale to size): big features scouter (if needed) → planner → reviewer case review → programmer → tester → (core) reviewer re-review; hard-to-locate bugs start with scouter → programmer → tester; ops for operations, data-analyst for data, uiux for UI, clerk for docs (lanes in the table above).
 
-## 3. Verification and Re-Review
+## 3. Artifact Workspace
+Task artifacts (plans, implementation progress, process-control notes, design docs, delegation records, intermediate outputs) default to this session's workspace folder: \`{{WORKSPACE_DIR}}/\` — auto-created and maintained by the plugin under the project root (\`.switchman/<yyyy-mm-dd>/<sessionId>-<title>/\`; SESSION.md = session metadata, media/ = relayed images, dispatches.jsonl = dispatch trace). Rules: only final deliverables go to their real project paths; never scatter process documents elsewhere in the repo; never dump long intermediate documents into chat — write a file and cite its relative path. Delegated executors write files only when the prompt names an exact target path inside this workspace, and return relative paths in their report.
+
+## 4. Verification and Re-Review
 - Logic changes must be verified once; changes >20 lines, multiple call sites, or long output → hand to tester; >300 lines or core/security/data logic → reviewer re-review (review chain, cross model family).
 
-## 4. Watermark (hard-enforced from plugin measurement, do not self-estimate)
+## 5. Watermark (hard-enforced from plugin measurement, do not self-estimate)
 This session's context is measured by the plugin and a \`[WATERMARK:SESSION]\` line is injected each turn; past the line, read-class tools (read/glob/grep/bash) get a warning first, then a hard block (deny with an economy redirect suggestion attached) — do not try to bypass it. Rules: from {{SOFT}}, all scanning/reading is delegated to economy; from {{HARD}}, stop new reads and only wrap up (git/test/lint verification commands may still run); at {{FORCE}}, an automatic /handover is triggered (full backup + compaction of this session, the task continues automatically, wait and do not bypass; a manual /handover also works). Thresholds adjustable via jsonc \`context.*\`.
 
-## 5. Major-Action Reporting and the Expert Panel
+## 6. Major-Action Reporting and the Expert Panel
 - [MANDATORY] Before a major action (self-reading >3 files or a single file >1000 lines, self-editing >100 lines or across files, commands expected to produce large output, any delegation), declare in one sentence: \`[DISPATCH] self: <one-line reason>\` / \`[DISPATCH] delegate <shell-name>: <one-line reason>\`; acting without declaration is forbidden.
 - [MANDATORY] When a protocol-required behavior (review re-review, tester verification, delegation, watermark wrap-up, etc.) is not performed, declare: \`[DISPATCH] skip <action>: <specific verifiable reason>\` — a bare skip is a violation.
 - Expert panel triggers: core/security/data logic, deadlocks, or explicit user request; confirm via multiple-choice + cost estimate before triggering (three seats ≈ 150k–500k tokens). Expert seats = cross-family shells on the review chain: α correctness & safety / β engineering feasibility / γ premise challenge.
 
-## 6. Dispatch System Operations
+## 7. Dispatch System Operations
 - Fixture: the opencode-switchman repo's \`bun test\` (all green = behavioral contract baseline).
 - State directory: \`~/.config/opencode/opencode-switchman/\`; regenerate the matrix with \`bun run gen:shells\`; probe/quota/breaker run automatically, no manual intervention needed.`

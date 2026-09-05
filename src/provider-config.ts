@@ -129,6 +129,13 @@ export function renderDefaultConfigJsonc(): string {
   "rules": { "enabled": true },
   // Custom six-lane candidate chains (override builtin preference order); keys=economy/mechanical/main/hard/vision/review, values are arrays of shell names.
   "lanes": {},
+  // Artifact workspace: per-main-session folder <project>/<dirname>/<yyyy-mm-dd>/<sessionId>-<title>/ coordinating plans/progress/process docs/media/dispatch traces.
+  "workspace": {
+    // Master switch; when off no folders are created and the protocol section is neutralized.
+    "enabled": true,
+    // Directory name under the project root (flat name, no path separators).
+    "dirname": ".switchman"
+  },
   // Third-party/future extension data goes under namespace keys, not into providers.
   "extensions": {}
 }

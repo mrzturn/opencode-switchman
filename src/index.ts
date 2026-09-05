@@ -49,6 +49,7 @@ import {
 import { classifyFailure } from "./failclass"
 import { LANE_ORDER } from "./types"
 import type { SwitchmanOptions, Lane, LaneResult, Pool, ShellRegEntry, ModelKey } from "./types"
+import { WorkspaceTracker, DEFAULT_WORKSPACE_DIRNAME, type EnsuredWorkspace } from "./workspace"
 import { detectMode, readConfigured, normalizeProviderListResponse } from "./activation"
 import type { MatrixModeOption } from "./activation"
 // [2026-08-29]-[event/parameter shape-extraction pure functions moved to helpers.ts: the entry must not export non-plugin functions, otherwise
@@ -145,6 +146,14 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   const handoverInflight = new Set<string>()
   const handoverCooldown = new Map<string, number>()
   const HANDOVER_COOLDOWN_MS = 10 * 60_000
+  // [2026-09-05]-[artifact workspace: per-project <dirname>/<yyyy-mm-dd>/<sessionId>-<title>/ folder per main session
+  //  (plans/progress/process docs/media/dispatch trace coordination; protocol directs the model to write there).
+  //  Settings closure reads the live options (jsonc reload effective immediately); folder IO happens only on
+  //  create/title-rename, steady-state ensure() is read-free; fail-open everywhere]
+  const workspace = new WorkspaceTracker(
+    () => ({ enabled: options.workspace?.enabled !== false, dirname: options.workspace?.dirname || DEFAULT_WORKSPACE_DIRNAME }),
+    pluginDirectory,
+  )
 
   function isShellOrInternalSession(sessionID: string | undefined): boolean {
     if (!sessionID) return false
@@ -172,6 +181,56 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       if (options.context?.autoHandover !== false) return `${base}—[MANDATORY] force-compaction watermark exceeded: auto-handover will fully back up and compact this session (the task continues automatically); stand by — no new reads or delegations`
       return `${base}—[MANDATORY] force-compaction watermark exceeded: run /handover or compact the context now; no new reads or delegations`
     } catch { return null }
+  }
+
+  /** [2026-09-05]-[artifact workspace event path: record + ensure a main session's folder; shell/internal sessions filtered
+   *  (call AFTER the agent classification so isShellOrInternalSession sees the registration); logs only on create/rename] */
+  function noteWorkspaceSession(info: { id?: unknown; title?: unknown; directory?: unknown; created?: unknown } | null | undefined): void {
+    try {
+      const id = info && typeof (info as any).id === "string" ? (info as any).id : ""
+      if (!id || isShellOrInternalSession(id)) return
+      workspace.record(info as any)
+      const ensured = workspace.ensure(id)
+      if (ensured?.created) appendStatusLog(`artifact workspace created: ${ensured.rel}`)
+      else if (ensured?.renamed) appendStatusLog(`artifact workspace renamed: ${ensured.renamed} → ${ensured.rel}`)
+    } catch { /* fail-open */ }
+  }
+
+  /**
+   * [2026-09-05]-[artifact workspace lazy path: sessions unknown to this process (resumed after a restart) are fetched once
+   *  via session.get (3s timeout), then fail-open to pluginDirectory + today; null = disabled/unknown session/IO failure]
+   */
+  async function ensureWorkspace(sessionID: string | undefined): Promise<EnsuredWorkspace | null> {
+    try {
+      if (options.workspace?.enabled === false) return null
+      if (!sessionID || isShellOrInternalSession(sessionID)) return null
+      if (!workspace.known(sessionID)) {
+        try {
+          const res = await withTimeout(Promise.resolve(
+            (pluginClient as any)?.session?.get?.({ path: { id: sessionID }, query: { directory: pluginDirectory } }),
+          ), 3_000)
+          const data = (res as any)?.data
+          if (data?.id) workspace.record({ id: String(data.id), title: data.title, directory: data.directory, created: data?.time?.created })
+        } catch { /* fail-open: fallback registration below */ }
+        if (!workspace.known(sessionID)) workspace.record({ id: sessionID, directory: pluginDirectory })
+      }
+      return workspace.ensure(sessionID)
+    } catch { return null }
+  }
+
+  /** [2026-09-05]-[artifact workspace dispatch trace: one JSONL line per allowed delegation (lane/role from ROUTE_META); fail-open no-op] */
+  function traceDispatch(sessionID: string | undefined, shellName: string, prompt: unknown, redirected: boolean): void {
+    try {
+      if (!sessionID || isShellOrInternalSession(sessionID)) return
+      const [meta] = parseRouteMeta(prompt)
+      workspace.traceDispatch(sessionID, {
+        ts: nowIso(), session: sessionID, shell: shellName,
+        lane: typeof meta?.lane === "string" ? meta.lane : undefined,
+        role: typeof meta?.role === "string" ? meta.role : undefined,
+        source: typeof meta?.source === "string" ? meta.source : undefined,
+        redirected: redirected || undefined,
+      })
+    } catch { /* fail-open */ }
   }
 
   function clearBannerCache(): void {
@@ -964,11 +1023,22 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         if (options.rules!.enabled && !rulesAlreadyPresent) {
           // [2026-09-04]-[rules interpolation: delegation floor and the three watermark thresholds come from user jsonc (defaults 3k/60k/80k/100k)]
           const t = thresholdsOf(options.context)
-          output.system.push(AGENTS_MD.trimEnd()
+          let rules = AGENTS_MD.trimEnd()
             .replaceAll("{{DELEGATION_FLOOR}}", String(options.rules!.delegationFloor ?? DEFAULT_DELEGATION_FLOOR))
             .replaceAll("{{SOFT}}", kk(t.soft))
             .replaceAll("{{HARD}}", kk(t.hard))
-            .replaceAll("{{FORCE}}", kk(t.force)))
+            .replaceAll("{{FORCE}}", kk(t.force))
+          // [2026-09-05]-[artifact workspace: interpolate the per-session workspace path; disabled/failed → neutralize the
+          //  section so agents are never directed into a dead path]
+          const ws = await ensureWorkspace(input.sessionID)
+          if (ws) rules = rules.replaceAll("{{WORKSPACE_DIR}}", ws.rel)
+          else {
+            const wsHead = "## 3. Artifact Workspace"
+            const start = rules.indexOf(wsHead)
+            const end = rules.indexOf("\n## ", start + wsHead.length)
+            if (start >= 0 && end > start) rules = `${rules.slice(0, start)}${wsHead}\nDisabled (workspace.enabled=false); no default artifact directory.${rules.slice(end)}`
+          }
+          output.system.push(rules)
         }
         if (options.banner!.enabled) {
           for (const line of bannerLines()) output.system.push(line)
@@ -1006,7 +1076,10 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         const modelVision = meta ? meta.vision === true : null // metadata unknown → null, leave as-is
         if (modelVision !== false) return
         const { ctx } = currentContext()
-        const writeDir = join(stateDir(), "media", sid)
+        // [2026-09-05]-[artifact workspace first: relayed images land in the session workspace media/ (grouped with the
+        //  task's other artifacts); global state dir kept as fail-open fallback]
+        const ws = await ensureWorkspace(sid)
+        const writeDir = ws ? join(ws.abs, "media") : join(stateDir(), "media", sid)
         const res = await relayImageParts(target.parts, {
           modelVision,
           visionHead: laneHeadCandidate("vision", ctx),
@@ -1094,6 +1167,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
               const cand = meta !== null && metaErr === null ? firstCandidateShell(agent, ctx, gateExtras) : null
               if (cand && tryRedirect(cand, output.args?.prompt)) {
                 appendStatusLog(`auto-redirect ${agent} → ${cand} (uninjected shell; redirected to the chain-head candidate)`)
+                traceDispatch(input.sessionID, cand, output.args?.prompt, true)
                 return
               }
             }
@@ -1117,6 +1191,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
                 if (tryRedirect(cand, newPrompt)) {
                   output.args.prompt = newPrompt
                   appendStatusLog(`auto-redirect ${agent} → ${cand} (built-in agent blocked; appended a synthetic ROUTE_META)`)
+                  traceDispatch(input.sessionID, cand, newPrompt, true)
                   return
                 }
               }
@@ -1125,14 +1200,17 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             throw new Error(builtinDeny)
           }
           appendStatusLog(noteUnknownAgent(agent))
+          traceDispatch(input.sessionID, agent, output.args?.prompt, false)
           return
         }
         const r = checkShell(agent, shell, output.args?.prompt, gateSnap)
         if (r.note) appendStatusLog(r.note)
+        if (!r.deny) traceDispatch(input.sessionID, agent, output.args?.prompt, false)
         if (r.deny) {
           // [2026-09-04]-[autoRedirect: denied and a hint candidate is already computed → one-hop silent redirect (guard re-check), zero retries]
           if (tryRedirect(r.redirect, output.args?.prompt)) {
             appendStatusLog(`auto-redirect ${agent} → ${r.redirect} (${r.deny.slice(0, 60)})`)
+            traceDispatch(input.sessionID, r.redirect ?? agent, output.args?.prompt, true)
             return
           }
           // [2026-09-04]-[autoRedirect: gate 6 META invalid — synthesize a ROUTE_META at the prompt tail for non-review lanes and re-check the same
@@ -1148,6 +1226,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
               if (!g.deny && !(g.redirect && g.redirect !== agent)) {
                 output.args.prompt = newPrompt
                 appendStatusLog(`auto-redirect ${agent} (added ROUTE_META, ${lane} lane)`)
+                traceDispatch(input.sessionID, agent, newPrompt, true)
                 return
               }
             }
@@ -1221,7 +1300,15 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           if (info) {
             if (dynamic) manager?.noteSessionCreated(info.id, info.agent)
             else sessionAgent.set(info.id, info.agent)
+            // [2026-09-05]-[artifact workspace: registered AFTER the agent classification above (shell/internal sessions excluded)]
+            noteWorkspaceSession((event as any).properties?.info)
           }
+          return
+        }
+        // [2026-09-05]-[artifact workspace: session.updated carries the generated/edited title → record + ensure
+        //  (title rename guarded inside the tracker; steady-state updates do no IO)]
+        if (event.type === "session.updated") {
+          noteWorkspaceSession((event as any).properties?.info)
           return
         }
         // [2026-09-04]-[measured session context watermark: message.updated → the latest assistant message's token usage
@@ -1243,6 +1330,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           if (sid) {
             sessionWatermark.delete(sid)
             readNudged.delete(sid)
+            workspace.forget(sid)
             if (dynamic && manager?.noteSessionDeleted(sid)) manager.scheduleRecompute(50, "session")
           }
           return

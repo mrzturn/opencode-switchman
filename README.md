@@ -178,6 +178,7 @@ See the complete, user-facing release notes and migration guide in [CHANGELOG.md
 | `builtinAgents.mode` | `deny` | Built-in `explore`/`general` subagents compete with shell routing and were previously fail-open; `deny` blocks them with an economy/main re-dispatch hint (the task-tool description from opencode core actively advertises them), `allow` restores the old pass-through |
 | `injection.mode` | `chain` | Shell injection face: `chain` = six lane chains ∪ favorites/visible models (saves ~6-10k tokens of task-tool description per session; naming an off-chain model gets a `denyUninjected` hint to enable it in model management), `all` = every usable model (old behavior). Startup-level: restart to apply |
 | `lanes` | built-in chains | Custom per-lane shell chains (override built-in preference order); keys = economy/mechanical/main/hard/vision/review |
+| `workspace.enabled / dirname` | `true / ".switchman"` | Artifact workspace: per main session, a `<project-root>/.switchman/<yyyy-mm-dd>/<sessionId>-<title>/` folder whose path is injected into the dispatcher protocol every turn; holds `SESSION.md` / `dispatches.jsonl` / `media/`. Disabled = no folders created and the protocol section is neutralized |
 
 > **Migrating legacy tuple options**: `quota.*.enabled` → `providers.<id>.observe` (SWM042), `billingWindow.*` → `providers.<id>.peak` (SWM043), and the remaining behavior sections (`quota` thresholds / `cost` / `capability` / `matrix` / `banner` / `rules` / `lanes`) → same-named jsonc sections (SWM044); `providers.glm/deepseek` (credential-collection lists) never took effect and have been removed. Explicit tuple values stay honored for one compatibility release, then will be dropped.
 
@@ -199,6 +200,16 @@ Routing is now an explicit, traceable score rather than a hidden preference list
 - **Weighted coefficients**: final score multiplies `effortFit × health × water × costBias × peak × billingBoost × unknownPenalty`. Health is `ok=1.0` / `strained=0.6`; water uses the tighter of the two windows and can boost Copilot when surplus credits are near expiry; peak applies `×0.93` to any provider whose configured peak window is active, as a same-tier yield that never ejects a stronger model across capability tiers. `billingBoost` is driven solely by the explicit `billing` field in `opencode-switchman.jsonc` (`subscription=1.0`, `api=0.85`) — no vendor is hardcoded in the routing rules. `unknownPenalty=0.75` applies to models that miss the whole classification cascade (exact → prefix → family), sinking them behind known models within the same tier.
 - **Hard gates do not score**: down, breaker-open, pool-exhausted, retired, and real-dispatch-isolated combos are removed before scoring. `immediate` urgency sorts by probe latency instead of economics.
 - **Decision log**: every banner rebuild writes lane candidates and the six-factor score breakdown to `state/routing-decisions.jsonl` as a 200-line ring buffer.
+
+## Artifact workspace (.switchman)
+
+For every main session the plugin auto-creates a per-project folder `<project-root>/.switchman/<yyyy-mm-dd>/<sessionId>-<title>/` (date = session creation day; the title slug part renames itself when the session title is generated or edited). The injected dispatcher protocol gets this folder path interpolated every turn, so plans, implementation progress, process-control notes, design docs, and other intermediate artifacts default to the session folder instead of scattering across the repo or being dumped into chat. Plugin-maintained files inside the folder:
+
+- `SESSION.md` — session metadata (id / title / project / timestamps)
+- `dispatches.jsonl` — one JSON line per allowed task delegation (ts / shell / lane / role / source / redirected)
+- `media/` — images relayed for vision delegation (moved here from the old global state directory, fail-open fallback)
+
+Configured by `workspace.enabled` / `workspace.dirname` in `opencode-switchman.jsonc` (defaults `true` / `".switchman"`); when disabled, no folders are created and the protocol section is neutralized.
 
 ## Core Ideas
 

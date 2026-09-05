@@ -83,4 +83,5 @@ ROUTE_META {"lane":"main","role":"programmer","producer_family":"glm","capabilit
 3. When the user names a shell, \`source\` must be \`user\`; \`auto\` is only for automatic shell selection per the banner chain (zero vendor hard-coding in orchestration: API-billed/unknown-group models sink by coefficient instead of being denied).
 4. Before delegating, pick the shell against the [ROUTES] line in the system prompt banner; the first candidate attached in a deny error is the current best landing spot — redirect there directly, do not retry the denied shell.
 5. Fill \`producer_family\` with your own (the producer's) real family; when unsure, omit the field (it is optional) rather than fill main.
+6. Artifacts (plans/progress/design/records) belong in the session workspace \`.switchman/<yyyy-mm-dd>/<sessionId>-<title>/\` (see the protocol's Artifact Workspace section); when an executor must produce files, name the exact target path inside it in the prompt and require relative paths back — executors never create files at arbitrary project paths on their own.
 `

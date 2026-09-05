@@ -178,6 +178,7 @@ v0.2.0 将 switchman 从固定多供应商调度器升级为实时、能力感�
 | `builtinAgents.mode` | `deny` | 内置 explore/general 与壳路由抢任务且此前放行；`deny`＝拦截附 economy/main 改派建议，`allow`＝恢复放行 |
 | `injection.mode` | `chain` | 壳注入面：`chain`＝六档链精选∪favorites/可见集（task 工具描述每会话省约 6-10k token，链外模型点名走 denyUninjected 提示）；`all`＝可用全集（旧行为）。启动级，重启生效 |
 | `lanes` | 内置六档链 | 自定义各档壳链（覆盖内置偏好序）；键=economy/mechanical/main/hard/vision/review |
+| `workspace.enabled / dirname` | `true / ".switchman"` | 工件工作区：每个主会话自动创建 `<project-root>/.switchman/<yyyy-mm-dd>/<sessionId>-<title>/` 目录，路径每轮注入调度员规程；目录内含 `SESSION.md` / `dispatches.jsonl` / `media/`。关闭后不再创建目录，规程段落同步失效 |
 
 > **旧元组 options 迁移**：`quota.*.enabled`→`providers.<id>.observe`（SWM042）、`billingWindow.*`→`providers.<id>.peak`（SWM043）、其余行为段（`quota` 阈值/`cost`/`capability`/`matrix`/`banner`/`rules`/`lanes`）→同名 jsonc 段（SWM044）；`providers.glm/deepseek`（凭证收集清单）从未实际生效，已删除。元组显式配置兼容一代（值仍优先），下个大版本移除。
 
@@ -199,6 +200,16 @@ v0.2.0 将 switchman 从固定多供应商调度器升级为实时、能力感�
 - **加权系数**：最终分数乘以 `effortFit × health × water × costBias × peak × billingBoost × unknownPenalty`。health 为 `ok=1.0` / `strained=0.6`；water 取两个窗口中更吃紧者，并会在 Copilot 富余且临期时反向提权烧积分；peak 对任意 provider 的高峰窗口做同档 `×0.93` 让位，绝不跨能力级出局。`billingBoost` 只由 `opencode-switchman.jsonc` 显式 `billing` 字段驱动（`subscription=1.0`、`api=0.85`）——编排规则零厂商硬编码；`unknownPenalty=0.75` 施加给精确→前缀→family 全链未命中的未知组模型，同 tier 排已知模型之后。
 - **硬门不参与打分**：down、熔断、池耗尽、retired、实调隔离中的组合先出局再评分。`immediate` 紧急档改按探针延迟排序。
 - **决策日志**：每次横幅重建都会把各档候选与六因子评分写入 `state/routing-decisions.jsonl`，保留 200 行环形日志。
+
+## 工件工作区（.switchman）
+
+每个主会话（main）创建时，插件都会自动建立项目内目录 `<project-root>/.switchman/<yyyy-mm-dd>/<sessionId>-<title>/`（日期取会话创建当天；标题 slug 段会在会话标题生成或修改时自动重命名）。注入的调度员规程每轮插值该目录路径，方案、实现进度、过程管控笔记、设计文档等中间工件默认落到会话目录，不再散落仓库各处或堆进对话。插件同时在目录内维护以下文件：
+
+- `SESSION.md` — 会话元数据（id / 标题 / 项目 / 时间戳）
+- `dispatches.jsonl` — 每条被放行的任务委派一行 JSON（ts / shell / lane / role / source / redirected）
+- `media/` — 视觉委派中转的图片（已从旧全局状态目录迁来，fail-open 兜底）
+
+由 `opencode-switchman.jsonc` 的 `workspace.enabled` / `workspace.dirname` 配置（默认 `true` / `".switchman"`）；关闭后不再创建任何目录，规程中的对应段落同步失效。
 
 ## 核心思想
 

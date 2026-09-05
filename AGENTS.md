@@ -24,6 +24,7 @@
 - `src/shells.ts` — shell definitions and embedded subagent rules.
 - `skills/` — bundled agent skills, materialized into the opencode global skills dir (`<configDir>/opencode/skills`) at plugin startup.
 - `src/skill-sync.ts` — bundled-skill sync logic (add/overwrite-only copy, marker-gated cleanup, fail-open).
+- `src/workspace.ts` — artifact workspace: per-main-session `<project>/.switchman/<yyyy-mm-dd>/<sessionId>-<title>/` folders (SESSION.md / dispatches.jsonl / media/; config `workspace.*`).
 - `src/provider-config.ts`, `src/types.ts` — provider/model metadata, routing config, option types.
 - `scripts/` — codegen (`gen-shells`, `gen-capability-default`, `gen-version`), build helpers, mode switcher.
 - `test/` — bun test suites; treat as the behavioral contract (update together with behavior changes).
