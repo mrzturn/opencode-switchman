@@ -127,6 +127,10 @@ export function renderDefaultConfigJsonc(): string {
   // Four-line routing banner / dispatcher protocol (bundled in src/assets/agents-md.ts) system-prompt injection.
   "banner": { "enabled": true },
   "rules": { "enabled": true },
+  // Measured session-context budget (optional; the whole section may be omitted — factory defaults apply).
+  // "context": {
+  //   "readBudgetTokens": 1500, // per-call self-read budget in tokens (200..20000): oversized reads get auto-bounded or denied with bounded-retry params
+  // },
   // Custom six-lane candidate chains (override builtin preference order); keys=economy/mechanical/main/hard/vision/review, values are arrays of shell names.
   "lanes": {},
   // Artifact workspace: per-main-session folder <project>/<dirname>/<yyyy-mm-dd>/<sessionId>-<title>/ coordinating plans/progress/process docs/media/dispatch traces.

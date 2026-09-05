@@ -8,8 +8,9 @@
 // [2026-09-04]-[English localization: translate runtime messages and comments; no logic change]
 import type { Plugin } from "@opencode-ai/plugin"
 import { watch, statSync, writeFileSync } from "node:fs"
+import * as fsp from "node:fs/promises"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { basename, join } from "node:path"
 import { AGENTS_MD } from "./assets/agents-md"
 import { DELEGATION_TEMPLATE } from "./assets/delegation-template"
 import {
@@ -25,7 +26,11 @@ import {
   computeLane, billingWindow, billingWindowForConfig, poolStates, routingAdvice,
   glmExhausted, copilotExhausted, deepseekExhausted, firstCandidate, laneOfShell,
 } from "./lane"
-import { READ_CLASS_TOOLS, estimateContextTokens, thresholdsOf, watermarkLevel, readGateDecision, isArchaeologyBash } from "./context-watch"
+import {
+  READ_CLASS_TOOLS, estimateContextTokens, thresholdsOf, watermarkLevel,
+  budgetGateDecision, estimateReadRange, estimateOutputTokens, readBudgetOf, turnBudgetOf,
+} from "./context-watch"
+import type { ReadEstimate, FileSample } from "./context-watch"
 import { backupSession, compactSession, v1HandoverPort, type HandoverResult } from "./handover-core"
 import { logDecision, BILLING_API_BOOST } from "./scoring"
 import type { WaterFactor, DecisionRecord } from "./scoring"
@@ -140,7 +145,11 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   // [2026-09-04]-[measured session context watermark: message.updated token usage → main-session (non-shell/non-internal) watermark;
   //  past the line, read-class tools get the tiered gate (nudge first, then hard deny) — turns rules self-reporting into mechanism enforcement]
   const sessionWatermark = new Map<string, { tokens: number; at: number }>()
-  const readNudged = new Map<string, Set<string>>()
+  // [2026-09-05]-[v1 read budget: per-turn self-read spend (resets each user turn), watermark sample history for
+  //  pace estimation, and last-seen user message id for turn-boundary detection (assistant parentID comparison)]
+  const turnReadUsage = new Map<string, { used: number; at: number }>()
+  const wmHistory = new Map<string, number[]>()
+  const lastUserMsg = new Map<string, string>()
   // [2026-09-05]-[todo nudge: latest todo snapshot per main session (fed by todo.updated events; the tool replaces the whole
   //  list each call, so the last event is authoritative). Root cause of the stale-todo bug: default-prompt models (e.g. GLM)
   //  get no todo discipline from opencode's default system prompt and nothing re-surfaced the list after the first write, so
@@ -173,6 +182,66 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
 
   function kk(n: number): string { return `${Math.round(n / 1000)}k` }
 
+  // [2026-09-05]-[v1 read budget helpers: file head sampling for read-cost estimation, per-turn spend bookkeeping,
+  //  and watermark pace estimation from recent samples]
+  /** Binary/asset extensions: not meaningfully line-based — never sampled or gated */
+  const BINARY_EXT = /\.(png|jpe?g|gif|webp|bmp|ico|svgz|pdf|zip|gz|tgz|bz2|xz|7z|tar|rar|mp3|mp4|mov|avi|wav|flac|woff2?|ttf|otf|eot|so|dylib|dll|exe|class|jar|wasm|node|lock)$/i
+
+  /** 64KB head sample for read-cost estimation; null on any error (fail-open) */
+  async function fileSample(path: string): Promise<FileSample | null> {
+    try {
+      const st = await fsp.stat(path)
+      if (!st.isFile()) return null
+      const fh = await fsp.open(path, "r")
+      try {
+        const buf = Buffer.alloc(65536)
+        const { bytesRead } = await fh.read(buf, 0, 65536, 0)
+        let newlines = 0
+        for (let i = 0; i < bytesRead; i++) if (buf[i] === 0x0a) newlines++
+        return { path, bytes: st.size, sampleBytes: bytesRead, newlines }
+      } finally {
+        await fh.close()
+      }
+    } catch {
+      return null
+    }
+  }
+
+  /** Self-read tokens spent this turn; 15-min idle failsafe reset (primary reset = user-turn detection) */
+  function turnUsedOf(sessionId: string): number {
+    const e = turnReadUsage.get(sessionId)
+    if (!e) return 0
+    if (Date.now() - e.at > 15 * 60_000) {
+      turnReadUsage.delete(sessionId)
+      return 0
+    }
+    return e.used
+  }
+
+  function chargeTurnRead(sessionId: string, tokens: number): void {
+    if (tokens <= 0) return
+    const prev = turnReadUsage.get(sessionId)
+    turnReadUsage.set(sessionId, { used: (prev?.used ?? 0) + tokens, at: Date.now() })
+  }
+
+  /** Mean per-turn context growth from recent watermark samples (positive deltas only, mean of last 5 of last 9) */
+  function watermarkPace(sessionId: string): { delta: number; turnsToHard: number } | null {
+    const h = wmHistory.get(sessionId)
+    if (!h || h.length < 2) return null
+    const deltas: number[] = []
+    for (let i = 1; i < h.length; i++) {
+      const d = h[i] - h[i - 1]
+      if (d > 0) deltas.push(d)
+    }
+    if (deltas.length === 0) return null
+    const tail = deltas.slice(-5)
+    const delta = Math.round(tail.reduce((a, b) => a + b, 0) / tail.length)
+    const thresholds = thresholdsOf(options.context)
+    const remaining = Math.max(0, thresholds.hard - (h[h.length - 1] ?? 0))
+    const turnsToHard = Math.min(999, Math.max(0, Math.round(remaining / Math.max(1, delta))))
+    return { delta, turnsToHard }
+  }
+
   /** [WATERMARK:SESSION] banner line: ok tier reports numbers only (saves tokens); past the line attaches tiered directives */
   function sessionWatermarkLine(sessionID: string | undefined): string | null {
     try {
@@ -181,9 +250,16 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       if (!wm) return null
       const t = thresholdsOf(options.context)
       const level = watermarkLevel(wm.tokens, t)
-      const base = `[WATERMARK:SESSION] measured session context ~${kk(wm.tokens)} (soft ${kk(t.soft)}/hard ${kk(t.hard)}/force ${kk(t.force)})`
+      const pace = watermarkPace(sessionID)
+      const rb = readBudgetOf(options.context)
+      const cap = turnBudgetOf(rb)
+      const used = turnReadUsage.get(sessionID)?.used ?? 0
+      const growth = pace
+        ? ` | growth ~${kk(pace.delta)}/turn, ~${pace.turnsToHard} turns to hard`
+        : " | growth unknown yet"
+      const base = `[WATERMARK:SESSION] measured session context ~${kk(wm.tokens)} (soft ${kk(t.soft)}/hard ${kk(t.hard)}/force ${kk(t.force)})${growth} | self-read this turn ${used}/${cap}`
       if (level === "ok") return base
-      if (level === "soft") return `${base}—soft watermark exceeded: new reads/scans must be delegated to an economy shell (scouter/clerk); self-reads get a one-time nudge (delivery git and test/lint are exempt)`
+      if (level === "soft") return `${base}—past soft: prefer delegating new reads/scans to an economy shell (scouter/clerk) (self-read budget still open — bounded reads under the cap pass)`
       if (level === "hard") return `${base}—hard watermark exceeded: read/glob/grep/list self-reads denied; bash runs verification only (state-changing git always passes; scope git log/diff/blame with -n/--stat/-L or delegate); wrap up`
       // [2026-09-04]-[force tier copy split: with auto-handover on, stand by for automatic compaction (banner reports facts only, saves tokens);
       //  with it off, keep the legacy directive (relying on manual /handover)]
@@ -767,9 +843,10 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     } catch { return null }
   }
 
-  /** [2026-09-04]-[read watermark gate: soft = one-time per-tool intercept+nudge (with an economy redirect suggestion); hard/force = read-class
-   *  always denied, bash lets only verification commands through; shell subagent sessions exempt (they are the delegated executors)] */
-  function handleReadGate(input: { tool: string; sessionID?: string; callID: string }, output: { args?: any }): void {
+  // [2026-09-05]-[v1 read budget gate: per-call decision on estimated injection size (budgetGateDecision — pure, no
+  //  consumable coupon state; probing cannot change a verdict). "cap" mutates outgoing args in place so the host honors
+  //  the bound; denies carry exact bounded-retry params; shell subagent sessions exempt (they are the delegated executors)]
+  async function handleReadGate(input: { tool: string; sessionID?: string; callID: string }, output: { args?: any }): Promise<void> {
     try {
       if (options.context?.gates !== true) return
       const sid = input.sessionID
@@ -778,42 +855,49 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       if (!wm) return
       const t = thresholdsOf(options.context)
       const level = watermarkLevel(wm.tokens, t)
-      if (level === "ok") return
-      const nudged = readNudged.get(sid) ?? new Set<string>()
+      const readBudget = readBudgetOf(options.context)
+      const turnUsed = turnUsedOf(sid)
       const cmd = input.tool === "bash" ? String(output.args?.command ?? "") : undefined
-      const action = readGateDecision({
-        tool: input.tool, level, alreadyNudged: nudged.has(input.tool),
-        bashCommand: cmd,
-      })
+      let est: ReadEstimate | null = null
+      if (input.tool === "read") {
+        const filePath = typeof output.args?.filePath === "string" ? output.args.filePath : ""
+        if (filePath && BINARY_EXT.test(filePath)) return
+        const sample = await fileSample(filePath)
+        est = sample ? estimateReadRange(sample, output.args, readBudget) : null
+      }
+      const action = budgetGateDecision({ tool: input.tool, level, readBudget, turnUsed, bashCommand: cmd, est })
       if (action === "allow") return
-      if (action === "nudge") { nudged.add(input.tool); readNudged.set(sid, nudged) }
+      if (action === "cap" && est) {
+        output.args.limit = est.suggestedLimit
+        appendStatusLog(`read budget gate cap (tool read, file ${basename(String(output.args.filePath))}, est ~${est.totalTokens} -> limit ${est.suggestedLimit}, turn ${turnUsed}/${turnBudgetOf(readBudget)})`)
+        return
+      }
       const { ctx } = currentContext()
       const hint = laneHeadCandidate("economy", ctx)
-      const head = `[opencode-switchman] measured session context ~${kk(wm.tokens)} exceeds the ${level === "force" ? "force-compaction" : level === "hard" ? "hard" : "soft"} watermark (soft ${kk(t.soft)}/hard ${kk(t.hard)}/force ${kk(t.force)})`
-      // [2026-09-05]-[git UX split copy: delivery git passes every tier silently; unbounded archaeology git gets a
-      //  scoping hint (-n/--stat/-L) instead of the generic "delegate it" wording, so the wrap-up can proceed in-place]
-      const archaeology = cmd !== undefined && cmd !== "" && isArchaeologyBash(cmd)
+      const cand = hint ? ` (e.g. ${hint}, ROUTE_META role=scouter)` : ""
+      const candPlain = hint ? ` (e.g. ${hint})` : ""
+      const pace = watermarkPace(sid)
+      const denyLog = `read budget gate ${action} (tool ${input.tool}, est ~${est ? est.totalTokens : "-"}, C~${kk(wm.tokens)}, T_est≈${pace ? pace.turnsToHard : "-"}, turn ${turnUsed}/${turnBudgetOf(readBudget)})`
       let msg: string
-      if (level === "soft") {
-        msg = archaeology
-          ? `${head}: bash self-read intercepted once (this tool is allowed afterwards in this session) — unbounded git log/diff/blame is scanning: rerun scoped (-n N / --oneline / --stat / -L a,b) or delegate to an economy shell${hint ? ` (e.g. ${hint}, ROUTE_META role=scouter)` : ""}; conclusions + file:line summary only`
-          : `${head}: ${input.tool} self-read intercepted once (this tool is allowed afterwards in this session) — delegate new reads/scans to an economy shell${hint ? ` (e.g. ${hint}, ROUTE_META role=scouter)` : ""}; conclusions + file:line summary only`
-      } else if (level === "hard") {
-        msg = archaeology
-          ? `${head}: unbounded git archaeology denied — rerun scoped (e.g., -n 20 / --oneline / --stat / -L a,b) or delegate to an economy shell${hint ? ` (e.g. ${hint})` : ""}; state-changing git and test/lint/build still run; please wrap up`
-          : `${head}: ${input.tool} self-read denied — reads/scans must be delegated to an economy shell${hint ? ` (e.g. ${hint})` : ""}; state-changing git (add/commit/push/checkout) and test/lint/build still run; please wrap up`
+      if (action === "deny-budget" && est) {
+        msg = `[opencode-switchman] read ${output.args.filePath} would inject ~${est.totalTokens} tok (self-read budget ${readBudget}): retry bounded as \`read ${output.args.filePath} limit=${est.suggestedLimit} offset=${est.offset ?? 1}\` or delegate to an economy shell${cand}`
+      } else if (action === "deny-turn") {
+        msg = `[opencode-switchman] per-turn self-read budget spent (${turnUsed}/${turnBudgetOf(readBudget)}; resets on your next user message): delegate this read to an economy shell${cand}`
+      } else if (action === "deny-archaeology") {
+        msg = `[opencode-switchman] unbounded history dump is always out of budget: scope it (\`git log -n 20 --oneline\` / \`git log -p -n 5\` / \`git diff <range> --stat\` / \`git blame -L 1,30 <file>\`) or delegate to an economy shell${candPlain}`
+      } else if (action === "deny-hard") {
+        msg = input.tool === "bash"
+          ? `[opencode-switchman] measured session context ~${kk(wm.tokens)} exceeds the hard watermark (soft ${kk(t.soft)}/hard ${kk(t.hard)}/force ${kk(t.force)}): bash self-read denied — reads/scans must be delegated to an economy shell${candPlain}; state-changing git (add/commit/push/checkout) and test/lint/build still run; please wrap up`
+          : `[opencode-switchman] session context is past the hard watermark (wrap-up mode): self-reads are closed — delegate to an economy shell${candPlain} or wrap up and run /handover`
       } else {
-        // [2026-09-04]-[force tier deny copy: with auto-handover on, tell the model to stand by (don't fight the automatic compaction)]
-        msg = options.context?.autoHandover !== false
-          ? `${head}: force-compaction watermark exceeded — auto-handover will back up and compact this session (the task continues automatically); stand by, no new reads or delegations`
-          : `${head}: compact the context immediately (/handover, or summarize-archive and split into a new session); no new reads or delegations`
+        return
       }
       denySkip.add(input.callID)
-      appendStatusLog(`read watermark gate ${action} (${input.tool}, ~${kk(wm.tokens)}, ${level})`)
+      appendStatusLog(denyLog)
       throw new Error(msg)
     } catch (exc) {
       if (denySkip.has(input.callID)) throw exc
-      appendStatusLog(`read watermark gate fail-open (allowed): ${exc}`)
+      appendStatusLog(`read budget gate fail-open (allowed): ${exc}`)
     }
   }
 
@@ -1152,7 +1236,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     "tool.execute.before": async (input, output) => {
       // [2026-09-04]-[read watermark gate: read-class/bash tools other than task are intercepted by tier per the measured session watermark]
       if (input.tool !== "task") {
-        if (input.tool === "bash" || READ_CLASS_TOOLS.has(input.tool)) handleReadGate(input as any, output as any)
+        if (input.tool === "bash" || READ_CLASS_TOOLS.has(input.tool)) await handleReadGate(input as any, output as any)
         return
       }
       try {
@@ -1317,6 +1401,17 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         } catch { /* fail-open */ }
       }
       const sid = hookInput.sessionID
+      // [2026-09-05]-[v1 read budget: post-hoc charging — bash/read-class outputs that could not be pre-estimated are charged
+      //  to the per-turn budget from the result payload size (main sessions only, mirroring the before-hook's shell-session
+      //  exemption; ≥100-token charges are logged as the v2 data substrate; fail-open)]
+      try {
+        if ((hookInput.tool === "bash" || READ_CLASS_TOOLS.has(hookInput.tool)) && hookInput.tool !== "task" && sid && !isShellOrInternalSession(sid)) {
+          const len = JSON.stringify((hookOutput as any)?.output ?? "").length
+          const charge = estimateOutputTokens(len)
+          chargeTurnRead(sid, charge)
+          if (charge >= 100) appendStatusLog(`read budget charge +${charge} (tool ${hookInput.tool}, turn ${turnUsedOf(sid)}/${turnBudgetOf(readBudgetOf(options.context))})`)
+        }
+      } catch { /* fail-open */ }
       try {
         if (options.context?.autoHandover === false) return
         if (!sid || isShellOrInternalSession(sid)) return
@@ -1340,7 +1435,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         appendStatusLog(`auto-handover backup ${result.ok ? "done" : "failed"}: ${result.message}`)
         // compaction leg: NEVER awaited here (see the 2026-09-05 header note) — fired detached
         if (result.ok) {
-          readNudged.delete(sid)
+          turnReadUsage.delete(sid)
+          wmHistory.delete(sid)
+          lastUserMsg.delete(sid)
           // [2026-09-05]-[compaction channel = session.summarize (what the manual TUI /compact calls; session.command has
           //  no compact command — registry is markdown/MCP/skill only, v1.18.9 "Command not found" incident). Model face
           //  from the chat.params-tracked ModelKey; auto:true injects the post-compaction continue turn so the task resumes]
@@ -1392,9 +1489,26 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           const props = (event as any).properties
           const sid = props?.sessionID
           const info = props?.info
-          if (typeof sid === "string" && info?.role === "assistant" && !isShellOrInternalSession(sid)) {
-            const est = estimateContextTokens(info)
-            if (est !== null) sessionWatermark.set(sid, { tokens: est, at: Date.now() })
+          if (typeof sid === "string" && !isShellOrInternalSession(sid)) {
+            if (info?.role === "user") {
+              lastUserMsg.set(sid, info.id)
+              turnReadUsage.delete(sid)
+            } else if (info?.role === "assistant") {
+              const est = estimateContextTokens(info)
+              if (est !== null) {
+                sessionWatermark.set(sid, { tokens: est, at: Date.now() })
+                const h = wmHistory.get(sid) ?? []
+                h.push(est)
+                if (h.length > 9) h.splice(0, h.length - 9)
+                wmHistory.set(sid, h)
+              }
+              const pid = (info as { parentID?: string }).parentID
+              const known = lastUserMsg.get(sid)
+              if (pid && known !== undefined && pid !== known) {
+                lastUserMsg.set(sid, pid)
+                turnReadUsage.delete(sid)
+              }
+            }
           }
           return
         }
@@ -1404,7 +1518,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           const sid = sessionDeletedId((event as any).properties)
           if (sid) {
             sessionWatermark.delete(sid)
-            readNudged.delete(sid)
+            turnReadUsage.delete(sid)
+            wmHistory.delete(sid)
+            lastUserMsg.delete(sid)
             sessionTodos.delete(sid)
             workspace.forget(sid)
             langAsked.delete(sid)

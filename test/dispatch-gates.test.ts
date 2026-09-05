@@ -4,7 +4,8 @@
 import { describe, expect, test } from "bun:test"
 import {
   READ_CLASS_TOOLS, estimateContextTokens, thresholdsOf, watermarkLevel,
-  isVerificationBash, readGateDecision,
+  isVerificationBash, budgetGateDecision, readBudgetOf, turnBudgetOf,
+  estimateReadRange, estimateOutputTokens,
 } from "../src/context-watch"
 import { builtinAgentDeny, checkShell } from "../src/gates"
 import { firstCandidate } from "../src/lane"
@@ -31,52 +32,97 @@ describe("context-watch: token estimation and watermark levels", () => {
   })
 })
 
-describe("context-watch: read-gate decisions", () => {
-  test("ok level allows everything", () => {
-    for (const tool of ["read", "glob", "grep", "bash", "edit", "write"]) {
-      expect(readGateDecision({ tool, level: "ok", alreadyNudged: false })).toBe("allow")
+// [2026-09-05]-[v1 read budget: budgetGateDecision matrix replaces the readGateDecision nudge tests — the gate is
+//  deterministic per call (the alreadyNudged coupon is gone) and always-on from turn 1; watermarks keep only
+//  lifecycle duties (hard/force = wrap-up deny)]
+describe("context-watch: read-budget gate decisions", () => {
+  const RB = 1500
+  const estOf = (totalTokens: number, hasLimit: boolean, suggestedLimit = 200, offset = 1) => ({
+    totalTokens, tokensPerLine: 7.5, suggestedLimit, hasLimit, requestedLimit: hasLimit ? 300 : undefined, offset,
+  })
+  test("ok level: reads under budget pass; over-budget reads are capped (no limit) or denied (limit set); un-estimable read-class fails open; non-read-class passes", () => {
+    expect(budgetGateDecision({ tool: "read", level: "ok", readBudget: RB, turnUsed: 0, est: estOf(400, false) })).toBe("allow")
+    expect(budgetGateDecision({ tool: "read", level: "ok", readBudget: RB, turnUsed: 0, est: estOf(4000, false) })).toBe("cap")
+    expect(budgetGateDecision({ tool: "read", level: "ok", readBudget: RB, turnUsed: 0, est: estOf(4000, true) })).toBe("deny-budget")
+    expect(budgetGateDecision({ tool: "glob", level: "ok", readBudget: RB, turnUsed: 0, est: null })).toBe("allow")
+    expect(budgetGateDecision({ tool: "grep", level: "ok", readBudget: RB, turnUsed: 0 })).toBe("allow")
+    for (const tool of ["edit", "write", "webfetch", "task"]) {
+      expect(budgetGateDecision({ tool, level: "ok", readBudget: RB, turnUsed: 0 })).toBe("allow")
     }
   })
-  test("soft: one-time nudge for read-class tools (allowed once nudged); edit/write/webfetch are not read-class and always allowed", () => {
-    expect(readGateDecision({ tool: "read", level: "soft", alreadyNudged: false })).toBe("nudge")
-    expect(readGateDecision({ tool: "read", level: "soft", alreadyNudged: true })).toBe("allow")
-    expect(readGateDecision({ tool: "bash", level: "soft", alreadyNudged: false, bashCommand: "cat foo" })).toBe("nudge")
-    expect(readGateDecision({ tool: "edit", level: "soft", alreadyNudged: false })).toBe("allow")
-    expect(readGateDecision({ tool: "webfetch", level: "soft", alreadyNudged: false })).toBe("allow")
+  test("ok/soft: plain bash (incl. cat) passes and is charged post-hoc, not pre-denied", () => {
+    expect(budgetGateDecision({ tool: "bash", level: "ok", readBudget: RB, turnUsed: 0, bashCommand: "cat src/index.ts" })).toBe("allow")
+    expect(budgetGateDecision({ tool: "bash", level: "soft", readBudget: RB, turnUsed: 0, bashCommand: "cat src/index.ts" })).toBe("allow")
+    expect(budgetGateDecision({ tool: "bash", level: "soft", readBudget: RB, turnUsed: 0 })).toBe("allow") // no command text → fail-open at ok/soft
   })
-  // [2026-09-05]-[git UX split: delivery git + test/lint exempt at EVERY tier (the soft nudge used to land on the first
-  //  git call of the wrap-up — git ops cluster exactly when context is fullest); unbounded archaeology git = scan-class]
-  test("soft: delivery git and verification commands skip the nudge entirely; archaeology git still nudged once", () => {
-    expect(readGateDecision({ tool: "bash", level: "soft", alreadyNudged: false, bashCommand: "git add -A && git commit -m x && git push" })).toBe("allow")
-    expect(readGateDecision({ tool: "bash", level: "soft", alreadyNudged: false, bashCommand: "git checkout -- src/foo.ts" })).toBe("allow")
-    expect(readGateDecision({ tool: "bash", level: "soft", alreadyNudged: false, bashCommand: "bun test" })).toBe("allow")
-    expect(readGateDecision({ tool: "bash", level: "soft", alreadyNudged: false, bashCommand: "git log -p" })).toBe("nudge")
-    expect(readGateDecision({ tool: "bash", level: "soft", alreadyNudged: true, bashCommand: "git log -p" })).toBe("allow")
+  test("verification bash (delivery git + test/lint/build) passes at EVERY tier", () => {
+    for (const level of ["ok", "soft", "hard", "force"] as const) {
+      expect(budgetGateDecision({ tool: "bash", level, readBudget: RB, turnUsed: 0, bashCommand: "bun test test/foo.test.ts" })).toBe("allow")
+      expect(budgetGateDecision({ tool: "bash", level, readBudget: RB, turnUsed: 0, bashCommand: "git add -A && git commit -m x && git push" })).toBe("allow")
+      expect(budgetGateDecision({ tool: "bash", level, readBudget: RB, turnUsed: 0, bashCommand: "git diff HEAD~1" })).toBe("allow")
+    }
   })
-  test("hard: read-class always denied; verification bash allowed, non-verification denied", () => {
-    expect(readGateDecision({ tool: "read", level: "hard", alreadyNudged: true })).toBe("deny")
-    expect(readGateDecision({ tool: "glob", level: "hard", alreadyNudged: false })).toBe("deny")
-    expect(readGateDecision({ tool: "bash", level: "hard", bashCommand: "git status" })).toBe("allow")
-    expect(readGateDecision({ tool: "bash", level: "hard", bashCommand: "bun test test/foo.test.ts" })).toBe("allow")
-    expect(readGateDecision({ tool: "bash", level: "hard", bashCommand: "npm run typecheck" })).toBe("allow")
-    expect(readGateDecision({ tool: "bash", level: "hard", bashCommand: "cat src/index.ts" })).toBe("deny")
-    expect(readGateDecision({ tool: "bash", level: "hard" })).toBe("deny") // no command text → fail-closed
+  test("archaeology git denied at ALL tiers (context bomb is a context bomb at 10k or 90k); scoped forms pass", () => {
+    for (const level of ["ok", "soft", "hard", "force"] as const) {
+      expect(budgetGateDecision({ tool: "bash", level, readBudget: RB, turnUsed: 0, bashCommand: "git log -p" })).toBe("deny-archaeology")
+      expect(budgetGateDecision({ tool: "bash", level, readBudget: RB, turnUsed: 0, bashCommand: "git diff main..dev" })).toBe("deny-archaeology")
+      expect(budgetGateDecision({ tool: "bash", level, readBudget: RB, turnUsed: 0, bashCommand: "git blame src/foo.ts" })).toBe("deny-archaeology")
+    }
+    expect(budgetGateDecision({ tool: "bash", level: "ok", readBudget: RB, turnUsed: 0, bashCommand: "git log -n 20 --oneline" })).toBe("allow")
+    expect(budgetGateDecision({ tool: "bash", level: "ok", readBudget: RB, turnUsed: 0, bashCommand: "git log -p -3" })).toBe("allow")
+    expect(budgetGateDecision({ tool: "bash", level: "ok", readBudget: RB, turnUsed: 0, bashCommand: "git diff main..dev --stat" })).toBe("allow")
+    expect(budgetGateDecision({ tool: "bash", level: "ok", readBudget: RB, turnUsed: 0, bashCommand: "git blame -L 1,30 src/foo.ts" })).toBe("allow")
+    expect(budgetGateDecision({ tool: "bash", level: "ok", readBudget: RB, turnUsed: 0, bashCommand: "git log -p | head -100" })).toBe("allow")
   })
-  test("hard: archaeology git denied unless scoped (context-bomb guard), scoped forms and pipes pass", () => {
-    expect(readGateDecision({ tool: "bash", level: "hard", bashCommand: "git log -p" })).toBe("deny")
-    expect(readGateDecision({ tool: "bash", level: "hard", bashCommand: "git log" })).toBe("deny")
-    expect(readGateDecision({ tool: "bash", level: "hard", bashCommand: "git diff main..dev" })).toBe("deny")
-    expect(readGateDecision({ tool: "bash", level: "hard", bashCommand: "git blame src/foo.ts" })).toBe("deny")
-    expect(readGateDecision({ tool: "bash", level: "hard", bashCommand: "git log -n 20 --oneline" })).toBe("allow")
-    expect(readGateDecision({ tool: "bash", level: "hard", bashCommand: "git log -p -3" })).toBe("allow")
-    expect(readGateDecision({ tool: "bash", level: "hard", bashCommand: "git diff main..dev --stat" })).toBe("allow")
-    expect(readGateDecision({ tool: "bash", level: "hard", bashCommand: "git diff HEAD~1" })).toBe("allow")
-    expect(readGateDecision({ tool: "bash", level: "hard", bashCommand: "git blame -L 1,30 src/foo.ts" })).toBe("allow")
-    expect(readGateDecision({ tool: "bash", level: "hard", bashCommand: "git log -p | head -100" })).toBe("allow")
+  test("hard/force: read-class always denied (wrap-up) even under budget; non-verification bash denied; no command text fails closed", () => {
+    for (const level of ["hard", "force"] as const) {
+      expect(budgetGateDecision({ tool: "read", level, readBudget: RB, turnUsed: 0, est: estOf(100, false) })).toBe("deny-hard")
+      expect(budgetGateDecision({ tool: "glob", level, readBudget: RB, turnUsed: 0 })).toBe("deny-hard")
+      expect(budgetGateDecision({ tool: "bash", level, readBudget: RB, turnUsed: 0, bashCommand: "cat src/index.ts" })).toBe("deny-hard")
+      expect(budgetGateDecision({ tool: "bash", level, readBudget: RB, turnUsed: 0 })).toBe("deny-hard")
+    }
   })
-  test("force matches hard (forced-compaction instructions are injected separately via the banner)", () => {
-    expect(readGateDecision({ tool: "read", level: "force", alreadyNudged: true })).toBe("deny")
-    expect(readGateDecision({ tool: "bash", level: "force", bashCommand: "bun test" })).toBe("allow")
+  test("per-turn cap: 2x budget denies further reads until the next user turn", () => {
+    expect(budgetGateDecision({ tool: "read", level: "ok", readBudget: RB, turnUsed: 2999, est: estOf(400, false) })).toBe("allow")
+    expect(budgetGateDecision({ tool: "read", level: "ok", readBudget: RB, turnUsed: 3000, est: estOf(400, false) })).toBe("deny-turn")
+    expect(budgetGateDecision({ tool: "glob", level: "ok", readBudget: RB, turnUsed: 3000 })).toBe("deny-turn")
+  })
+  test("readBudgetOf: default 1500, clamped to [200, 20000]", () => {
+    expect(readBudgetOf(undefined)).toBe(1500)
+    expect(readBudgetOf({})).toBe(1500)
+    expect(readBudgetOf({ readBudgetTokens: 100 })).toBe(200)
+    expect(readBudgetOf({ readBudgetTokens: 99999 })).toBe(20000)
+    expect(readBudgetOf({ readBudgetTokens: 800 })).toBe(800)
+    expect(readBudgetOf({ readBudgetTokens: Number.NaN })).toBe(1500)
+  })
+  test("turnBudgetOf: 2x read budget", () => {
+    expect(turnBudgetOf(1500)).toBe(3000)
+    expect(turnBudgetOf(800)).toBe(1600)
+  })
+  test("estimateReadRange: 64KB uniform sample math, limit/offset honored, density clamps, suggested limit clamps", () => {
+    const sample = { path: "a.ts", bytes: 65536, sampleBytes: 65536, newlines: 1023 } // 64 B/line → 18.2857 tok/line
+    const est = estimateReadRange(sample, undefined, 1500)
+    expect(est.tokensPerLine).toBeCloseTo(18.2857, 3)
+    expect(est.totalTokens).toBe(Math.ceil((64 / 3.5) * 1024))
+    expect(est.suggestedLimit).toBe(82) // floor(1500/18.2857)
+    expect(est.hasLimit).toBe(false)
+    const bounded = estimateReadRange(sample, { limit: 100, offset: 1 }, 1500)
+    expect(bounded.totalTokens).toBe(Math.ceil((64 / 3.5) * 100))
+    expect(bounded.hasLimit).toBe(true)
+    const offset = estimateReadRange(sample, { limit: 100, offset: 1000 }, 1500)
+    expect(offset.totalTokens).toBe(Math.ceil((64 / 3.5) * 25)) // only 25 lines remain past offset 1000
+    const truncated = estimateReadRange({ path: "b.ts", bytes: 700000, sampleBytes: 65536, newlines: 1023 }, undefined, 1500)
+    expect(truncated.totalTokens).toBe(Math.ceil((64 / 3.5) * Math.ceil(700000 / 64)))
+    const minified = estimateReadRange({ path: "c.js", bytes: 300000, sampleBytes: 65536, newlines: 0 }, undefined, 1500)
+    expect(minified.tokensPerLine).toBe(20) // clamped high
+    const empty = estimateReadRange({ path: "d.ts", bytes: 0, sampleBytes: 0, newlines: 0 }, undefined, 1500)
+    expect(empty.tokensPerLine).toBe(7.5) // fallback
+    expect(empty.totalTokens).toBe(8)
+  })
+  test("estimateOutputTokens: ceil(len/3.5)", () => {
+    expect(estimateOutputTokens(0)).toBe(0)
+    expect(estimateOutputTokens(350)).toBe(100)
+    expect(estimateOutputTokens(351)).toBe(101)
   })
   test("READ_CLASS_TOOLS covers read/glob/grep/list", () => {
     for (const t of ["read", "glob", "grep", "list"]) expect(READ_CLASS_TOOLS.has(t)).toBe(true)
@@ -123,7 +169,7 @@ describe("config: new behavior-section validation", () => {
   test("defaults: context 60/80/100k, gates on, builtinAgents deny, injection chain, floor 3000", () => {
     const { config, diagnostics } = validateUserConfig(base)
     expect(diagnostics.filter((d) => d.level === "error")).toEqual([])
-    expect(config.context).toEqual({ gates: true, softTokens: 60_000, hardTokens: 80_000, forceTokens: 100_000, autoHandover: true })
+    expect(config.context).toEqual({ gates: true, softTokens: 60_000, hardTokens: 80_000, forceTokens: 100_000, readBudgetTokens: 1_500, autoHandover: true })
     expect(config.builtinAgents.mode).toBe("deny")
     expect(config.injection.mode).toBe("chain")
     expect(config.rules.delegationFloor).toBe(3_000)

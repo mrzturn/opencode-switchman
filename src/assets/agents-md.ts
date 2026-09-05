@@ -12,6 +12,7 @@
 // [2026-09-05]-[todo discipline §0.7: fixes the stale-todo bug — default-prompt models (e.g. GLM) get no todo discipline from
 //  opencode's default system prompt and nothing re-surfaced the list, so it was written once and never updated; pairs with the
 //  plugin-injected [TODO] per-turn status line (index.ts sessionTodoLine)]
+// [2026-09-05]-[v1 read budget: §5 rewritten from one-time nudge semantics to always-on per-call budget; placeholders preserved]
 export const AGENTS_MD = `# Global Protocol (master dispatcher rules; opencode-switchman subagent rules are embedded in the shell definitions)
 
 > This protocol ships with the opencode-switchman plugin and is injected into the system prompt automatically by default (bundled with the package, updated with versions); scope: opencode with the opencode-switchman plugin installed.
@@ -63,8 +64,8 @@ Task artifacts (plans, implementation progress, process-control notes, design do
 ## 4. Verification and Re-Review
 - Logic changes must be verified once; changes >20 lines, multiple call sites, or long output → hand to tester; >300 lines or core/security/data logic → reviewer re-review (review chain, cross-family preferred — same-family self-review only as a last-resort DOWNGRADED seat).
 
-## 5. Watermark (hard-enforced from plugin measurement, do not self-estimate)
-This session's context is measured by the plugin and a \`[WATERMARK:SESSION]\` line is injected each turn; past the line, read-class tools (read/glob/grep/bash) get a warning first, then a hard block (deny with an economy redirect suggestion attached) — do not try to bypass it. Rules: from {{SOFT}}, all scanning/reading is delegated to economy; from {{HARD}}, stop new reads and only wrap up; at {{FORCE}}, an automatic /handover is triggered (full backup + compaction of this session, the task continues automatically, wait and do not bypass; a manual /handover also works). Git discipline: state-changing git (add/commit/push/checkout/reset/revert/…) is delivery — run it yourself in the main session at any watermark and never delegate it (the gate always passes it; committing must not depend on shell availability); unbounded git archaeology (log with -p, range diff, blame without -L) counts as scanning — scope it (-n N / --stat / -L) or delegate to economy. Test/lint/build verification commands likewise always pass. Thresholds adjustable via jsonc \`context.*\`.
+## 5. Self-read budget (always on, every turn)
+Each self-read is costed against a per-call injection budget (default ~1500 tokens; the live cap rides the \`[WATERMARK:SESSION]\` banner line). Reads over the cap are auto-bounded or rejected with exact bounded-retry params (\`read <file> limit=N offset=M\`); once the per-turn self-read cap is spent, delegate the turn's remaining reads to an economy shell. Watermarks are lifecycle advice only: past {{SOFT}} prefer delegating new scans; past {{HARD}} wrap up (verification/delivery bash stays open; state-changing git is delivery — run it yourself, never delegate it); at {{FORCE}} compact immediately. Unbounded history dumps (e.g. \`git log -p\` without \`-n\`) are rejected at any context size — scope them or delegate.
 
 ## 6. Major-Action Reporting and the Expert Panel
 - [MANDATORY] Before a major action (self-reading >3 files or a single file >1000 lines, self-editing >100 lines or across files, commands expected to produce large output, any delegation), declare in one sentence: \`[DISPATCH] self: <one-line reason>\` / \`[DISPATCH] delegate <shell-name>: <one-line reason>\`; acting without declaration is forbidden.

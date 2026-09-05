@@ -292,6 +292,8 @@ export interface ContextOptions {
   /** [2026-09-04]-[After exceeding the force-compaction watermark, tool.execute.after auto-triggers /handover (fork backup + compact the current session;
    *  the task continues automatically with summary context); default true; false = banner hint only, relying on manual /handover] */
   autoHandover?: boolean
+  /** Per-call self-read budget R* in tokens: reads estimated above this are auto-bounded or denied with bounded-retry params; default 1500 (clamped 200..20000) */
+  readBudgetTokens?: number
 }
 // [2026-09-04]-[Builtin subagent block: explore/general compete with shell routing and were previously fail-open allowed;
 //  default deny with economy/main redirect suggestions; allow restores the old behavior]

@@ -1,4 +1,8 @@
 // [2026-09-04]-[dispatch-bias fix: measured session context watermark + tiered gate on read-class tools — turns the rules' self-reported watermark into mechanism enforcement]
+// [2026-09-05]-[v1 read budget: the soft-tier one-time-per-tool nudge is retired — its "allowed afterwards" coupon invited
+//  deliberate probe-retry loops. Reads are now judged from turn 1 by estimated injection size (context is sunk cost;
+//  only the marginal injection compounds), watermarks keep lifecycle duties only (soft=advice, hard=wrap-up deny,
+//  force=auto-handover). v2 (dynamic R*) is parked in docs/Pending-Confirmation-and-Implementation/.]
 // [2026-09-04]-[English localization: translate runtime messages and comments; no logic change]
 // Pure-function layer: token estimation, watermark tiering, read-gate decisions; state (Maps) is held by index.ts, no IO here.
 import type { ContextOptions } from "./types"
@@ -96,29 +100,118 @@ export function isArchaeologyBash(command: string): boolean {
   return gitClass(command.trim()) === "archaeology"
 }
 
-export interface ReadGateInput {
-  tool: string
-  level: WatermarkLevel
-  /** whether this tool was already nudged in this session (soft watermark one-time nudge; hard/force never read this) */
-  alreadyNudged?: boolean
-  /** bash command text (only used when tool=bash) */
-  bashCommand?: string
+// [2026-09-05]-[v1 read budget: replaces ReadGateInput/readGateDecision — per-call decision on estimated injection
+//  size, no consumable per-tool state (the old one-time nudge was a coupon models rationally burned via retry/probing)]
+/** Per-call read-injection budget (R*): reads whose estimated token injection exceeds this are auto-bounded ("cap")
+ *  or denied with exact bounded-retry params. Default 1500 ≈ P(500) + summary(400) + S(6000)/T(10) — the break-even
+ *  where self-reading stops being cheaper than delegating to an economy shell. */
+export const DEFAULT_READ_BUDGET_TOKENS = 1500
+export const MIN_READ_BUDGET_TOKENS = 200
+export const MAX_READ_BUDGET_TOKENS = 20_000
+/** Used when a file sample yields no usable line structure (empty/one-line files) */
+const FALLBACK_TOKENS_PER_LINE = 7.5
+
+export function readBudgetOf(context: { readBudgetTokens?: number } | undefined): number {
+  const raw = context?.readBudgetTokens
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return DEFAULT_READ_BUDGET_TOKENS
+  return Math.min(MAX_READ_BUDGET_TOKENS, Math.max(MIN_READ_BUDGET_TOKENS, Math.round(raw)))
 }
 
-export type ReadGateAction = "allow" | "nudge" | "deny"
+/** Per-turn self-read allowance: 2× the per-call budget — one bounded read plus slack; resets on each user turn */
+export function turnBudgetOf(readBudget: number): number {
+  return readBudget * 2
+}
 
-/** Read-gate decision: verification bash (delivery git + test/lint/build) passes at EVERY tier (delivery must not
- *  stall); soft = one-time nudge per tool for the rest (deny with a redirect suggestion, allowed afterwards);
- *  hard/force = read-class and non-verification bash always deny. nudge/deny copy is assembled by index.ts (with
- *  the economy candidate + archaeology scoping hint attached). */
-export function readGateDecision(input: ReadGateInput): ReadGateAction {
-  const { tool, level, bashCommand } = input
-  if (level === "ok") return "allow"
-  const isBash = tool === "bash"
-  const isReadClass = READ_CLASS_TOOLS.has(tool)
-  if (!isBash && !isReadClass) return "allow"
-  if (isBash && bashCommand !== undefined && isVerificationBash(bashCommand)) return "allow"
-  if (level === "soft") return input.alreadyNudged ? "allow" : "nudge"
-  // hard / force
-  return "deny"
+/** Post-hoc charging for tool outputs we could not pre-estimate (bash, glob/grep/list): ~3.5 bytes/token */
+export function estimateOutputTokens(outputLength: number): number {
+  return Math.ceil(outputLength / 3.5)
+}
+
+/** Head sample of a file (first 64KB) used to derive per-line token density; produced by index.ts (IO lives there) */
+export interface FileSample {
+  path: string
+  bytes: number
+  sampleBytes: number
+  newlines: number
+}
+
+export interface ReadEstimate {
+  /** estimated tokens the requested range would inject */
+  totalTokens: number
+  tokensPerLine: number
+  /** bounded-retry line count that fits the budget (clamped 50..500) */
+  suggestedLimit: number
+  hasLimit: boolean
+  requestedLimit?: number
+  offset?: number
+}
+
+/** Estimate the injection cost of a read call from a 64KB head sample: bytes/line → tokens/line (clamped 3..20 to
+ *  absorb minified/verbose outliers), then tokens/line × effective lines (honoring limit/offset). Pure. */
+export function estimateReadRange(
+  sample: FileSample,
+  args: { limit?: unknown; offset?: unknown } | undefined,
+  readBudget: number,
+): ReadEstimate {
+  const sampleLines = sample.newlines + 1
+  const coversFile = sample.sampleBytes >= sample.bytes
+  const bytesPerLine = sample.sampleBytes > 0 ? sample.sampleBytes / sampleLines : 0
+  const tokensPerLine = bytesPerLine > 0 ? Math.min(20, Math.max(3, bytesPerLine / 3.5)) : FALLBACK_TOKENS_PER_LINE
+  const totalLines = coversFile ? sampleLines : Math.max(1, Math.ceil(sample.bytes / (bytesPerLine || 1)))
+  const limit = typeof args?.limit === "number" && args.limit > 0 ? Math.floor(args.limit) : undefined
+  const offset = typeof args?.offset === "number" && args.offset > 0 ? Math.floor(args.offset) : 1
+  const effectiveLines =
+    limit !== undefined ? Math.max(1, Math.min(limit, Math.max(1, totalLines - offset + 1))) : totalLines
+  return {
+    totalTokens: Math.ceil(tokensPerLine * effectiveLines),
+    tokensPerLine,
+    suggestedLimit: Math.min(500, Math.max(50, Math.floor(readBudget / tokensPerLine))),
+    hasLimit: limit !== undefined,
+    requestedLimit: limit,
+    offset,
+  }
+}
+
+export interface BudgetGateInput {
+  tool: string
+  level: WatermarkLevel
+  readBudget: number
+  turnUsed: number
+  bashCommand?: string
+  /** read-range estimate (read tool only; glob/grep/list and unsampleable paths pass null → fail-open) */
+  est?: ReadEstimate | null
+}
+
+export type BudgetGateAction =
+  | "allow"
+  | "cap"
+  | "deny-budget"
+  | "deny-turn"
+  | "deny-archaeology"
+  | "deny-hard"
+
+/** Read-budget gate decision (pure and deterministic — identical inputs always yield the identical action; probing
+ *  cannot change a verdict, which is what killed the old coupon-nudge design):
+ *  - verification bash (delivery git + test/lint/build) passes at EVERY tier (delivery must not stall)
+ *  - archaeology git (unbounded history dumps) is denied at ALL tiers with a scoping hint — a context bomb is a
+ *    context bomb at 10k or 90k
+ *  - other bash passes at ok/soft (charged post-hoc in tool.execute.after) and is denied at hard/force (wrap-up mode)
+ *  - read-class is denied at hard/force (wrap-up mode); once the per-turn cap (2×R*) is spent, denied until the next
+ *    user turn
+ *  - read with an estimate over R*: auto-bounded ("cap") when no explicit limit was set; denied with exact
+ *    bounded-retry params ("deny-budget") when the caller's own limit still overshoots
+ *  - everything else (un-estimable read-class included) is fail-open "allow" — post-hoc charging still applies */
+export function budgetGateDecision(input: BudgetGateInput): BudgetGateAction {
+  const { tool, level, readBudget, turnUsed, bashCommand, est } = input
+  if (tool === "bash") {
+    if (bashCommand !== undefined && isVerificationBash(bashCommand)) return "allow"
+    if (bashCommand !== undefined && isArchaeologyBash(bashCommand)) return "deny-archaeology"
+    return level === "hard" || level === "force" ? "deny-hard" : "allow"
+  }
+  if (!READ_CLASS_TOOLS.has(tool)) return "allow"
+  if (level === "hard" || level === "force") return "deny-hard"
+  if (turnUsed >= turnBudgetOf(readBudget)) return "deny-turn"
+  if (tool !== "read" || !est) return "allow"
+  if (est.totalTokens <= readBudget) return "allow"
+  return est.hasLimit ? "deny-budget" : "cap"
 }
