@@ -140,6 +140,11 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   //  past the line, read-class tools get the tiered gate (nudge first, then hard deny) — turns rules self-reporting into mechanism enforcement]
   const sessionWatermark = new Map<string, { tokens: number; at: number }>()
   const readNudged = new Map<string, Set<string>>()
+  // [2026-09-05]-[todo nudge: latest todo snapshot per main session (fed by todo.updated events; the tool replaces the whole
+  //  list each call, so the last event is authoritative). Root cause of the stale-todo bug: default-prompt models (e.g. GLM)
+  //  get no todo discipline from opencode's default system prompt and nothing re-surfaced the list after the first write, so
+  //  it fell out of attention once delegation turns piled up; the per-turn [TODO] line keeps it visible]
+  const sessionTodos = new Map<string, { todos: Array<{ content: string; status: string }>; at: number }>()
   // [2026-09-04]-[auto-handover guards: inflight prevents concurrency (tools run in parallel; several afters past the line trigger only once);
   //  a 10-minute cooldown prevents "post-compaction summary + tail still past the line → compact again" flapping (the measured watermark only falls
   //  back after the next assistant message)]
@@ -180,6 +185,26 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       //  with it off, keep the legacy directive (relying on manual /handover)]
       if (options.context?.autoHandover !== false) return `${base}—[MANDATORY] force-compaction watermark exceeded: auto-handover will fully back up and compact this session (the task continues automatically); stand by — no new reads or delegations`
       return `${base}—[MANDATORY] force-compaction watermark exceeded: run /handover or compact the context now; no new reads or delegations`
+    } catch { return null }
+  }
+
+  /**
+   * [TODO] status line: unfinished lists only (all-done lists go quiet); compact progress numbers + the current focus item
+   * re-surface the list every turn so it never goes stale (mirrors the watermark line's mechanism; facts + a short directive)
+   * [2026-09-05]-[todo nudge line: pairs with protocol §0.7; cancelled counts as resolved, pending focus tags as "next"]
+   */
+  function sessionTodoLine(sessionID: string | undefined): string | null {
+    try {
+      if (!sessionID || isShellOrInternalSession(sessionID)) return null
+      const snap = sessionTodos.get(sessionID)
+      if (!snap) return null
+      const total = snap.todos.length
+      const done = snap.todos.filter((t) => t.status === "completed" || t.status === "cancelled").length
+      if (done >= total) return null
+      const inProg = snap.todos.find((t) => t.status === "in_progress")
+      const focus = inProg ?? snap.todos.find((t) => t.status === "pending")
+      const focusTxt = focus ? ` · ${inProg ? "in_progress" : "next"}: ${focus.content.slice(0, 60)}` : ""
+      return `[TODO] ${done}/${total} done${focusTxt} — keep todowrite current (update as each item starts/finishes)`
     } catch { return null }
   }
 
@@ -1055,6 +1080,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         if (options.rules!.enabled || options.banner!.enabled) {
           const wmLine = sessionWatermarkLine(input.sessionID)
           if (wmLine) output.system.push(wmLine)
+          // [2026-09-05]-[todo nudge line: same gate as the watermark line — re-surfaces the unfinished todo list every turn]
+          const todoLine = sessionTodoLine(input.sessionID)
+          if (todoLine) output.system.push(todoLine)
         }
       } catch (exc) {
         appendStatusLog(`rules/banner fail-open: ${exc}`)
@@ -1348,8 +1376,23 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           if (sid) {
             sessionWatermark.delete(sid)
             readNudged.delete(sid)
+            sessionTodos.delete(sid)
             workspace.forget(sid)
             if (dynamic && manager?.noteSessionDeleted(sid)) manager.scheduleRecompute(50, "session")
+          }
+          return
+        }
+        // [2026-09-05]-[todo nudge: todo.updated replaces the whole list (delete+reinsert in SessionTodo.update) → snapshot
+        //  the last event per main session; shell/internal sessions excluded (their lists never face the dispatcher's panel)]
+        if (event.type === "todo.updated") {
+          const props = (event as any).properties
+          const sid = props?.sessionID
+          if (typeof sid === "string" && !isShellOrInternalSession(sid) && Array.isArray(props?.todos)) {
+            const todos = (props.todos as any[])
+              .filter((t) => t && typeof t.content === "string" && typeof t.status === "string")
+              .map((t) => ({ content: t.content as string, status: t.status as string }))
+            if (todos.length === 0) sessionTodos.delete(sid)
+            else sessionTodos.set(sid, { todos, at: Date.now() })
           }
           return
         }

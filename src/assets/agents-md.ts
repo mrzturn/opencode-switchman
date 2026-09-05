@@ -9,6 +9,9 @@
 //  when the workspace is disabled)]
 // [2026-09-05]-[git UX split: delivery git exempt at every watermark tier and never delegated; unbounded archaeology git
 //  (log -p / range diff / blame without -L) reclassified as scanning — scope or delegate (kept in sync with context-watch.ts)]
+// [2026-09-05]-[todo discipline §0.7: fixes the stale-todo bug — default-prompt models (e.g. GLM) get no todo discipline from
+//  opencode's default system prompt and nothing re-surfaced the list, so it was written once and never updated; pairs with the
+//  plugin-injected [TODO] per-turn status line (index.ts sessionTodoLine)]
 export const AGENTS_MD = `# Global Protocol (master dispatcher rules; opencode-switchman subagent rules are embedded in the shell definitions)
 
 > This protocol ships with the opencode-switchman plugin and is injected into the system prompt automatically by default (bundled with the package, updated with versions); scope: opencode with the opencode-switchman plugin installed.
@@ -22,6 +25,7 @@ export const AGENTS_MD = `# Global Protocol (master dispatcher rules; opencode-s
 4. Report honestly: call failure a failure, call a skip a skip, mark uncertainty as uncertain; whitewashing and fabrication are forbidden.
 5. Annotate changes: comment key changes with \`[yyyy-mm-dd]-[why]-[impact]\`; skip for self-evident changes.
 6. Terminal failure protocol: the end of a delegation/downgrade chain = explicitly tell the user the reason + offer 2 options; silent abandonment is forbidden. When cognitive roles (planner/reviewer/expert seats) are downgraded, they must declare "DOWNGRADED"; mechanical roles may do so silently. If a downgrade involves transferring private code/keys across providers, obtain user consent first.
+7. Todo list discipline: once the session todo list exists, keep it current via todowrite in real time — mark an item in_progress before starting it, mark it completed/cancelled the moment its outcome is verified (results returned by delegated shells included), never batch updates; [DISPATCH] declarations and workspace notes report alongside the todo list, never replace it.
 
 ## 1. Model Shells and the Six Lanes
 A shell = a "model × lane" empty shell (\`<pool>-mx-<model-short-name>-<lane>\`), pool ∈ copilot/glm/ds, injected at plugin startup, bound only to model/lane/tool surface, with the role assigned by the delegation prompt; ro shells = read-only shells on the review chain; vision shells handle image. **The roster and six-lane chains follow the [ROUTES]/[LIMITS] lines in the system prompt**; do not copy them. Delegations must use the explicit full shell name; bare role names are forbidden, and **built-in explore/general are forbidden** (they will be denied with a redirect suggestion attached).
