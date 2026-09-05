@@ -5,7 +5,7 @@
 // [2026-09-04]-[protocol slim-down v2: after mechanizing the watermark rules (context-watch hard gate + [WATERMARK:SESSION]
 //  measured line), removed the advisory long text; added the built-in explore/general ban and the minimal delegation sample;
 //  {{DELEGATION_FLOOR}}/{{SOFT}}/{{HARD}}/{{FORCE}} are interpolated by the index.ts transform per user jsonc (defaults
-//  3k/60k/80k/100k); {{WORKSPACE_DIR}} = the per-session artifact workspace relative path (or a neutralized section
+//  3k/60k/80k/120k); {{WORKSPACE_DIR}} = the per-session artifact workspace relative path (or a neutralized section
 //  when the workspace is disabled)]
 // [2026-09-05]-[git UX split: delivery git exempt at every watermark tier and never delegated; unbounded archaeology git
 //  (log -p / range diff / blame without -L) reclassified as scanning — scope or delegate (kept in sync with context-watch.ts)]

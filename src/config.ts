@@ -41,7 +41,7 @@ export interface UserConfig {
 }
 export interface LoadedUserConfig { path: string; config: UserConfig; diagnostics: ConfigDiagnostic[]; generated: boolean }
 
-export const DEFAULT_CONTEXT_TOKENS = { soft: 60_000, hard: 80_000, force: 100_000 } as const
+export const DEFAULT_CONTEXT_TOKENS = { soft: 60_000, hard: 80_000, force: 120_000 } as const
 export const DEFAULT_DELEGATION_FLOOR = 3_000
 
 /** Factory defaults for behavior sections (fillMissing baseline; only bad-typed values fall back and report SWM037) */

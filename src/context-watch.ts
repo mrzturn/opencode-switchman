@@ -18,8 +18,18 @@ export function thresholdsOf(options: ContextOptions | undefined): ContextThresh
   return {
     soft: options?.softTokens ?? 60_000,
     hard: options?.hardTokens ?? 80_000,
-    force: options?.forceTokens ?? 100_000,
+    force: options?.forceTokens ?? 120_000,
   }
+}
+
+// [2026-09-05]-[window cap: force must never ride past 90% of the session model's context window (128k-window
+//  models would overflow before auto-handover fires); lower tiers clamp below the capped force, order preserved]
+export function capThresholdsByWindow(t: ContextThresholds, windowTokens?: number): ContextThresholds {
+  if (typeof windowTokens !== "number" || !Number.isFinite(windowTokens) || windowTokens <= 0) return t
+  const force = Math.min(t.force, Math.floor(windowTokens * 0.9))
+  const hard = Math.min(t.hard, force)
+  const soft = Math.min(t.soft, hard)
+  return { soft, hard, force }
 }
 
 /** message.updated → info.tokens (v2) or info.metadata.assistant.tokens (v1) dual-path defensive read;

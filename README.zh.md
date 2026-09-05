@@ -201,7 +201,7 @@ v0.2.0 将 switchman 从固定多供应商调度器升级为实时、能力感�
 | `matrix.mode / watch` | `auto / true` | 激活矩阵：`auto` 按宿主自动（desktop=可见模型 / CLI/TUI=favorites），`app`/`tui` 强制指定，`legacy` 旧静态矩阵；`watch`=配置面变化即重算并全量刷新探针（mode/watch 为启动级，重启生效） |
 | `banner.enabled` | `true` | 四行横幅注入开关 |
 | `rules.enabled / delegationFloor` | `true / 3000` | 调度员规程（AGENTS.md）随包注入开关；`delegationFloor`＝自做底价（token），注入规程时插值 |
-| `context.gates / softTokens / hardTokens / forceTokens / readBudgetTokens` | `true / 60000 / 80000 / 100000 / 1500` | **会话上下文水位实测＋自读预算闸**：插件从消息 token usage 实测主会话上下文并每轮注入 `[水位·会话]` 行（附每轮增速与距硬水位剩余轮数估算）。自读从第 1 轮起按 `readBudgetTokens` 计费：预估超限的读取自动追加 `limit` 有界放行，或以精确的有界重试参数拒绝；每轮另有 2× 上限阻断连续读取，无法预估的工具输出事后记账。验证/交付类 bash（git、测试/lint、构建）全水位放行；无界历史翻查（如不带 `-n` 的 `git log -p`）任何水位一律拦截并附收窄提示；超硬水位读取类关闭（收尾模式）；超压水位横幅强制立即压缩。壳子代理会话豁免 |
+| `context.gates / softTokens / hardTokens / forceTokens / readBudgetTokens` | `true / 60000 / 80000 / 120000 / 1500` | **会话上下文水位实测＋自读预算闸**：插件从消息 token usage 实测主会话上下文并每轮注入 `[水位·会话]` 行（附每轮增速与距硬水位剩余轮数估算）。自读从第 1 轮起按 `readBudgetTokens` 计费：预估超限的读取自动追加 `limit` 有界放行，或以精确的有界重试参数拒绝；每轮另有 2× 上限阻断连续读取，无法预估的工具输出事后记账。验证/交付类 bash（git、测试/lint、构建）全水位放行；无界历史翻查（如不带 `-n` 的 `git log -p`）任何水位一律拦截并附收窄提示；超硬水位读取类关闭（收尾模式）；超压水位横幅强制立即压缩。壳子代理会话豁免；三档水位在可知时额外以当前会话模型上下文窗口（models.dev）的 90% 封顶 |
 | `dispatch.autoRedirect` | `true` | 派发被拒时在途改写 `subagent_type` 到拒绝消息已点名的链首候选（单跳、同快照守卫复检）——首次派发直接落在最优可用壳上，不再烧「拒绝-重试」轮次；`false` 恢复拒绝-重试 |
 | `relay.image` | `true` | 无视觉主模型：用户附带图片自动落盘并替换为路径文本＋阅读指引（委托 vision 壳或交给 MCP 视觉工具）；本地路径 / http URL 原样透传；全程 fail-open |
 | `lang.enabled / ask / candidates` | `true / true / 出厂清单` | 项目级语言偏好：每轮 `[LANG]` 铁律行（会话 / 注释与提交 / 文档），首次使用每会话询问一次，落盘 `.switchman/settings.json`（AGENTS.md 标记为只读回退），`/switchman-lang` 重新询问 |

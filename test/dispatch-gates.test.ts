@@ -5,7 +5,7 @@ import { describe, expect, test } from "bun:test"
 import {
   READ_CLASS_TOOLS, estimateContextTokens, thresholdsOf, watermarkLevel,
   isVerificationBash, budgetGateDecision, readBudgetOf, turnBudgetOf,
-  estimateReadRange, estimateOutputTokens,
+  estimateReadRange, estimateOutputTokens, capThresholdsByWindow,
 } from "../src/context-watch"
 import { builtinAgentDeny, checkShell } from "../src/gates"
 import { firstCandidate } from "../src/lane"
@@ -27,8 +27,18 @@ describe("context-watch: token estimation and watermark levels", () => {
     expect(watermarkLevel(80_000, t)).toBe("hard")
     expect(watermarkLevel(100_000, t)).toBe("force")
   })
-  test("thresholdsOf: defaults 60k/80k/100k", () => {
-    expect(thresholdsOf(undefined)).toEqual({ soft: 60_000, hard: 80_000, force: 100_000 })
+  test("thresholdsOf: defaults 60k/80k/120k", () => {
+    expect(thresholdsOf(undefined)).toEqual({ soft: 60_000, hard: 80_000, force: 120_000 })
+  })
+  // [2026-09-05]-[window cap: effective thresholds are capped at 90% of the session model's context window; order preserved, fail-open]
+  test("capThresholdsByWindow: 90% cap, order preserved, fail-open on unknown window", () => {
+    const t = { soft: 60_000, hard: 80_000, force: 120_000 }
+    expect(capThresholdsByWindow(t, undefined)).toEqual(t)
+    expect(capThresholdsByWindow(t, Number.NaN)).toEqual(t)
+    expect(capThresholdsByWindow(t, 0)).toEqual(t)
+    expect(capThresholdsByWindow(t, 200_000)).toEqual({ soft: 60_000, hard: 80_000, force: 120_000 })
+    expect(capThresholdsByWindow(t, 128_000)).toEqual({ soft: 60_000, hard: 80_000, force: 115_200 })
+    expect(capThresholdsByWindow(t, 32_000)).toEqual({ soft: 28_800, hard: 28_800, force: 28_800 })
   })
 })
 
@@ -169,7 +179,7 @@ describe("config: new behavior-section validation", () => {
   test("defaults: context 60/80/100k, gates on, builtinAgents deny, injection chain, floor 3000", () => {
     const { config, diagnostics } = validateUserConfig(base)
     expect(diagnostics.filter((d) => d.level === "error")).toEqual([])
-    expect(config.context).toEqual({ gates: true, softTokens: 60_000, hardTokens: 80_000, forceTokens: 100_000, readBudgetTokens: 1_500, autoHandover: true })
+    expect(config.context).toEqual({ gates: true, softTokens: 60_000, hardTokens: 80_000, forceTokens: 120_000, readBudgetTokens: 1_500, autoHandover: true })
     expect(config.builtinAgents.mode).toBe("deny")
     expect(config.injection.mode).toBe("chain")
     expect(config.rules.delegationFloor).toBe(3_000)

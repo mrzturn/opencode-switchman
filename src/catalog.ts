@@ -11,7 +11,13 @@ import type { ShellManifestEntry } from "./types"
 import { poolForProviderId } from "./provider-config"
 
 export type Effort = string
-export interface EffortInfo { efforts: string[]; toggle: boolean; vision: boolean; /** [2026-09-01]-[models.dev status=deprecated: rotated off the shelf (free models update daily, old -free ones get marked deprecated)] */ deprecated?: boolean }
+export interface EffortInfo {
+  efforts: string[]; toggle: boolean; vision: boolean
+  /** [2026-09-01]-[models.dev status=deprecated: rotated off the shelf (free models update daily, old -free ones get marked deprecated)] */
+  deprecated?: boolean
+  /** [2026-09-05]-[window cap: context window in tokens from models.dev (nested limit.context; absent/invalid -> undefined, fail-open)] */
+  contextWindow?: number
+}
 export interface ShellDefinition {
   name: string
   provider: string
@@ -95,11 +101,14 @@ export function parseModelsDevApi(data: Record<string, any>): Record<string, Eff
         }
       }
       const modalIn = Array.isArray((m as any)?.modalities?.input) ? (m as any).modalities.input : []
+      // [2026-09-05]-[window cap: carry models.dev limit.context through to the runtime index (verified live: nested limit.context, not flat limit_context)]
+      const ctxWin = (m as any)?.limit?.context
       out[`${prov}/${mid}`] = {
         efforts,
         toggle,
         vision: (m as any)?.attachment === true || modalIn.includes("image"),
         ...( (m as any)?.status === "deprecated" ? { deprecated: true } : {} ),
+        ...( typeof ctxWin === "number" && Number.isFinite(ctxWin) && ctxWin > 0 ? { contextWindow: ctxWin } : {} ),
       }
     }
   }
@@ -170,6 +179,13 @@ export function bundledModelIndex(): Record<string, EffortInfo> {
 export const FLOOR_PROVIDER = "opencode" // OpenCode Zen
 /** Official models that are free without a -free suffix (special-case set verified against the catalog) */
 export const FLOOR_FREE_EXTRA = new Set(["big-pickle"])
+
+// [2026-09-05]-[window cap: registry lookup of a model's context window (index keyed provider/modelId);
+//  unknown model or missing/invalid field -> undefined, callers fail-open to configured thresholds]
+export function contextWindowOf(index: Record<string, EffortInfo>, key: string): number | undefined {
+  const w = index[key]?.contextWindow
+  return typeof w === "number" && Number.isFinite(w) && w > 0 ? w : undefined
+}
 
 /** Extract full keys (provider/modelId) of free floor models from the models.dev catalog index */
 export function freeFloorModels(index: Record<string, EffortInfo>): string[] {

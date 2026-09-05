@@ -29,8 +29,9 @@ import {
 import {
   READ_CLASS_TOOLS, estimateContextTokens, thresholdsOf, watermarkLevel,
   budgetGateDecision, estimateReadRange, estimateOutputTokens, readBudgetOf, turnBudgetOf,
+  capThresholdsByWindow,
 } from "./context-watch"
-import type { ReadEstimate, FileSample } from "./context-watch"
+import type { ReadEstimate, FileSample, ContextThresholds } from "./context-watch"
 import { backupSession, compactSession, v1HandoverPort, type HandoverResult } from "./handover-core"
 import { logDecision, BILLING_API_BOOST } from "./scoring"
 import type { WaterFactor, DecisionRecord } from "./scoring"
@@ -68,6 +69,7 @@ import { MatrixManager } from "./matrix-manager"
 import { laneBaseChain } from "./lane-policy"
 import {
   buildShells, loadCatalog, bundledModelIndex, isConversational, toManifestEntry, freeFloorModels,
+  contextWindowOf,
 } from "./catalog"
 import type { ShellDefinition, EffortInfo } from "./catalog"
 
@@ -153,6 +155,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   const turnReadUsage = new Map<string, { used: number; at: number }>()
   const wmHistory = new Map<string, number[]>()
   const lastUserMsg = new Map<string, string>()
+  // [2026-09-05]-[window cap: current session model key (providerID/modelID from message.updated assistant messages;
+  //  registry-keyed, unlike chat.params' sessionModelKey which can be stale/absent when a turn never fires chat.params)]
+  const sessionMsgModel = new Map<string, string>()
   // [2026-09-05]-[todo nudge: latest todo snapshot per main session (fed by todo.updated events; the tool replaces the whole
   //  list each call, so the last event is authoritative). Root cause of the stale-todo bug: default-prompt models (e.g. GLM)
   //  get no todo discipline from opencode's default system prompt and nothing re-surfaced the list after the first write, so
@@ -229,6 +234,18 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     turnReadUsage.set(sessionId, { used: (prev?.used ?? 0) + tokens, at: Date.now() })
   }
 
+  // [2026-09-05]-[window cap: effective thresholds = configured, additionally capped at 90% of the current session
+  //  model's context window (models.dev via the runtime index); unknown model/window -> configured values (fail-open)]
+  function sessionThresholds(sessionId: string | undefined): ContextThresholds {
+    try {
+      const key = sessionId ? sessionMsgModel.get(sessionId) ?? sessionModelKey.get(sessionId) : undefined
+      const win = key ? contextWindowOf(metaIndexRuntime ?? bundledModelIndex(), key) : undefined
+      return capThresholdsByWindow(thresholdsOf(options.context), win)
+    } catch {
+      return thresholdsOf(options.context)
+    }
+  }
+
   /** Mean per-turn context growth from recent watermark samples (positive deltas only, mean of last 5 of last 9) */
   function watermarkPace(sessionId: string): { delta: number; turnsToHard: number } | null {
     const h = wmHistory.get(sessionId)
@@ -241,7 +258,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     if (deltas.length === 0) return null
     const tail = deltas.slice(-5)
     const delta = Math.round(tail.reduce((a, b) => a + b, 0) / tail.length)
-    const thresholds = thresholdsOf(options.context)
+    const thresholds = sessionThresholds(sessionId)
     const remaining = Math.max(0, thresholds.hard - (h[h.length - 1] ?? 0))
     const turnsToHard = Math.min(999, Math.max(0, Math.round(remaining / Math.max(1, delta))))
     return { delta, turnsToHard }
@@ -253,7 +270,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       if (!sessionID || isShellOrInternalSession(sessionID)) return null
       const wm = sessionWatermark.get(sessionID)
       if (!wm) return null
-      const t = thresholdsOf(options.context)
+      const t = sessionThresholds(sessionID)
       const level = watermarkLevel(wm.tokens, t)
       const pace = watermarkPace(sessionID)
       const rb = readBudgetOf(options.context)
@@ -858,7 +875,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       if (!sid || isShellOrInternalSession(sid)) return
       const wm = sessionWatermark.get(sid)
       if (!wm) return
-      const t = thresholdsOf(options.context)
+      const t = sessionThresholds(sid)
       const level = watermarkLevel(wm.tokens, t)
       const readBudget = readBudgetOf(options.context)
       const turnUsed = turnUsedOf(sid)
@@ -1179,8 +1196,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         const rulesAlreadyPresent = Array.isArray(output.system)
           && output.system.some((p) => typeof p === "string" && p.includes(rulesMarker))
         if (options.rules!.enabled && !rulesAlreadyPresent) {
-          // [2026-09-04]-[rules interpolation: delegation floor and the three watermark thresholds come from user jsonc (defaults 3k/60k/80k/100k)]
-          const t = thresholdsOf(options.context)
+          // [2026-09-04]-[rules interpolation: delegation floor and the three watermark thresholds come from user jsonc (defaults 3k/60k/80k/120k)]
+          const t = sessionThresholds(input.sessionID)
           let rules = AGENTS_MD.trimEnd()
             .replaceAll("{{DELEGATION_FLOOR}}", String(options.rules!.delegationFloor ?? DEFAULT_DELEGATION_FLOOR))
             .replaceAll("{{SOFT}}", kk(t.soft))
@@ -1469,7 +1486,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         if (!sid || isShellOrInternalSession(sid)) return
         const wm = sessionWatermark.get(sid)
         if (!wm) return
-        if (watermarkLevel(wm.tokens, thresholdsOf(options.context)) !== "force") return
+        if (watermarkLevel(wm.tokens, sessionThresholds(sid)) !== "force") return
         if (handoverInflight.has(sid)) return
         if (Date.now() - (handoverCooldown.get(sid) ?? 0) < HANDOVER_COOLDOWN_MS) return
         handoverInflight.add(sid)
@@ -1490,6 +1507,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           turnReadUsage.delete(sid)
           wmHistory.delete(sid)
           lastUserMsg.delete(sid)
+          sessionMsgModel.delete(sid)
           // [2026-09-05]-[compaction channel = session.summarize (what the manual TUI /compact calls; session.command has
           //  no compact command — registry is markdown/MCP/skill only, v1.18.9 "Command not found" incident). Model face
           //  from the chat.params-tracked ModelKey; auto:true injects the post-compaction continue turn so the task resumes]
@@ -1546,6 +1564,12 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
               lastUserMsg.set(sid, info.id)
               turnReadUsage.delete(sid)
             } else if (info?.role === "assistant") {
+              // [2026-09-05]-[window cap: track the current model (AssistantMessage modelID+providerID, sdk types.gen.ts:108-109)
+              //  as the registry key for the context-window threshold cap]
+              const am = info as { modelID?: unknown; providerID?: unknown }
+              if (typeof am.modelID === "string" && typeof am.providerID === "string") {
+                sessionMsgModel.set(sid, `${am.providerID}/${am.modelID}`)
+              }
               const est = estimateContextTokens(info)
               if (est !== null) {
                 sessionWatermark.set(sid, { tokens: est, at: Date.now() })
@@ -1573,6 +1597,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             turnReadUsage.delete(sid)
             wmHistory.delete(sid)
             lastUserMsg.delete(sid)
+            sessionMsgModel.delete(sid)
             sessionTodos.delete(sid)
             workspace.forget(sid)
             langAsked.delete(sid)
