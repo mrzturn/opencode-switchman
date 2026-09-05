@@ -16,7 +16,7 @@ OpenCode 六档壳矩阵编排插件——让主模型成为调度员，把任�
 
 ### 前置条件
 
-- [opencode](https://opencode.ai)（桌面端或 CLI）
+- [opencode](https://opencode.ai)——**强烈推荐以 CLI/TUI 为主力界面**（插件的操作面——侧栏状态面板、`/poolConfig` / `/modelRank` 弹窗、实时横幅——在 TUI 里最完整）：建议先用 TUI 完成全部配置，之后可自行选择是否换用桌面端体验；两端共享同一份配置与状态
 - 任意 opencode 供应商均可接入，以下三池额外享有额度控制（可任意组合，全部可选）：
   - **GitHub Copilot**：opencode 内 GitHub 登录（`/connect`）即可
   - **GLM**：自定义 provider（`zhipuai-coding-plan`，baseURL `https://open.bigmodel.cn/api/coding/paas/v4` + apiKey）
@@ -96,20 +96,25 @@ bun run build   # 生成 dist/opencode-switchman.js
 
 ### 验证安装
 
-启动 opencode 后，主模型每轮系统提示中会出现四行实时横幅（即调度依据）：
+启动 opencode 后，主模型每轮系统提示中会出现实时横幅（即调度依据）：
 
 ```
-[路由] economy: glm-53-low→claude5-low→gem31pro-low | mechanical: claude5-medium→gem31pro-medium→gem37f-medium | main: glm-53-high→ds-v4p-high→claude5-high | ...
-[水位] GLM 5h窗 20% 周 7%(09-04 10:00刷新) | Copilot 积分不限量 已用3885(2026-09-01刷新) | 建议: ...
-[限制] down: 无 | retired: 0 模型已下线 | reviewer 须异族（producer family ≠ 壳 family） | api 计费与未知模型按系数沉底（billing=subscription 显式配置优先）
-[更新] 发现新版本：/switchman-update 或 /switchman-ignore
+[ROUTES] economy: glm-53f-low→glm-47-off→glm-5t-off | mechanical: glm-53f-high→glm-47-off | main: glm-53f-high | hard: glm-53-high | vision: glm-53f-high | review: glm-53-high-ro
+[WATERMARK] GLM 5h 10% weekly 38% (refreshed 09-11 10:00) | Copilot credits 0% left (refreshes 2026-10-01) | DeepSeek balance exhausted | advice: ...
+[WATERMARK:SESSION] measured session context ~37k (soft 60k/hard 80k/force 100k) | growth ~5k/turn, ~8 turns to hard | self-read this turn 178/3000
+[LIMITS] down: none | reviewer prefers cross-family (same-family self-review = DOWNGRADED, allowed only when no cross-family reviewer exists) | api-billed & unknown models sink by coefficient (explicit billing=subscription wins) | matrix: cli·watch/ok | manual capability rank: 9 models, task-pool selection: 6 pools active (/modelRank /poolConfig to adjust)
+[TODO] 0/6 done · in_progress: 撰写 README 章节 — keep todowrite current (update as each item starts/finishes)
+[LANG] conversation=zh-CN comments=en docs=en (source: project settings) — 用会话语言回复与推理；代码注释、提交信息与生成文档各随其设置
+[UPDATE] new version available: /switchman-update or /switchman-ignore
 ```
 
 同时日志可见 `[opencode-switchman] 已注入 N 只模型空壳（agent）`——N 随有凭证 provider 的模型面动态变化。六档候选由能力分×档位亲和×计费/未知组系数算法生成，并经 vision/review 结构门过滤，无任何厂商预留席位；运行期再按健康、水位与成本选出当前链首。
 
 ### 侧边栏状态面板（TUI 插件，可选）
 
-v0.2.0 在 OpenCode TUI 侧边栏底部新增实时 `switchman` 面板，把路由状态收敛成一眼可读的运行视图：已观察 provider 的水位、高峰标记与渐变告警色，六个任务档位当前最佳候选，新增模型/provider 的「需要重启」标记，以及最新一条运行通知。面板每 2 秒轮询本地状态；原先会刷屏、遮挡输入框的非横幅 `stderr` 通知不再干扰操作。这是一套独立的 TUI Slot 插件（`src/tui.tsx`，导出路径 `opencode-switchman/tui`），与上面的 server 端 hook 插件互相独立。
+v0.2.0 在 OpenCode TUI 侧边栏底部新增实时 `switchman` 面板，v1.0.0 又做了全面的排版与配色打磨（并完成英文本地化）：各家 provider 的水位以渐变条呈现、对齐到全局 8 列网格（标签、进度条与刷新时间跨块对齐，非零小额配额也保证至少一格填充），带高峰标记、observe-only 折叠标签、六个任务档位当前链首、新增模型/provider 的「需要重启」标记，以及最新一条运行通知。面板每 2 秒轮询本地状态；非横幅 `stderr` 通知不会刷屏或遮挡输入框。这是一套独立的 TUI Slot 插件（`src/tui.tsx`，导出路径 `opencode-switchman/tui`），与上面的 server 端 hook 插件互相独立。
+
+> **推荐工作流**：先用 TUI 完成全部配置——选好模型收藏、调好 `/poolConfig` 与 `/modelRank`、盯着侧栏看它路由；之后可自行选择是否换用桌面端（强烈推荐 TUI：两端共享同一份配置与状态，而弹窗、侧栏、横幅等操作面在 TUI 里最完整）。
 
 ![Switchman 侧边栏：水位、高峰、任务档位候选与状态通知](docs/assets/tui-sidebar-status.png)
 
@@ -134,12 +139,18 @@ TUI 插件没有目录自动发现机制，需要在 **`tui.jsonc`/`tui.json`** 
 - **语义**：选配=让各任务池的候选模型**体现差异化**（如 economy 只配轻量模型、hard 只配重思考模型）——某池的手动清单**优先于系统默认候选集**，清单内模型仍按能力等级排序推荐；**同一模型可重复参与多个池**；未配置/空清单的池走系统默认决策。「清除配置」=恢复该池系统默认。
 - **配置文件**：`~/.config/opencode/opencode-switchman/pool-config.json`（键=任务池名，值=参与该池的 modelId 数组）。
 
+![/poolConfig 第一步——选择任务池，各池显示已参与模型数](docs/assets/tui-pool-config-pools.png)
+
+![/poolConfig 第二步——按能力档逐个勾选模型，支持全选/清除快捷项](docs/assets/tui-pool-config-models.png)
+
 ### /modelRank —— 模型能力排名（手动弹窗；会话式用 /modelRank-chat）
 
 - **TUI（/modelRank）**：弹出按有效能力排序的模型列表，选中模型后可「置顶 / 上移 / 下移 / 移出排名」，即时生效。
 - **非 TUI / 会话内（/modelRank-chat）**：会话式流程——注入当前排名与参考排序，回复「把 glm-5.3 排到最前」「清空排名」由 agent 换算 `rank` 命令落盘。
 - **语义**：手动排名**优先于基础能力分**（实时第三方指数 → 内置快照 → 策展表全部让位）——命中模型（含其前缀变体）按排名序位取能力分与 S/A/B/C 档：排名 ≤4 项时依次 S/A/B/C；≥5 项按分位口径（top20% S / 次20% A / 次20% B / 其余 C，与 OpenRouter 序位派生同口径）；同档内按序位线性分细排。未排名模型不受影响。排名参与所有决策面：六档链排序、档位亲和、能力等级闸与 deny 改派建议。
 - **配置文件**：`~/.config/opencode/opencode-switchman/capability-rank.json`（`models` 数组顺序=能力降序，#1 最强）。
+
+![/modelRank——模型能力排名：手动命中优先于基础能力分](docs/assets/tui-model-rank.png)
 
 ### /expert —— 专家咨询（会话式）
 
@@ -149,7 +160,23 @@ TUI 插件没有目录自动发现机制，需要在 **`tui.jsonc`/`tui.json`** 
 
 两命令亦可用随包 CLI 直操作：`node <包目录>/dist/switchman-config.js pool list|add|remove|set|clear`（池名=economy/mechanical/main/hard/vision/review）/ `rank list|set|add|remove|clear`（编号引用 `list` 输出）。横幅 `[限制]` 行会标注当前生效的手动覆盖（「手动能力排名 N 模型 / 任务池选配 M 池」）。
 
-## v0.2.0 更新内容
+## 更新内容
+
+### v1.x——确定性上下文治理与更强的手动覆盖（1.0.0 之后）
+
+- **常开逐次调用读预算（核心算法更新）**：用确定性预算闸取代旧的「每工具一次性提醒」（那种优惠券式提醒会被模型用重试/试探理性烧掉）。自第 1 轮起，每次读取都按 `context.readBudgetTokens`（默认 1500，钳制 200..20000）计费——预估超限的读取就地追加 `limit` 有界放行，或以精确的有界重试参数拒绝；每轮 2× 自读上限（用户发言即重置）阻断连续读取链；无法预估的工具输出事后记账。水位只保留生命周期职责（软=建议、硬=收尾拒绝、压=自动交接）。交付/验证类 bash（git、测试/lint、构建）任何水位放行；无界翻史（不带 `-n` 的 `git log -p`）任何水位拦截并附收窄提示。
+- **项目级语言偏好**：每轮注入 `[LANG]` 铁律行（会话 / 注释与提交 / 文档三种语言），首次使用每会话询问一次并按项目落盘，`/switchman-lang` 可随时修改。
+- **待办纪律**：规程 §0.7 + 每轮 `[TODO]` 状态行，主会话待办实时更新（含委派壳的结果）。
+- **/expert 专家咨询与随包 agent skills**：需求一键派给当前最强跨家族专家；开箱技能启动时同步进 opencode 全局技能目录（只增改不删、标记门控清理、fail-open）。
+- **review 档兜底**：跨家族只读壳全灭时保留最优 ro 壳、允许同族评审并标注 `DOWNGRADED`，不再出现空链。
+- **自动交接健壮性**：`[backup]` 备份自行编号（重启不乱、编号不回收）、压缩走与手动 `/compact` 相同通道、压缩腿异步化不再死锁会话。
+
+### v1.0.0——英文优先的稳定版
+
+- 协议资产、运行期消息、代码注释与文档全面英文化；横幅锚点更名为 `[ROUTES]` / `[WATERMARK]` / `[WATERMARK:SESSION]` / `[LIMITS]` / `[UPDATE]`。
+- TUI 侧栏排版配色打磨：8 列对齐的配额网格、渐变水位条叠于暗色轨道、400 级亮色系、observe-only 折叠标签。
+
+### v0.2.0——实时能力感知编排
 
 v0.2.0 将 switchman 从固定多供应商调度器升级为实时、能力感知的编排层。
 
@@ -175,6 +202,9 @@ v0.2.0 将 switchman 从固定多供应商调度器升级为实时、能力感�
 | `banner.enabled` | `true` | 四行横幅注入开关 |
 | `rules.enabled / delegationFloor` | `true / 3000` | 调度员规程（AGENTS.md）随包注入开关；`delegationFloor`＝自做底价（token），注入规程时插值 |
 | `context.gates / softTokens / hardTokens / forceTokens / readBudgetTokens` | `true / 60000 / 80000 / 100000 / 1500` | **会话上下文水位实测＋自读预算闸**：插件从消息 token usage 实测主会话上下文并每轮注入 `[水位·会话]` 行（附每轮增速与距硬水位剩余轮数估算）。自读从第 1 轮起按 `readBudgetTokens` 计费：预估超限的读取自动追加 `limit` 有界放行，或以精确的有界重试参数拒绝；每轮另有 2× 上限阻断连续读取，无法预估的工具输出事后记账。验证/交付类 bash（git、测试/lint、构建）全水位放行；无界历史翻查（如不带 `-n` 的 `git log -p`）任何水位一律拦截并附收窄提示；超硬水位读取类关闭（收尾模式）；超压水位横幅强制立即压缩。壳子代理会话豁免 |
+| `dispatch.autoRedirect` | `true` | 派发被拒时在途改写 `subagent_type` 到拒绝消息已点名的链首候选（单跳、同快照守卫复检）——首次派发直接落在最优可用壳上，不再烧「拒绝-重试」轮次；`false` 恢复拒绝-重试 |
+| `relay.image` | `true` | 无视觉主模型：用户附带图片自动落盘并替换为路径文本＋阅读指引（委托 vision 壳或交给 MCP 视觉工具）；本地路径 / http URL 原样透传；全程 fail-open |
+| `lang.enabled / ask / candidates` | `true / true / 出厂清单` | 项目级语言偏好：每轮 `[LANG]` 铁律行（会话 / 注释与提交 / 文档），首次使用每会话询问一次，落盘 `.switchman/settings.json`（AGENTS.md 标记为只读回退），`/switchman-lang` 重新询问 |
 | `builtinAgents.mode` | `deny` | 内置 explore/general 与壳路由抢任务且此前放行；`deny`＝拦截附 economy/main 改派建议，`allow`＝恢复放行 |
 | `injection.mode` | `chain` | 壳注入面：`chain`＝六档链精选∪favorites/可见集（task 工具描述每会话省约 6-10k token，链外模型点名走 denyUninjected 提示）；`all`＝可用全集（旧行为）。启动级，重启生效 |
 | `lanes` | 内置六档链 | 自定义各档壳链（覆盖内置偏好序）；键=economy/mechanical/main/hard/vision/review |

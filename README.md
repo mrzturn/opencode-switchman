@@ -16,7 +16,7 @@ If you hold multiple model subscriptions (GitHub Copilot premium credits, Zhipu 
 
 ### Prerequisites
 
-- [opencode](https://opencode.ai) (desktop app or CLI)
+- [opencode](https://opencode.ai) — **the CLI/TUI is the strongly recommended interface** (the plugin's operational surface — sidebar status panel, `/poolConfig` / `/modelRank` dialogs, live banners — is richest there): configure everything in the TUI first, then optionally switch to the desktop app for a GUI experience; both share the same config and state
 - Any opencode provider works out of the box; the following three additionally get quota control (any combination, all optional):
   - **GitHub Copilot**: just sign in via GitHub in opencode (`/connect`)
   - **GLM**: custom provider (`zhipuai-coding-plan`, baseURL `https://open.bigmodel.cn/api/coding/paas/v4` + apiKey)
@@ -96,12 +96,15 @@ The plugin loads the repo's `dist` bundle directly; after `git pull`, re-run `bu
 
 ### Verify the installation
 
-After starting opencode, every system prompt of the primary model carries a live four-line banner (the dispatcher's ground truth):
+After starting opencode, every system prompt of the primary model carries a live banner block (the dispatcher's ground truth):
 
 ```
-[ROUTES] economy: glm-53-low→claude5-low→gem31pro-low | mechanical: claude5-medium→gem31pro-medium→gem37f-medium | main: glm-53-high→ds-v4p-high→claude5-high | ...
-[WATERMARK] GLM 5h 20% weekly 7% (refreshed 09-04 10:00) | Copilot unlimited credits, used 3885 (since 2026-09-01) | advice: ...
-[LIMITS] down: none | retired: 0 models | reviewer must be hetero-family (producer family ≠ shell family) | api-billed & unknown models sink by coefficient (billing=subscription takes priority)
+[ROUTES] economy: glm-53f-low→glm-47-off→glm-5t-off | mechanical: glm-53f-high→glm-47-off | main: glm-53f-high | hard: glm-53-high | vision: glm-53f-high | review: glm-53-high-ro
+[WATERMARK] GLM 5h 10% weekly 38% (refreshed 09-11 10:00) | Copilot credits 0% left (refreshes 2026-10-01) | DeepSeek balance exhausted | advice: ...
+[WATERMARK:SESSION] measured session context ~37k (soft 60k/hard 80k/force 100k) | growth ~5k/turn, ~8 turns to hard | self-read this turn 178/3000
+[LIMITS] down: none | reviewer prefers cross-family (same-family self-review = DOWNGRADED, allowed only when no cross-family reviewer exists) | api-billed & unknown models sink by coefficient (explicit billing=subscription wins) | matrix: cli·watch/ok | manual capability rank: 9 models, task-pool selection: 6 pools active (/modelRank /poolConfig to adjust)
+[TODO] 0/6 done · in_progress: draft the README section — keep todowrite current (update as each item starts/finishes)
+[LANG] conversation=en comments=en docs=en (source: project settings) — reply and reason in the conversation language; code comments, commit messages, and generated docs follow their own settings
 [UPDATE] new version available: /switchman-update or /switchman-ignore
 ```
 
@@ -109,7 +112,9 @@ The log also shows `[opencode-switchman] injected N model shells (agents)` — N
 
 ### Sidebar status panel (TUI plugin, optional)
 
-v0.2.0 adds a live `switchman` panel at the bottom of the OpenCode TUI sidebar. It turns routing state into an at-a-glance operational view: observed provider water levels with peak-period and gradient warnings, the best current candidate for each of the six lanes, restart-required badges for newly detected models/providers, and the most recent status notice. The panel polls local state every 2 seconds; non-banner notices no longer flood `stderr` or cover the input box. It is a separate TUI Slot plugin (`src/tui.tsx`, exported at `opencode-switchman/tui`) and is independent of the server-side hook plugin above.
+v0.2.0 adds a live `switchman` panel at the bottom of the OpenCode TUI sidebar; v1.0.0 polishes it into a fully aligned, English-localized operational view. Observed provider water levels render as gradient bars on a globally aligned 8-column grid (labels, bars, and reset times line up across provider blocks; any non-zero quota paints at least one filled cell), with peak-period warnings, per-provider observe-only tags (collapsed when every provider observes), the current head candidate for each of the six lanes, restart-required badges for newly detected models/providers, and the most recent status notice. The panel polls local state every 2 seconds; non-banner notices never flood `stderr` or cover the input box. It is a separate TUI Slot plugin (`src/tui.tsx`, exported at `opencode-switchman/tui`) and is independent of the server-side hook plugin above.
+
+> **Recommended workflow**: set the plugin up in the TUI first — pick model favorites, tune `/poolConfig` and `/modelRank`, and watch the sidebar while it routes. The desktop app is an optional alternative afterwards (it shares the same config and state); the TUI is simply where the operational surface — dialogs, sidebar, banners — is richest.
 
 ![Switchman sidebar: quotas, peak periods, lane candidates, and status notice](docs/assets/tui-sidebar-status.png)
 
@@ -134,12 +139,18 @@ Two manual commands let your configuration beat system defaults. All state is pe
 - **Semantics**: assignment = making each task pool's candidate models **deliberately different** (e.g. lightweight models only for economy, heavy thinkers only for hard) — a pool's manual list **overrides the system default candidate set**, and models inside it are still recommended by capability level; **the same model may join multiple pools**; pools without a configured (or with an empty) list keep the system default. "Clear config" restores the system default for that pool.
 - **Config file**: `~/.config/opencode/opencode-switchman/pool-config.json` (key = task pool name, value = array of participating modelIds).
 
+![/poolConfig step 1 — pick a task pool, each lane showing how many models participate](docs/assets/tui-pool-config-pools.png)
+
+![/poolConfig step 2 — toggle models per pool with capability tiers and select-all / clear shortcuts](docs/assets/tui-pool-config-models.png)
+
 ### /modelRank — model capability ranking (manual dialog; conversational: /modelRank-chat)
 
 - **TUI (/modelRank)**: a dialog listing models by effective capability; select a model to pin it to top, move it up/down, or remove it from the ranking.
 - **Non-TUI / in-session (/modelRank-chat)**: a conversational flow — it injects the current ranking and a reference ordering; reply "pin glm-5.3 to top" or "clear the ranking" and the agent translates that into `rank` CLI calls to persist.
 - **Semantics**: manual ranking **takes priority over the base capability score** (realtime index → bundled snapshot → curated table all yield) — matched models (including their prefix variants) get a rank-position score and S/A/B/C tier: rankings with ≤4 entries map positions to S/A/B/C in order; ≥5 entries use quantile buckets (top 20% S / next 20% A / next 20% B / rest C, same semantics as the OpenRouter rank source); within a tier, the linear rank position breaks ties. Unranked models are unaffected. The ranking feeds every decision surface: lane chains, effort affinity, capability-level gates, and deny hints.
 - **Config file**: `~/.config/opencode/opencode-switchman/capability-rank.json` (`models` array order = strongest first).
+
+![/modelRank — capability ranking with manual-rank vs base-score provenance](docs/assets/tui-model-rank.png)
 
 ### /expert — expert consultation (conversational)
 
@@ -149,7 +160,23 @@ Two manual commands let your configuration beat system defaults. All state is pe
 
 Both commands can also be driven directly via the bundled CLI: `node <pkg>/dist/switchman-config.js pool list|add|remove|set|clear` (pool name = economy/mechanical/main/hard/vision/review) / `rank list|set|add|remove|clear` (numbers refer to the `list` output). The `[LIMITS]` banner line reports active overrides ("manual rank: N models / task-pool assignment: M pools").
 
-## What's New in v0.2.0
+## What's New
+
+### v1.x — deterministic context governance & richer overrides (post-1.0.0)
+
+- **Always-on per-call read budget (core routing algorithm update)**: the old per-tool one-time nudge (a coupon models rationally burned via retry/probing) is replaced by a deterministic budget gate. Every read is costed against `context.readBudgetTokens` (default 1500, clamped 200..20000) from turn 1 — over-budget reads are auto-bounded (a `limit` is appended in place) or denied with exact bounded-retry params; a per-turn 2× self-read cap (resetting on user turns) stops read chains; un-estimable tool outputs are charged post-hoc. Watermarks keep lifecycle duties only (soft = advice, hard = wrap-up deny, force = auto-handover). Delivery/verification bash (git, test/lint, build) passes at every tier; unbounded archaeology (`git log -p` without `-n`) is denied at every tier with a scoping hint.
+- **Per-project language preference**: a per-turn `[LANG]` iron-rule line pins the conversation / comments & commits / docs languages, captured by a first-use ask (once per session), persisted per project, adjustable via `/switchman-lang`.
+- **Todo discipline**: protocol §0.7 plus a per-turn `[TODO]` status line keeps the main session's todo list real-time current (delegated-shell results included).
+- **/expert expert consultation** and **bundled agent skills**: dispatch requirements to the strongest cross-family expert; opinionated skills sync into the opencode global skills dir at startup (add/overwrite-only, marker-gated cleanup, fail-open).
+- **Review-lane last resort**: with no cross-family read-only shell alive, the chain keeps the best ro shells and same-family review is allowed with a `DOWNGRADED` note instead of an empty chain.
+- **Auto-handover robustness**: numbered `[backup]` sessions (survives restarts, never recycles numbers), compaction routed through the same channel as the manual `/compact`, and a detached compaction leg that can no longer deadlock the session.
+
+### v1.0.0 — English-first stable release
+
+- English localization across protocol assets, runtime messages, code comments, and docs; banner anchors renamed to `[ROUTES]` / `[WATERMARK]` / `[WATERMARK:SESSION]` / `[LIMITS]` / `[UPDATE]`.
+- TUI sidebar layout/color polish: 8-column aligned quota grid, gradient watermark fills over muted tracks, brightened 400-level lane/model palette, collapsed observe-only tags.
+
+### v0.2.0 — live, capability-aware orchestration
 
 v0.2.0 evolves switchman from a fixed multi-provider dispatcher into a live, capability-aware orchestration layer.
 
@@ -177,6 +204,9 @@ See the complete, user-facing release notes and migration guide in [CHANGELOG.md
 | `context.gates / softTokens / hardTokens / forceTokens / readBudgetTokens / autoHandover` | `true / 60000 / 80000 / 100000 / 1500 / true` | **Measured session watermark + self-read budget**: the plugin measures each main session's context from message token usage and injects a live `[WATERMARK:SESSION]` line every turn (with per-turn growth and remaining-turns-to-hard estimates). Every self-read is costed against `readBudgetTokens` from turn 1: over-budget reads are auto-bounded (a `limit` is auto-appended) or denied with exact bounded-retry params, and a per-turn 2× cap stops read chains; un-estimable tool outputs are charged post-hoc. Verification/delivery bash (git, test/lint, build) always passes; unbounded history dumps (`git log -p` without `-n`) are always denied with a scoping hint; past `hardTokens` read-class closes (wrap-up mode); past `forceTokens` the banner demands compaction and, with `autoHandover: true` (default), `/handover` fires automatically: full fork backup + compaction, the running task continues on the summarized context. Shell subagent sessions are exempt |
 | `builtinAgents.mode` | `deny` | Built-in `explore`/`general` subagents compete with shell routing and were previously fail-open; `deny` blocks them with an economy/main re-dispatch hint (the task-tool description from opencode core actively advertises them), `allow` restores the old pass-through |
 | `injection.mode` | `chain` | Shell injection face: `chain` = six lane chains ∪ favorites/visible models (saves ~6-10k tokens of task-tool description per session; naming an off-chain model gets a `denyUninjected` hint to enable it in model management), `all` = every usable model (old behavior). Startup-level: restart to apply |
+| `dispatch.autoRedirect` | `true` | On a dispatch deny, rewrite `subagent_type` in-flight to the chain-head candidate the deny message already names (single hop, same-snapshot guard re-check) — the first dispatch lands on the best available shell instead of burning deny-and-retry rounds; `false` restores deny-and-retry |
+| `relay.image` | `true` | Vision-less main models: user-attached images are decoded to disk and replaced with path text + reading guidance (delegate a vision-lane shell or an MCP vision tool); local paths / http URLs pass through; fully fail-open |
+| `lang.enabled / ask / candidates` | `true / true / factory list` | Per-project language preference: per-turn `[LANG]` iron-rule line (conversation / comments & commits / docs), first-use ask once per session, persisted to `.switchman/settings.json` (AGENTS.md marker as read-only fallback), `/switchman-lang` re-asks |
 | `lanes` | built-in chains | Custom per-lane shell chains (override built-in preference order); keys = economy/mechanical/main/hard/vision/review |
 | `workspace.enabled / dirname` | `true / ".switchman"` | Artifact workspace: per main session, a `<project-root>/.switchman/<yyyy-mm-dd>/<sessionId>-<title>/` folder whose path is injected into the dispatcher protocol every turn; holds `SESSION.md` / `dispatches.jsonl` / `media/`. Disabled = no folders created and the protocol section is neutralized |
 
