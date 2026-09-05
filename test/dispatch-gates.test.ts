@@ -44,6 +44,15 @@ describe("context-watch: read-gate decisions", () => {
     expect(readGateDecision({ tool: "edit", level: "soft", alreadyNudged: false })).toBe("allow")
     expect(readGateDecision({ tool: "webfetch", level: "soft", alreadyNudged: false })).toBe("allow")
   })
+  // [2026-09-05]-[git UX split: delivery git + test/lint exempt at EVERY tier (the soft nudge used to land on the first
+  //  git call of the wrap-up — git ops cluster exactly when context is fullest); unbounded archaeology git = scan-class]
+  test("soft: delivery git and verification commands skip the nudge entirely; archaeology git still nudged once", () => {
+    expect(readGateDecision({ tool: "bash", level: "soft", alreadyNudged: false, bashCommand: "git add -A && git commit -m x && git push" })).toBe("allow")
+    expect(readGateDecision({ tool: "bash", level: "soft", alreadyNudged: false, bashCommand: "git checkout -- src/foo.ts" })).toBe("allow")
+    expect(readGateDecision({ tool: "bash", level: "soft", alreadyNudged: false, bashCommand: "bun test" })).toBe("allow")
+    expect(readGateDecision({ tool: "bash", level: "soft", alreadyNudged: false, bashCommand: "git log -p" })).toBe("nudge")
+    expect(readGateDecision({ tool: "bash", level: "soft", alreadyNudged: true, bashCommand: "git log -p" })).toBe("allow")
+  })
   test("hard: read-class always denied; verification bash allowed, non-verification denied", () => {
     expect(readGateDecision({ tool: "read", level: "hard", alreadyNudged: true })).toBe("deny")
     expect(readGateDecision({ tool: "glob", level: "hard", alreadyNudged: false })).toBe("deny")
@@ -53,6 +62,18 @@ describe("context-watch: read-gate decisions", () => {
     expect(readGateDecision({ tool: "bash", level: "hard", bashCommand: "cat src/index.ts" })).toBe("deny")
     expect(readGateDecision({ tool: "bash", level: "hard" })).toBe("deny") // no command text → fail-closed
   })
+  test("hard: archaeology git denied unless scoped (context-bomb guard), scoped forms and pipes pass", () => {
+    expect(readGateDecision({ tool: "bash", level: "hard", bashCommand: "git log -p" })).toBe("deny")
+    expect(readGateDecision({ tool: "bash", level: "hard", bashCommand: "git log" })).toBe("deny")
+    expect(readGateDecision({ tool: "bash", level: "hard", bashCommand: "git diff main..dev" })).toBe("deny")
+    expect(readGateDecision({ tool: "bash", level: "hard", bashCommand: "git blame src/foo.ts" })).toBe("deny")
+    expect(readGateDecision({ tool: "bash", level: "hard", bashCommand: "git log -n 20 --oneline" })).toBe("allow")
+    expect(readGateDecision({ tool: "bash", level: "hard", bashCommand: "git log -p -3" })).toBe("allow")
+    expect(readGateDecision({ tool: "bash", level: "hard", bashCommand: "git diff main..dev --stat" })).toBe("allow")
+    expect(readGateDecision({ tool: "bash", level: "hard", bashCommand: "git diff HEAD~1" })).toBe("allow")
+    expect(readGateDecision({ tool: "bash", level: "hard", bashCommand: "git blame -L 1,30 src/foo.ts" })).toBe("allow")
+    expect(readGateDecision({ tool: "bash", level: "hard", bashCommand: "git log -p | head -100" })).toBe("allow")
+  })
   test("force matches hard (forced-compaction instructions are injected separately via the banner)", () => {
     expect(readGateDecision({ tool: "read", level: "force", alreadyNudged: true })).toBe("deny")
     expect(readGateDecision({ tool: "bash", level: "force", bashCommand: "bun test" })).toBe("allow")
@@ -61,9 +82,14 @@ describe("context-watch: read-gate decisions", () => {
     for (const t of ["read", "glob", "grep", "list"]) expect(READ_CLASS_TOOLS.has(t)).toBe(true)
     expect(READ_CLASS_TOOLS.has("bash")).toBe(false)
   })
-  test("isVerificationBash: git family/test/lint/build whitelist (wrap-up delivery not blocked)", () => {
+  test("isVerificationBash: delivery git/test/lint/build whitelist (wrap-up delivery not blocked); archaeology git excluded", () => {
     expect(isVerificationBash("git diff HEAD~1")).toBe(true)
     expect(isVerificationBash("git add -A && git commit -m x && git push")).toBe(true)
+    expect(isVerificationBash("git reset --hard HEAD~1")).toBe(true)
+    expect(isVerificationBash("git log -n 20")).toBe(true)
+    expect(isVerificationBash("git blame -L 5,9 src/foo.ts")).toBe(true)
+    expect(isVerificationBash("git log -p")).toBe(false)
+    expect(isVerificationBash("git diff v1.0..v2.0")).toBe(false)
     expect(isVerificationBash("bun run build")).toBe(true)
     expect(isVerificationBash("npm publish")).toBe(true)
     expect(isVerificationBash("rg -n foo src/")).toBe(false)

@@ -25,7 +25,7 @@ import {
   computeLane, billingWindow, billingWindowForConfig, poolStates, routingAdvice,
   glmExhausted, copilotExhausted, deepseekExhausted, firstCandidate, laneOfShell,
 } from "./lane"
-import { READ_CLASS_TOOLS, estimateContextTokens, thresholdsOf, watermarkLevel, readGateDecision } from "./context-watch"
+import { READ_CLASS_TOOLS, estimateContextTokens, thresholdsOf, watermarkLevel, readGateDecision, isArchaeologyBash } from "./context-watch"
 import { backupSession, compactSession, v1HandoverPort, type HandoverResult } from "./handover-core"
 import { logDecision, BILLING_API_BOOST } from "./scoring"
 import type { WaterFactor, DecisionRecord } from "./scoring"
@@ -174,8 +174,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       const level = watermarkLevel(wm.tokens, t)
       const base = `[WATERMARK:SESSION] measured session context ~${kk(wm.tokens)} (soft ${kk(t.soft)}/hard ${kk(t.hard)}/force ${kk(t.force)})`
       if (level === "ok") return base
-      if (level === "soft") return `${base}—soft watermark exceeded: new reads/scans must be delegated to an economy shell (scouter/clerk); self-reads will be intercepted with a nudge`
-      if (level === "hard") return `${base}—hard watermark exceeded: read/glob/grep/list self-reads denied, bash allows verification commands only; delegate all scans to economy and wrap up`
+      if (level === "soft") return `${base}—soft watermark exceeded: new reads/scans must be delegated to an economy shell (scouter/clerk); self-reads get a one-time nudge (delivery git and test/lint are exempt)`
+      if (level === "hard") return `${base}—hard watermark exceeded: read/glob/grep/list self-reads denied; bash runs verification only (state-changing git always passes; scope git log/diff/blame with -n/--stat/-L or delegate); wrap up`
       // [2026-09-04]-[force tier copy split: with auto-handover on, stand by for automatic compaction (banner reports facts only, saves tokens);
       //  with it off, keep the legacy directive (relying on manual /handover)]
       if (options.context?.autoHandover !== false) return `${base}—[MANDATORY] force-compaction watermark exceeded: auto-handover will fully back up and compact this session (the task continues automatically); stand by — no new reads or delegations`
@@ -751,20 +751,28 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       const level = watermarkLevel(wm.tokens, t)
       if (level === "ok") return
       const nudged = readNudged.get(sid) ?? new Set<string>()
+      const cmd = input.tool === "bash" ? String(output.args?.command ?? "") : undefined
       const action = readGateDecision({
         tool: input.tool, level, alreadyNudged: nudged.has(input.tool),
-        bashCommand: input.tool === "bash" ? String(output.args?.command ?? "") : undefined,
+        bashCommand: cmd,
       })
       if (action === "allow") return
       if (action === "nudge") { nudged.add(input.tool); readNudged.set(sid, nudged) }
       const { ctx } = currentContext()
       const hint = laneHeadCandidate("economy", ctx)
       const head = `[opencode-switchman] measured session context ~${kk(wm.tokens)} exceeds the ${level === "force" ? "force-compaction" : level === "hard" ? "hard" : "soft"} watermark (soft ${kk(t.soft)}/hard ${kk(t.hard)}/force ${kk(t.force)})`
+      // [2026-09-05]-[git UX split copy: delivery git passes every tier silently; unbounded archaeology git gets a
+      //  scoping hint (-n/--stat/-L) instead of the generic "delegate it" wording, so the wrap-up can proceed in-place]
+      const archaeology = cmd !== undefined && cmd !== "" && isArchaeologyBash(cmd)
       let msg: string
       if (level === "soft") {
-        msg = `${head}: ${input.tool} self-read intercepted once (this tool is allowed afterwards in this session) — delegate new reads/scans to an economy shell${hint ? ` (e.g. ${hint}, ROUTE_META role=scouter)` : ""}; conclusions + file:line summary only`
+        msg = archaeology
+          ? `${head}: bash self-read intercepted once (this tool is allowed afterwards in this session) — unbounded git log/diff/blame is scanning: rerun scoped (-n N / --oneline / --stat / -L a,b) or delegate to an economy shell${hint ? ` (e.g. ${hint}, ROUTE_META role=scouter)` : ""}; conclusions + file:line summary only`
+          : `${head}: ${input.tool} self-read intercepted once (this tool is allowed afterwards in this session) — delegate new reads/scans to an economy shell${hint ? ` (e.g. ${hint}, ROUTE_META role=scouter)` : ""}; conclusions + file:line summary only`
       } else if (level === "hard") {
-        msg = `${head}: ${input.tool} self-read denied — reads/scans must be delegated to an economy shell${hint ? ` (e.g. ${hint})` : ""}; verification commands (git/test/lint) still run; please wrap up`
+        msg = archaeology
+          ? `${head}: unbounded git archaeology denied — rerun scoped (e.g., -n 20 / --oneline / --stat / -L a,b) or delegate to an economy shell${hint ? ` (e.g. ${hint})` : ""}; state-changing git and test/lint/build still run; please wrap up`
+          : `${head}: ${input.tool} self-read denied — reads/scans must be delegated to an economy shell${hint ? ` (e.g. ${hint})` : ""}; state-changing git (add/commit/push/checkout) and test/lint/build still run; please wrap up`
       } else {
         // [2026-09-04]-[force tier deny copy: with auto-handover on, tell the model to stand by (don't fight the automatic compaction)]
         msg = options.context?.autoHandover !== false

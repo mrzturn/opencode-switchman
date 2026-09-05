@@ -281,9 +281,11 @@ export interface MatrixOptions {
 export interface ContextOptions {
   /** Watermark gate master switch (default true); when off, banner hints only, no interception */
   gates?: boolean
-  /** Soft watermark (tokens): first interception of a read-class tool reminds to redirect to economy (one-time), then lets through */
+  /** [2026-09-05]-[Soft watermark (tokens): first interception of a read-class tool reminds to redirect to economy
+   *  (one-time), then lets through; delivery git + test/lint/build verification bash are exempt at every tier] */
   softTokens?: number
-  /** Hard watermark (tokens): read/glob/grep/list are always denied; bash only lets through verification-type commands */
+  /** Hard watermark (tokens): read/glob/grep/list are always denied; bash lets through verification commands only
+   *  (delivery git always; unbounded git log/diff/blame must be scoped -n/--stat/-L or delegated) */
   hardTokens?: number
   /** Force-compaction watermark (tokens): banner injects a forced-compaction instruction; read-class tools are intercepted like the hard watermark */
   forceTokens?: number

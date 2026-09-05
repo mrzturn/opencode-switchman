@@ -7,6 +7,8 @@
 //  {{DELEGATION_FLOOR}}/{{SOFT}}/{{HARD}}/{{FORCE}} are interpolated by the index.ts transform per user jsonc (defaults
 //  3k/60k/80k/100k); {{WORKSPACE_DIR}} = the per-session artifact workspace relative path (or a neutralized section
 //  when the workspace is disabled)]
+// [2026-09-05]-[git UX split: delivery git exempt at every watermark tier and never delegated; unbounded archaeology git
+//  (log -p / range diff / blame without -L) reclassified as scanning — scope or delegate (kept in sync with context-watch.ts)]
 export const AGENTS_MD = `# Global Protocol (master dispatcher rules; opencode-switchman subagent rules are embedded in the shell definitions)
 
 > This protocol ships with the opencode-switchman plugin and is injected into the system prompt automatically by default (bundled with the package, updated with versions); scope: opencode with the opencode-switchman plugin installed.
@@ -58,7 +60,7 @@ Task artifacts (plans, implementation progress, process-control notes, design do
 - Logic changes must be verified once; changes >20 lines, multiple call sites, or long output → hand to tester; >300 lines or core/security/data logic → reviewer re-review (review chain, cross model family).
 
 ## 5. Watermark (hard-enforced from plugin measurement, do not self-estimate)
-This session's context is measured by the plugin and a \`[WATERMARK:SESSION]\` line is injected each turn; past the line, read-class tools (read/glob/grep/bash) get a warning first, then a hard block (deny with an economy redirect suggestion attached) — do not try to bypass it. Rules: from {{SOFT}}, all scanning/reading is delegated to economy; from {{HARD}}, stop new reads and only wrap up (git/test/lint verification commands may still run); at {{FORCE}}, an automatic /handover is triggered (full backup + compaction of this session, the task continues automatically, wait and do not bypass; a manual /handover also works). Thresholds adjustable via jsonc \`context.*\`.
+This session's context is measured by the plugin and a \`[WATERMARK:SESSION]\` line is injected each turn; past the line, read-class tools (read/glob/grep/bash) get a warning first, then a hard block (deny with an economy redirect suggestion attached) — do not try to bypass it. Rules: from {{SOFT}}, all scanning/reading is delegated to economy; from {{HARD}}, stop new reads and only wrap up; at {{FORCE}}, an automatic /handover is triggered (full backup + compaction of this session, the task continues automatically, wait and do not bypass; a manual /handover also works). Git discipline: state-changing git (add/commit/push/checkout/reset/revert/…) is delivery — run it yourself in the main session at any watermark and never delegate it (the gate always passes it; committing must not depend on shell availability); unbounded git archaeology (log with -p, range diff, blame without -L) counts as scanning — scope it (-n N / --stat / -L) or delegate to economy. Test/lint/build verification commands likewise always pass. Thresholds adjustable via jsonc \`context.*\`.
 
 ## 6. Major-Action Reporting and the Expert Panel
 - [MANDATORY] Before a major action (self-reading >3 files or a single file >1000 lines, self-editing >100 lines or across files, commands expected to produce large output, any delegation), declare in one sentence: \`[DISPATCH] self: <one-line reason>\` / \`[DISPATCH] delegate <shell-name>: <one-line reason>\`; acting without declaration is forbidden.

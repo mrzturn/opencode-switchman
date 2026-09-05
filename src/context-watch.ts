@@ -37,13 +37,63 @@ export function watermarkLevel(tokens: number, t: ContextThresholds): WatermarkL
   return "ok"
 }
 
-/** Verification/delivery commands pass through (tiny output, no context injection): the whole git family
- *  (including add/commit/push wrap-up), test/lint/typecheck, build/pack — wrap-up verification and delivery still work at hard watermark */
+/** Verification/delivery commands pass through (tiny output, no context injection): delivery git (state-changing +
+ *  bounded-output reads, including add/commit/push wrap-up), test/lint/typecheck, build/pack — wrap-up verification
+ *  and delivery still work at every watermark. Archaeology git is excluded here and handled as scanning below. */
 export function isVerificationBash(command: string): boolean {
   const c = command.trim()
-  return /^git\s+[a-z]/.test(c)
-    || /\b(bun\s+(test|run\s+(test|lint|typecheck|build)|build|install)|npm\s+(test|run\s+(test|lint|typecheck|build)|install|publish)|yarn\s+(test|lint|build)|pnpm\s+(test|run\s+(test|lint|typecheck|build)|build))\b/.test(c)
+  const g = gitClass(c)
+  if (g !== "none") return g === "delivery"
+  return /\b(bun\s+(test|run\s+(test|lint|typecheck|build)|build|install)|npm\s+(test|run\s+(test|lint|typecheck|build)|install|publish)|yarn\s+(test|lint|build)|pnpm\s+(test|run\s+(test|lint|typecheck|build)|build))\b/.test(c)
     || /\b(tsc|eslint|biome|prettier|ruff|vitest|jest|pytest|cargo\s+(test|build)|go\s+(test|build))\b/.test(c)
+}
+
+// [2026-09-05]-[git UX split: delivery git (state-changing + bounded output) is exempt from the read gate at ALL tiers —
+//  the soft-tier one-time nudge used to land on the first git call of the wrap-up (git ops cluster exactly when context
+//  is fullest); unbounded archaeology git (log -p / range diff / blame without -L) is reclassified as scanning — nudged
+//  at soft, denied at hard with a scoping hint instead of the generic bash deny]
+export type GitClass = "delivery" | "archaeology" | "none"
+
+/** Git subcommands whose unbounded forms can dump history-sized output */
+const GIT_ARCHAEOLOGY_SUBS: ReadonlySet<string> = new Set(["log", "shortlog", "diff", "blame", "annotate"])
+
+/** Classify the first `git <sub>` occurrence: delivery (passes the gate at any watermark) / archaeology (scan-class,
+ *  must be scoped or delegated) / none (not a git command; global git flags like `-C`/`--no-pager` are not stripped —
+ *  rare in agent usage, they fall back to generic bash handling) */
+export function gitClass(command: string): GitClass {
+  const c = command.trim()
+  const m = c.match(/(?:^|[\s;&|])git\s+([a-z]+)/)
+  if (!m) return "none"
+  const sub = m[1]
+  if (!GIT_ARCHAEOLOGY_SUBS.has(sub)) return "delivery"
+  const rest = c.slice((m.index ?? 0) + m[0].length)
+  const hasMaxCount = /(^|\s)-\d+(\s|$)/.test(rest) || /(^|\s)-n\s*\d+/.test(rest) || /--max-count(=|\s+)\d+/.test(rest)
+  const hasSummary = /(^|\s)(--oneline|--stat|--shortstat|--name-only|--name-status)(\s|$|=)/.test(rest) || /(^|\s)(-s|--no-patch)(\s|$)/.test(rest)
+  const hasPatch = /(^|\s)(-p|-u|--patch)(\s|$)/.test(rest)
+  const hasLineRange = /(^|\s)-L\s*\d/.test(rest)
+  if (/\|\s*(head|tail|wc)\b/.test(c)) return "delivery"
+  switch (sub) {
+    case "log":
+    case "shortlog": {
+      // full patches always need -n; a bare log passes only in compact form (--oneline/--stat) or bounded by -n
+      const unbounded = hasPatch ? !hasMaxCount : !(hasMaxCount || hasSummary)
+      return unbounded ? "archaeology" : "delivery"
+    }
+    case "diff": {
+      // range diffs (a..b) dump history-sized patches; working-tree/staged/single-ref diffs are wrap-up reads
+      return !hasSummary && /\S\.\.\.?\S/.test(rest) ? "archaeology" : "delivery"
+    }
+    default: {
+      // blame/annotate: whole-file blame is one line per source line; only -L bounds it
+      return !hasLineRange ? "archaeology" : "delivery"
+    }
+  }
+}
+
+/** Archaeology git = unbounded history dumps (log -p without -n, range diff without --stat, blame without -L):
+ *  scan-class, nudged at soft / denied at hard with a scoping hint (used by index.ts for gate copy) */
+export function isArchaeologyBash(command: string): boolean {
+  return gitClass(command.trim()) === "archaeology"
 }
 
 export interface ReadGateInput {
@@ -57,16 +107,18 @@ export interface ReadGateInput {
 
 export type ReadGateAction = "allow" | "nudge" | "deny"
 
-/** Read-gate decision: soft = one-time nudge per tool (deny with a redirect suggestion, allowed afterwards); hard/force = read-class
- *  always deny, bash lets only verification commands through; non-read tools always allow. nudge/deny copy is assembled by index.ts (with the economy candidate attached). */
+/** Read-gate decision: verification bash (delivery git + test/lint/build) passes at EVERY tier (delivery must not
+ *  stall); soft = one-time nudge per tool for the rest (deny with a redirect suggestion, allowed afterwards);
+ *  hard/force = read-class and non-verification bash always deny. nudge/deny copy is assembled by index.ts (with
+ *  the economy candidate + archaeology scoping hint attached). */
 export function readGateDecision(input: ReadGateInput): ReadGateAction {
   const { tool, level, bashCommand } = input
   if (level === "ok") return "allow"
   const isBash = tool === "bash"
   const isReadClass = READ_CLASS_TOOLS.has(tool)
   if (!isBash && !isReadClass) return "allow"
+  if (isBash && bashCommand !== undefined && isVerificationBash(bashCommand)) return "allow"
   if (level === "soft") return input.alreadyNudged ? "allow" : "nudge"
   // hard / force
-  if (isBash) return bashCommand !== undefined && isVerificationBash(bashCommand) ? "allow" : "deny"
   return "deny"
 }
