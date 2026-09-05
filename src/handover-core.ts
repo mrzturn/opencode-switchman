@@ -7,17 +7,31 @@
 //     tool.execute.after was blocking while awaiting the summarize response → self-deadlock broken only by a user interrupt
 //     (7m25s and 1m40s hangs, both ended the instant the user intervened);
 //  2) ineffective: even after the queued compaction eventually ran, the next build call still saw ~93k input (old messages
-//     not filtered) → the measured watermark stayed at force and re-triggered forever. The manual /compact (session command
-//     channel) shrinks the context for real. Compaction now goes through session.command {command:"compact"} — the same
-//     channel as the manual /compact — and the auto path fires it WITHOUT awaiting (src/index.ts). The backup leg (fork +
-//     [backup] tag) stays awaited: it is DB-local and completed within the trigger second in both incident runs]
+//     not filtered) → the measured watermark stayed at force and re-triggered forever.
+//  Interim fix (session.command {command:"compact"}) was WRONG: the server command registry holds only init/review +
+//  markdown/MCP/skill commands — no "compact" — so every auto-handover died with `Command not found: "compact"` (live
+//  incident 2026-09-05, 109k context; verified against opencode v1.18.9 packages/opencode/src/command/index.ts). The
+//  manual TUI /compact actually calls session.summarize (packages/tui/src/routes/session/index.tsx @ v1.18.9), whose
+//  handler queues the compaction part (compactSvc.create) and drains the session loop (promptSvc.loop) — filterCompacted
+//  then truncates pre-compaction history on every later build. Both adapters now call session.summarize; the summarize
+//  HTTP response returns only after the whole compaction loop finishes (handler awaits the runner deferred), so the auto
+//  path still fires it WITHOUT awaiting (src/index.ts). Backup leg (fork + [backup] tag) stays awaited: DB-local, completed
+//  within the trigger second in all incident runs]
+/** Model face required by the v1 summarize payload (server SummarizePayload: providerID+modelID mandatory, auto optional) */
+export interface CompactionModel {
+  providerID: string
+  modelID: string
+}
+
 export interface HandoverPort {
   /** Full fork: returns the new session { id, title }; null on failure */
   forkFull(sessionID: string, directory: string): Promise<{ id: string; title: string | undefined } | null>
   /** Retitle ([backup] tag; fail-open on failure, does not block compaction) */
   setTitle(sessionID: string, directory: string, title: string): Promise<boolean>
-  /** Queue real compaction via the host session command channel (same as the manual /compact); true when accepted */
-  compact(sessionID: string, directory: string): Promise<boolean>
+  /** Queue real compaction via the session.summarize channel (the TUI manual /compact route); true when accepted.
+   *  model: only needed by v1-style adapters (v1 SummarizePayload requires providerID+modelID); the v2 TUI adapter
+   *  derives it from the session record and ignores the parameter */
+  compact(sessionID: string, directory: string, model?: CompactionModel): Promise<boolean>
 }
 
 export interface HandoverResult {
@@ -51,10 +65,11 @@ export async function backupSession(port: HandoverPort, sessionID: string, direc
   }
 }
 
-/** Compaction leg. NEVER await this from tool.execute.after: it executes on the host session loop, which stays blocked while the hook is awaited (self-deadlock, see header) */
-export async function compactSession(port: HandoverPort, sessionID: string, directory: string): Promise<boolean> {
+/** Compaction leg. NEVER await this from tool.execute.after: the summarize response returns only after the whole
+ *  compaction loop has run on the host session loop, which stays blocked while the hook is awaited (self-deadlock, see header) */
+export async function compactSession(port: HandoverPort, sessionID: string, directory: string, model?: CompactionModel): Promise<boolean> {
   try {
-    return await port.compact(sessionID, directory)
+    return await port.compact(sessionID, directory, model)
   } catch {
     return false
   }
@@ -79,7 +94,7 @@ export function v1HandoverPort(client: {
   session: {
     fork(opts: any): Promise<any>
     update(opts: any): Promise<any>
-    command(opts: any): Promise<any>
+    summarize(opts: any): Promise<any>
   }
 }): HandoverPort {
   return {
@@ -92,14 +107,18 @@ export function v1HandoverPort(client: {
       const res = await client.session.update({ path: { id: sessionID }, query: { directory }, body: { title } })
       return !res?.error
     },
-    // [2026-09-05]-[was session.summarize: wrong channel — generated a summary but never compacted the live context; the
-    //  session command channel is what the manual /compact uses (verified effective on the incident session)]
-    async compact(sessionID, directory) {
-      const res = await client.session.command({
-        path: { id: sessionID },
-        query: { directory },
-        body: { command: "compact", arguments: "" },
-      })
+    // [2026-09-05]-[was session.command {command:"compact"}: "Command not found" — the registry has no compact command
+    //  (init/review + markdown/MCP/skill only, opencode v1.18.9). session.summarize is the real channel the manual TUI
+    //  /compact uses (compactSvc.create + promptSvc.loop); auto:true injects the post-compaction "continue" turn so the
+    //  interrupted task resumes automatically; the response lands only after the compaction loop finishes — fire detached]
+    async compact(sessionID, directory, model) {
+      if (!model) return false // v1 SummarizePayload mandates providerID+modelID; without a model face the call would 400
+      const body: { providerID: string; modelID: string; auto?: boolean } = {
+        providerID: model.providerID,
+        modelID: model.modelID,
+        auto: true,
+      }
+      const res = await client.session.summarize({ path: { id: sessionID }, query: { directory }, body })
       return !res?.error
     },
   }

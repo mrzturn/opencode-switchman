@@ -564,10 +564,18 @@ function v2HandoverPort(api: TuiPluginApi): HandoverPort {
       const res = await api.client.session.update({ sessionID, directory, title })
       return !res?.error
     },
-    // [2026-09-05]-[was session.summarize (flat providerID/modelID params): wrong channel — generated a summary but never
-    //  compacted the live context (2026-09-05 incidents); the session command channel is what the manual /compact uses]
+    // [2026-09-05]-[was session.command {command:"compact"} → "Command not found" (registry: init/review + markdown/MCP/
+    //  skill commands only, opencode v1.18.9); before that session.summarize was blamed for the deadlock, but the hang was
+    //  caused by AWAITING it from tool.execute.after — the manual path runs detached from the palette. session.summarize
+    //  is exactly what the TUI /compact itself calls; manual handover mirrors it (no auto flag = no synthetic continue,
+    //  the user drives the next turn); model face from the session record (Session.Info.model {id, providerID})]
     async compact(sessionID, directory) {
-      const res = await api.client.session.command({ sessionID, directory, command: "compact", arguments: "" })
+      const info: any = await api.client.session.get({ sessionID }).then((r: any) => r?.data).catch(() => undefined)
+      const model = info?.model
+      const providerID = typeof model?.providerID === "string" ? model.providerID : undefined
+      const modelID = typeof model?.id === "string" ? model.id : typeof model?.modelID === "string" ? model.modelID : undefined
+      if (!providerID || !modelID) return false // summarize requires providerID+modelID; no model face recorded
+      const res = await api.client.session.summarize({ sessionID, directory, providerID, modelID })
       return !res?.error
     },
   }

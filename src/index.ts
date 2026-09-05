@@ -1246,10 +1246,10 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     //  queue compaction of the current session; after compaction is written the host agent loop re-reads messages on the next step via
     //  filterCompactedEffect, so the task continues automatically on "summary + preserved tail" context, no re-prompting needed]
     // [2026-09-05]-[split legs after two deadlock incidents (2026-09-05 11:08/11:26): the backup leg (fork + [backup] tag) is awaited —
-    //  DB-local, completed within the trigger second both times; the compaction leg is fired DETACHED — it executes on the host session
-    //  loop, which stays blocked while this hook is awaited, so awaiting it self-deadlocks until a user interrupt (7m25s/1m40s hangs,
-    //  both ended the second the user intervened). The queued compact command runs when the loop frees; the measured watermark falls
-    //  back with the next assistant message (the manual /compact proved this channel effective)]
+    //  DB-local, completed within the trigger second both times; the compaction leg is fired DETACHED — the summarize response returns
+    //  only after the whole compaction loop has run on the host session loop, which stays blocked while this hook is awaited, so awaiting
+    //  it self-deadlocks until a user interrupt (7m25s/1m40s hangs, both ended the second the user intervened). The measured watermark
+    //  falls back with the next assistant message once filterCompacted truncates the pre-compaction history]
     "tool.execute.after": async (hookInput) => {
       const sid = hookInput.sessionID
       try {
@@ -1276,10 +1276,20 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         // compaction leg: NEVER awaited here (see the 2026-09-05 header note) — fired detached
         if (result.ok) {
           readNudged.delete(sid)
-          void compactSession(v1HandoverPort(pluginClient), sid, pluginDirectory).then((accepted) => {
+          // [2026-09-05]-[compaction channel = session.summarize (what the manual TUI /compact calls; session.command has
+          //  no compact command — registry is markdown/MCP/skill only, v1.18.9 "Command not found" incident). Model face
+          //  from the chat.params-tracked ModelKey; auto:true injects the post-compaction continue turn so the task resumes]
+          const key = sessionModelKey.get(sid)
+          const slash = key?.indexOf("/") ?? -1
+          const compactionModel = key && slash > 0 ? { providerID: key.slice(0, slash), modelID: key.slice(slash + 1) } : undefined
+          void compactSession(v1HandoverPort(pluginClient), sid, pluginDirectory, compactionModel).then((accepted) => {
             appendStatusLog(
-              `auto-handover compaction ${accepted ? "queued" : "failed"}: ${
-                accepted ? "compact command accepted; runs when the session loop frees" : "compact command rejected (backup stands)"
+              `auto-handover compaction ${accepted ? "accepted" : "failed"}: ${
+                accepted
+                  ? "session.summarize returned (compaction ran on the session loop)"
+                  : compactionModel
+                    ? "session.summarize rejected (backup stands)"
+                    : "no session model recorded (chat.params never fired); backup stands"
               }`,
             )
           })

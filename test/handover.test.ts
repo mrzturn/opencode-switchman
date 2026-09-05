@@ -1,8 +1,9 @@
 // [2026-09-04]-[handover-core unit tests: orchestration order, fail-open degradation, v1 adapter parameter shape;
 //  the TUI v2 adapter and host interactions cannot be unit tested, typecheck covers them]
-// [2026-09-05]-[synced with the compaction channel fix: compact() now goes through session.command {command:"compact"}
-//  (the manual /compact channel; session.summarize never compacted the live context) and no longer needs a model face;
-//  backup/compaction legs split (backupSession/compactSession) — see test/auto-handover.test.ts for the non-blocking contract]
+// [2026-09-05]-[synced with the compaction channel fix: compact() goes through session.summarize (the manual TUI /compact
+//  route — session.command has no compact command, registry is markdown/MCP/skill only at opencode v1.18.9, live
+//  "Command not found" incident); the v1 adapter requires a model face (server SummarizePayload mandates providerID+modelID)
+//  and sends auto:true (post-compaction continue turn); backup/compaction legs split — see test/auto-handover.test.ts]
 import { describe, expect, mock, test } from "bun:test"
 import { runHandover, backupSession, compactSession, v1HandoverPort, backupTitle, type HandoverPort } from "../src/handover-core"
 
@@ -98,12 +99,12 @@ describe("v1HandoverPort adapter", () => {
       session: {
         async fork(opts: any) { calls.push(["fork", opts]); return { data: { id: "ses_f", title: "FT" } } },
         async update(opts: any) { calls.push(["update", opts]); return { data: {} } },
-        async command(opts: any) { calls.push(["command", opts]); return { data: { info: {}, parts: [] } } },
+        async summarize(opts: any) { calls.push(["summarize", opts]); return { data: true } },
       },
     }
   }
 
-  test("parameter shape is v1 path/query/body; compact goes through the session command channel", async () => {
+  test("parameter shape is v1 path/query/body; compact goes through the session.summarize channel with auto:true", async () => {
     const c = makeClient()
     const port = v1HandoverPort(c)
     const forked = await port.forkFull("ses_a", "/w")
@@ -111,8 +112,18 @@ describe("v1HandoverPort adapter", () => {
     expect(c.calls[0]).toEqual(["fork", { path: { id: "ses_a" }, query: { directory: "/w" } }])
     expect(await port.setTitle("ses_f", "/w", "[backup] FT")).toBe(true)
     expect(c.calls[1]).toEqual(["update", { path: { id: "ses_f" }, query: { directory: "/w" }, body: { title: "[backup] FT" } }])
-    expect(await port.compact("ses_a", "/w")).toBe(true)
-    expect(c.calls[2]).toEqual(["command", { path: { id: "ses_a" }, query: { directory: "/w" }, body: { command: "compact", arguments: "" } }])
+    expect(await port.compact("ses_a", "/w", { providerID: "copilot", modelID: "glm-5.3" })).toBe(true)
+    expect(c.calls[2]).toEqual([
+      "summarize",
+      { path: { id: "ses_a" }, query: { directory: "/w" }, body: { providerID: "copilot", modelID: "glm-5.3", auto: true } },
+    ])
+  })
+
+  test("compact without a model face: rejected locally, summarize never called (server payload mandates providerID+modelID)", async () => {
+    const c = makeClient()
+    const port = v1HandoverPort(c)
+    expect(await port.compact("ses_a", "/w")).toBe(false)
+    expect(c.calls.filter((call) => call[0] === "summarize")).toHaveLength(0)
   })
 
   test("fork without id / error fields: degrades to null/false", async () => {
@@ -120,11 +131,11 @@ describe("v1HandoverPort adapter", () => {
       session: {
         async fork() { return { data: undefined, error: "boom" } },
         async update() { return { error: "x" } },
-        async command() { return { error: "y" } },
+        async summarize() { return { error: "y" } },
       },
     })
     expect(await port.forkFull("s", "/w")).toBeNull()
     expect(await port.setTitle("s", "/w", "t")).toBe(false)
-    expect(await port.compact("s", "/w")).toBe(false)
+    expect(await port.compact("s", "/w", { providerID: "p", modelID: "m" })).toBe(false)
   })
 })
