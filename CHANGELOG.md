@@ -2,15 +2,37 @@
 
 This project follows [Semantic Versioning](https://semver.org/). Release notes describe user-visible behavior; implementation details remain in the technical specification and commit history.
 
-## [1.0.0] - 2026-09-04
+## [1.0.0] - 2026-09-05
 
-First stable release: the English-first global surface is complete (code, comments, bundled assets, docs, and UI copy), ready for publication beyond the Chinese-language user base.
+First stable release: the feature surface is complete and the English-first global surface (code, comments, bundled assets, docs, and UI copy) is done — ready for publication beyond the Chinese-language user base.
+
+### Added
+
+- **Per-call read budget (always on)** — every read-class tool call is costed against `context.readBudgetTokens` (default 1500, clamped 200..20000) from turn 1; over-budget reads are auto-bounded (limit appended in place) or denied with exact bounded-retry params. Replaces the old per-tool one-time watermark nudge (a coupon models rationally burned via retry/probing). Watermarks keep lifecycle duties only (soft=advice, hard=wrap-up deny, force=auto-handover); per-turn 2x self-read cap with idle failsafe; unbounded archaeology git denied at all tiers with a scoping hint; `[WATERMARK:SESSION]` banner extended with growth / turns-to-hard / self-read-used segments.
+
+- **Context-window-capped watermarks** — the models.dev context window feeds the runtime model registry (fail-open); effective thresholds clamp to force ≤ 90% of the window with soft/hard ordered below it, and the default force watermark rises from 100k to 120k for a longer wrap-up runway.
+
+- **`/expert` expert consultation + bundled agent skills** — a new command routes expert-consultation prompts, and the plugin materializes bundled agent skills into the opencode global skills dir at startup (add/overwrite-only sync, marker-gated cleanup, fail-open).
+
+- **Per-session artifact workspace** — each main session gets `<project>/.switchman/<yyyy-mm-dd>/<sessionId>-<title>/` (SESSION.md, dispatches.jsonl, media/) so delegated artifacts stop scattering across the repo.
+
+- **Per-project language preference (`[LANG]`)** — conversation / comments / docs language persisted per project (first-use ask, `.switchman/settings.json`), enforced by a per-turn iron-rule line; bundled skills defer to it.
+
+### Fixed
+
+- **Auto-handover compaction deadlock** — handover now routes compaction through `session.summarize` (the `session.command` API has no compact command) and numbers backup sessions itself (the server fork counter always returns "fork #1").
+- **Review-lane self-review fallback** — same-family reviewers become a DOWNGRADED last resort instead of an empty chain: last-resort ro seats survive when no S/A-tier cross-family shell does, gate 7 denies same-family only while a cross-family candidate exists.
+- **Image relay hardening** — vision-less main sessions relay image parts in every user message (was: last only; stored clipboard parts leaked the recurring host error back into later turns), raw-bytes parts persist to disk instead of leaking, and reading an image file in a text-only session denies early with a vision-shell redirect.
+- **Stale todo list** — protocol §0.7 todo discipline plus a per-turn `[TODO]` status line keeps the list truthful across handovers.
+- **Git UX split for read gates** — delivery git (commit/push/tag) is exempt at every tier; only unbounded archaeology reads get scoped or denied.
 
 ### Changed
 
 - **English localization** — protocol assets (dispatcher rules, delegation template), runtime messages, code comments, and docs translated to English; no behavior change. Banner anchors renamed: `[路由]`→`[ROUTES]`, `[水位]`→`[WATERMARK]`, `[水位·会话]`→`[WATERMARK:SESSION]`, `[限制]`→`[LIMITS]`, `[更新]`→`[UPDATE]` (inline markers `【调度】`→`[DISPATCH]`, `【强制】`→`[MANDATORY]`). The technical design doc is now `docs/2026-08-28-opencode-switchman-technical-design.md` (full English translation; the Chinese original path removed). The Chinese README remains at `README.zh.md`; historical Chinese entries below are preserved as-is.
 
 - **Sidebar panel layout/color polish** — quota sub-row labels pad to a global 8-column grid so progress bars and values align across provider blocks (fixes glued label-value pairs like `refresh2026-10-01`/`balanceexhausted`), the `░` track renders muted under the gradient fill with a leading space before reset-time tails, the watermark gradient and lane/model palette are brightened to the 400-level for contrast, sections get one blank line of separation, and per-provider `·observe-only` tags collapse when every provider is observe-only. Progress bars clamp to at least one filled cell for any pct>0, so small quotas (e.g. MCP 5%) no longer render an empty bar.
+
+- **READMEs refreshed for v1.x** — What's New restructured around the read budget, `[LANG]`, `[TODO]`, `/expert` + bundled skills, and DOWNGRADED review semantics; the TUI is now the recommended primary interface; 4 new screenshots (sidebar status, `/poolConfig`, `/modelRank`).
 
 ## [0.2.7] - 2026-09-04
 
