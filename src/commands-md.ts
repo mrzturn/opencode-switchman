@@ -2,9 +2,11 @@
 // (the manual interactive dialogs are the TUI plugin's /poolConfig //modelRank; the two complement each other).
 // [2026-09-04]-[English localization: translate protocol assets; no semantic change]
 // [2026-09-03]-[opencode command `!` blocks execute non-interactively (stdin=ignore/output captured); the interactive dialogs are
-//  carried by the TUI plugin (src/tui.tsx DialogSelect); this template is the session-style equivalent flow for non-TUI clients
-//  and in-session use: the command injects the current config listing → the user replies with selection/ranking intent → the
-//  agent calls switchman-config.js to persist]
+// carried by the TUI plugin (src/tui.tsx DialogSelect); this template is the session-style equivalent flow for non-TUI clients
+// and in-session use: the command injects the current config listing → the user replies with selection/ranking intent → the
+// agent calls switchman-config.js to persist]
+// [2026-09-05]-[/expert expert consultation: no CLI round-trip — selection follows the live [ROUTES] banner chain
+// (review head preferred; hard head's -ro face as fallback), dispatch goes through the standard six gates + auto-redirect]
 import { paths } from "./state"
 
 const q = (p: string): string => JSON.stringify(p)
@@ -55,6 +57,35 @@ export function modelRankCommandMd(cliPath: string): string {
     "Note: `#number` is only valid against the most recent list output; if the ranking may have changed between two operations, re-run list before converting numbers.",
     "",
     `Config file: ${paths().capabilityRank} (safe to hand-edit; models array order = capability descending, hot-reloaded on save).`,
+    "",
+  ].join("\n")
+}
+
+// [2026-09-05]-[/expert: user-invoked expert consultation; arguments land in $ARGUMENTS (opencode substitutes them;
+// empty/literal $ARGUMENTS → the model asks first). Review head is already an ro shell (review face pool is ro-only);
+// the hard head is rw, so the fallback appends -ro to reach the read-only face. source=user both marks the explicit
+// user intent and exempts gate-7 cross-level fallback chain checks]-[dispatch passes the standard six gates + auto-redirect]
+export function expertCommandMd(): string {
+  return [
+    "---",
+    "description: Dispatch the requirement to the strongest available expert (review pool preferred; hard pool top model on its read-only shell as fallback) for an expert answer or design",
+    "---",
+    "",
+    "The user invoked /expert. Their requirement (verbatim; may be empty):",
+    "$ARGUMENTS",
+    "",
+    "If the requirement is empty or still shows the literal $ARGUMENTS, ask the user what to consult the expert about and continue with the reply.",
+    "",
+    "Execute exactly ONE delegation. Declare `[DISPATCH] delegate <shell>: /expert consultation` first, then:",
+    "",
+    "1. Read the `[ROUTES]` line in your system prompt banner. Names there are short forms — restore full shell names by inserting `-mx-` after the pool prefix (`ds-` prefix = deepseek pool); full names are in your task tool's shell list.",
+    "2. Preferred — review pool expert: if the `review:` segment lists shell names, take its head (prefer a candidate of a different model family than yours when available) and delegate with the prompt head (fill in your REAL model family):",
+    '   ROUTE_META {"lane":"review","role":"expert-alpha","producer_family":"<your-real-model-family>","capability":"ro","modality":"text","source":"user"}',
+    "3. Fallback — only when the `review:` segment shows `all unavailable→terminal failure protocol` (or the review dispatch is denied with the chain exhausted): take the head of the `hard:` chain and delegate to its read-only face — the same full shell name with `-ro` appended (skip if it already ends in `-ro`) — and declare `DOWNGRADED: review pool unavailable, hard-pool expert on its ro shell`. Prompt head:",
+    '   ROUTE_META {"lane":"hard","role":"planner","producer_family":"<your-real-model-family>","capability":"ro","modality":"text","source":"user"}',
+    "4. Delegation prompt body (self-contained): verbatim user requirement; known facts/conclusions and relevant file paths from this session; project-level constraints; output format = expert answer or design — conclusion first, then rationale, alternatives, risks, acceptance criteria, file:line evidence. Read-only consultation: no code changes.",
+    "5. Relay the expert's full conclusions to the user and end with one line naming the shell and lane used, e.g. `expert: <shell> (review)` / `<shell> (hard·ro, DOWNGRADED)`.",
+    "6. If a dispatch is denied, redirect to the first candidate named in the deny postscript (the plugin auto-redirects by default). If both pools are unavailable, follow the terminal failure protocol: explain the reason and offer 2 options.",
     "",
   ].join("\n")
 }

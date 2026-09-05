@@ -141,6 +141,12 @@ TUI 插件没有目录自动发现机制，需要在 **`tui.jsonc`/`tui.json`** 
 - **语义**：手动排名**优先于基础能力分**（实时第三方指数 → 内置快照 → 策展表全部让位）——命中模型（含其前缀变体）按排名序位取能力分与 S/A/B/C 档：排名 ≤4 项时依次 S/A/B/C；≥5 项按分位口径（top20% S / 次20% A / 次20% B / 其余 C，与 OpenRouter 序位派生同口径）；同档内按序位线性分细排。未排名模型不受影响。排名参与所有决策面：六档链排序、档位亲和、能力等级闸与 deny 改派建议。
 - **配置文件**：`~/.config/opencode/opencode-switchman/capability-rank.json`（`models` 数组顺序=能力降序，#1 最强）。
 
+### /expert —— 专家咨询（会话式）
+
+- 用法：`/expert <你的需求或设计问题>` — 描述会原样传给专家；不带描述时代理会先询问。
+- 行为：把需求派发给当前最强的可用专家——优先 **review** 链头（跨家族专家席位，只读壳）；review 池无可用候选时降级到 **hard** 链头的只读（`-ro`）壳，并声明 `DOWNGRADED`。
+- 专家结论完整转述，末尾注明所用壳与车道（如 `expert: <shell> (review)`）。
+
 两命令亦可用随包 CLI 直操作：`node <包目录>/dist/switchman-config.js pool list|add|remove|set|clear`（池名=economy/mechanical/main/hard/vision/review）/ `rank list|set|add|remove|clear`（编号引用 `list` 输出）。横幅 `[限制]` 行会标注当前生效的手动覆盖（「手动能力排名 N 模型 / 任务池选配 M 池」）。
 
 ## v0.2.0 更新内容

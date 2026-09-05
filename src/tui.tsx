@@ -564,27 +564,10 @@ function v2HandoverPort(api: TuiPluginApi): HandoverPort {
       const res = await api.client.session.update({ sessionID, directory, title })
       return !res?.error
     },
-    async lastAssistantModel(sessionID, directory) {
-      // TUI in-memory state first (zero cost) → fall back to REST session.messages when empty
-      for (const m of [...api.state.session.messages(sessionID)].reverse()) {
-        const info: any = (m as any)?.info ?? m
-        if (info?.providerID && info?.modelID) return { providerID: String(info.providerID), modelID: String(info.modelID) }
-      }
-      const res: any = await api.client.session.messages({ sessionID, directory }).catch(() => null)
-      const rows: any[] = Array.isArray(res?.data) ? res.data : []
-      for (const row of [...rows].reverse()) {
-        const info: any = row?.info ?? row
-        if (info?.providerID && info?.modelID) return { providerID: String(info.providerID), modelID: String(info.modelID) }
-      }
-      return null
-    },
-    async compact(sessionID, directory, model) {
-      const res = await api.client.session.summarize({
-        sessionID,
-        directory,
-        providerID: model.providerID,
-        modelID: model.modelID,
-      })
+    // [2026-09-05]-[was session.summarize (flat providerID/modelID params): wrong channel — generated a summary but never
+    //  compacted the live context (2026-09-05 incidents); the session command channel is what the manual /compact uses]
+    async compact(sessionID, directory) {
+      const res = await api.client.session.command({ sessionID, directory, command: "compact", arguments: "" })
       return !res?.error
     },
   }

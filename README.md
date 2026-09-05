@@ -141,6 +141,12 @@ Two manual commands let your configuration beat system defaults. All state is pe
 - **Semantics**: manual ranking **takes priority over the base capability score** (realtime index → bundled snapshot → curated table all yield) — matched models (including their prefix variants) get a rank-position score and S/A/B/C tier: rankings with ≤4 entries map positions to S/A/B/C in order; ≥5 entries use quantile buckets (top 20% S / next 20% A / next 20% B / rest C, same semantics as the OpenRouter rank source); within a tier, the linear rank position breaks ties. Unranked models are unaffected. The ranking feeds every decision surface: lane chains, effort affinity, capability-level gates, and deny hints.
 - **Config file**: `~/.config/opencode/opencode-switchman/capability-rank.json` (`models` array order = strongest first).
 
+### /expert — expert consultation (conversational)
+
+- Usage: `/expert <your requirement or design question>` — the description is passed verbatim to the expert; with no description the agent asks first.
+- Behavior: dispatches the requirement to the strongest available expert — the head of the **review** chain (cross-family expert seat, read-only shell); when the review pool has no available candidate, it falls back to the head of the **hard** chain on its read-only (`-ro`) shell and declares `DOWNGRADED`.
+- The expert's conclusions are relayed in full, ending with one line naming the shell and lane used (e.g. `expert: <shell> (review)`).
+
 Both commands can also be driven directly via the bundled CLI: `node <pkg>/dist/switchman-config.js pool list|add|remove|set|clear` (pool name = economy/mechanical/main/hard/vision/review) / `rank list|set|add|remove|clear` (numbers refer to the `list` output). The `[LIMITS]` banner line reports active overrides ("manual rank: N models / task-pool assignment: M pools").
 
 ## What's New in v0.2.0

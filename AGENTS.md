@@ -22,6 +22,8 @@
 - `src/assets/agents-md.ts` — bundled dispatcher protocol (production source of truth; `{{DELEGATION_FLOOR}}/{{SOFT}}/{{HARD}}/{{FORCE}}` interpolated at inject time).
 - `src/assets/delegation-template.ts` — delegation template written to the state directory at startup.
 - `src/shells.ts` — shell definitions and embedded subagent rules.
+- `skills/` — bundled agent skills, materialized into the opencode global skills dir (`<configDir>/opencode/skills`) at plugin startup.
+- `src/skill-sync.ts` — bundled-skill sync logic (add/overwrite-only copy, marker-gated cleanup, fail-open).
 - `src/provider-config.ts`, `src/types.ts` — provider/model metadata, routing config, option types.
 - `scripts/` — codegen (`gen-shells`, `gen-capability-default`, `gen-version`), build helpers, mode switcher.
 - `test/` — bun test suites; treat as the behavioral contract (update together with behavior changes).

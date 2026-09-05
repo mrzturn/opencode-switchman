@@ -31,7 +31,8 @@
     "./tui": "./dist/opencode-switchman-tui.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "skills"
   ],
   "scripts": {
     "test": "bun test",

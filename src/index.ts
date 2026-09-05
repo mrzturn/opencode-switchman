@@ -26,7 +26,7 @@ import {
   glmExhausted, copilotExhausted, deepseekExhausted, firstCandidate, laneOfShell,
 } from "./lane"
 import { READ_CLASS_TOOLS, estimateContextTokens, thresholdsOf, watermarkLevel, readGateDecision } from "./context-watch"
-import { runHandover, v1HandoverPort } from "./handover-core"
+import { backupSession, compactSession, v1HandoverPort, type HandoverResult } from "./handover-core"
 import { logDecision, BILLING_API_BOOST } from "./scoring"
 import type { WaterFactor, DecisionRecord } from "./scoring"
 import { quotaView, readAuthStore, markCopilotGatewayExhausted } from "./quota"
@@ -37,7 +37,7 @@ import { injectShells, injectShellDefs, selectInjectableDefs } from "./shells"
 import { buildBanner, shortName, providerStatusEntries } from "./banner"
 import { refreshSelfUpdate, updateBannerText, ensureUpdateCommands, detectLoadMode, pluginCliPath } from "./selfupdate"
 import { loadPoolConfig, overrideSummary } from "./user-overrides"
-import { poolConfigCommandMd, modelRankCommandMd } from "./commands-md"
+import { poolConfigCommandMd, modelRankCommandMd, expertCommandMd } from "./commands-md"
 import { billingOfProvider, loadUserConfig, resolveEffectiveOptions, routingPeakActive, routePolicy, DEFAULT_DELEGATION_FLOOR } from "./config"
 import { poolForProviderId } from "./provider-config"
 import { runDoctor } from "./doctor"
@@ -56,6 +56,7 @@ import type { MatrixModeOption } from "./activation"
 import { chatParamsModelKey, sessionDeletedId, sessionCreatedInfo } from "./helpers"
 import { parseRouteMeta } from "./meta"
 import { relayImageParts } from "./relay"
+import { syncBundledSkills } from "./skill-sync"
 import { MatrixManager } from "./matrix-manager"
 import { laneBaseChain } from "./lane-policy"
 import {
@@ -417,6 +418,16 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       // [2026-08-28]-[after bundle deployment import.meta relative paths break; assets moved to inline TS modules; templates rewrite at every startup = pinned to the package version]
       writeFileSync(join(stateDir(), "delegation-template.md"), DELEGATION_TEMPLATE)
     } catch { /* fail-open */ }
+    // [2026-09-05]-[materialize bundled agent skills into the opencode global skills dir at startup (add/overwrite-only,
+    //  marker-gated cleanup inside syncBundledSkills); logged only when something actually changed]-[fail-open]
+    try {
+      const s = syncBundledSkills()
+      if (s.installed.length + s.updated.length + s.removed.length > 0) {
+        appendStatusLog(`skills synced: ${s.installed.length} installed, ${s.updated.length} updated, ${s.removed.length} removed (${[...s.installed, ...s.updated, ...s.removed].join(", ")})`)
+      }
+    } catch (exc) {
+      appendStatusLog(`skill sync fail-open: ${exc}`)
+    }
   }
 
   function quotaExhaustedFlags(): Partial<Record<Pool, boolean>> {
@@ -763,6 +774,10 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         cfg.command = {
           "poolConfig-chat": { template: poolConfigCommandMd(pluginCliPath("switchman-config.js")), description: "Configure task-pool participating models conversationally (economy/mechanical/main/hard/vision/review); use /poolConfig for the manual dialog" },
           "modelRank-chat": { template: modelRankCommandMd(pluginCliPath("switchman-config.js")), description: "Configure model capability ranks conversationally (manual ranks override base capability scores); use /modelRank for the manual dialog" },
+          // [2026-09-05]-[/expert: expert consultation — review-pool head preferred, hard-pool head's ro face as fallback;
+          //  selection is read live from the [ROUTES] banner at execution time (no stale CLI snapshot), dispatch goes
+          //  through the standard six gates + auto-redirect]
+          "expert": { template: expertCommandMd(), description: "Dispatch the requirement to the strongest available expert for an answer or design (review pool preferred; falls back to the hard pool's top model on its read-only shell)" },
           // [2026-09-04]-[removed the /handover conversational registration: moved to direct TUI palette execution (fork backup + compaction of the
           //  current session, no AI in the loop); opencode's built-in session.fork (message-selection fork dialog) also occupies /fork,
           //  so the plugin no longer registers a same-name command, avoiding dual entries]-
@@ -1148,10 +1163,14 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
 
     // [2026-09-04]-[auto-handover: tool.execute.after is awaited on the tool execution path → naturally serialized with the main loop
     //  (no double-burn/race). Triggered only at the force-compaction watermark: soft/hard keep deny+hints so the model wraps up explicitly
-    //  (higher summary fidelity); at force the model has lost read ability and the task is likely unfinished — fork a full backup + summarize-
-    //  compact the current session; after compaction is written the host agent loop re-reads messages on the next step via filterCompactedEffect
-    //  (the prompt.ts while loop re-fetches each step), so the task continues automatically on "summary + preserved tail (tool_use/result pairs
-    //  intact)" context, no re-prompting needed]
+    //  (higher summary fidelity); at force the model has lost read ability and the task is likely unfinished — fork a full backup, then
+    //  queue compaction of the current session; after compaction is written the host agent loop re-reads messages on the next step via
+    //  filterCompactedEffect, so the task continues automatically on "summary + preserved tail" context, no re-prompting needed]
+    // [2026-09-05]-[split legs after two deadlock incidents (2026-09-05 11:08/11:26): the backup leg (fork + [backup] tag) is awaited —
+    //  DB-local, completed within the trigger second both times; the compaction leg is fired DETACHED — it executes on the host session
+    //  loop, which stays blocked while this hook is awaited, so awaiting it self-deadlocks until a user interrupt (7m25s/1m40s hangs,
+    //  both ended the second the user intervened). The queued compact command runs when the loop frees; the measured watermark falls
+    //  back with the next assistant message (the manual /compact proved this channel effective)]
     "tool.execute.after": async (hookInput) => {
       const sid = hookInput.sessionID
       try {
@@ -1163,12 +1182,29 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         if (handoverInflight.has(sid)) return
         if (Date.now() - (handoverCooldown.get(sid) ?? 0) < HANDOVER_COOLDOWN_MS) return
         handoverInflight.add(sid)
-        appendStatusLog(`auto-handover triggered (after ${hookInput.tool}, ~${kk(wm.tokens)} exceeds the force-compaction watermark): full backup + compaction of the current session`)
-        const result = await runHandover(v1HandoverPort(pluginClient), sid, pluginDirectory)
+        appendStatusLog(`auto-handover triggered (after ${hookInput.tool}, ~${kk(wm.tokens)} exceeds the force-compaction watermark): full backup + queued compaction of the current session`)
+        // [2026-09-05]-[backup leg bounded: the SDK disables HTTP timeouts (client.js req.timeout = false), so any unbounded
+        //  await here could hang the tool path forever; 45s is generous for the DB-local fork+tag leg (fail-open on timeout)]
+        const result = await Promise.race([
+          backupSession(v1HandoverPort(pluginClient), sid, pluginDirectory),
+          new Promise<HandoverResult>((resolve) => {
+            const timer = setTimeout(() => resolve({ ok: false, compacted: false, message: "backup leg timed out after 45s (fail-open)" }), 45_000)
+            if (typeof timer === "object" && timer !== null && "unref" in timer) (timer as any).unref()
+          }),
+        ])
         handoverCooldown.set(sid, Date.now())
-        appendStatusLog(`auto-handover ${result.ok ? "done" : "failed"}: ${result.message}`)
-        // after compaction, re-arm the soft watermark's one-time nudge; the measured watermark falls back with the next assistant message (cooldown guards flapping)
-        if (result.ok) readNudged.delete(sid)
+        appendStatusLog(`auto-handover backup ${result.ok ? "done" : "failed"}: ${result.message}`)
+        // compaction leg: NEVER awaited here (see the 2026-09-05 header note) — fired detached
+        if (result.ok) {
+          readNudged.delete(sid)
+          void compactSession(v1HandoverPort(pluginClient), sid, pluginDirectory).then((accepted) => {
+            appendStatusLog(
+              `auto-handover compaction ${accepted ? "queued" : "failed"}: ${
+                accepted ? "compact command accepted; runs when the session loop frees" : "compact command rejected (backup stands)"
+              }`,
+            )
+          })
+        }
       } catch (exc) {
         appendStatusLog(`auto-handover fail-open: ${exc}`)
       } finally {
