@@ -213,4 +213,81 @@ describe("image relay: messages.transform hook (legacy)", () => {
     await hooks["experimental.chat.messages.transform"]!({} as any, output)
     expect(output.messages[0].parts).toBe(parts)
   })
+
+  // [2026-09-05]-[history relay regression: earlier user messages' image parts leak back to the host on later round-trips,
+  //  which replaces them with "Cannot read <filename> (this model does not support image input)" — the recurring clipboard error.
+  //  All user messages must be relayed: compact note for earlier ones, full guidance for the last]
+  test("earlier user messages' images also replaced (compact note); the last keeps full guidance; assistant messages untouched", async () => {
+    const sid = "s-relay-hist"
+    await hooks["chat.params"]!({ sessionID: sid, agent: "build", model: { providerID: "deepseek", id: "deepseek-v4-pro" } } as any, {} as any)
+    const b64a = Buffer.from("hist-png").toString("base64")
+    const b64b = Buffer.from("last-png").toString("base64")
+    const output: any = {
+      messages: [
+        {
+          info: { sessionID: sid, role: "user", model: { providerID: "deepseek", id: "deepseek-v4-pro" } },
+          parts: [
+            { id: "t1", sessionID: sid, messageID: "m1", type: "text", text: "first turn" },
+            { id: "ph1", sessionID: sid, messageID: "m1", type: "file", mime: "image/png", url: `data:image/png;base64,${b64a}` },
+          ],
+        },
+        { info: { sessionID: sid, role: "assistant" }, parts: [{ id: "a1", type: "text", text: "ok" }] },
+        {
+          info: { sessionID: sid, role: "user", model: { providerID: "deepseek", id: "deepseek-v4-pro" } },
+          parts: [
+            { id: "t2", sessionID: sid, messageID: "m2", type: "text", text: "second turn" },
+            { id: "ph2", sessionID: sid, messageID: "m2", type: "file", mime: "image/png", url: `data:image/png;base64,${b64b}` },
+          ],
+        },
+      ],
+    }
+    await hooks["experimental.chat.messages.transform"]!({} as any, output)
+    const firstParts = output.messages[0].parts
+    expect(firstParts.length).toBe(2)
+    expect((firstParts[1] as any).type).toBe("text")
+    expect((firstParts[1] as any).text).toContain("available at")
+    expect((firstParts[1] as any).text).toContain(join(stateDir(), "media", sid, "ph1.png"))
+    expect((firstParts[1] as any).text).not.toContain('"lane":"vision"')
+    expect(existsSync(join(stateDir(), "media", sid, "ph1.png"))).toBe(true)
+    expect(output.messages[1].parts.length).toBe(1)
+    const lastParts = output.messages[2].parts
+    expect(lastParts.length).toBe(2)
+    expect((lastParts[1] as any).text).toContain("no vision input")
+    expect((lastParts[1] as any).text).toContain('"lane":"vision"')
+    // [2026-09-05]-[round-trip re-transform is idempotent: a second pass re-replaces parts and does not duplicate notes]
+    await hooks["experimental.chat.messages.transform"]!({} as any, output)
+    expect(output.messages[0].parts.length).toBe(2)
+    expect(output.messages[2].parts.length).toBe(2)
+  })
+})
+
+// [2026-09-05]-[no-vision image read guard: reading an image in a text-only session triggers the host's bare
+//  "Cannot read image (this model does not support image input)" error — the guard denies early with a redirect]
+describe("image read guard: tool.execute.before (legacy)", () => {
+  let hooks: Hooks
+  test("plugin construction", async () => {
+    hooks = await makeHooks({ matrix: { mode: "legacy" } })
+  }, 20_000)
+
+  test("no-vision model session reading an image → denied with a vision-shell redirect", async () => {
+    const sid = "s-imgguard"
+    await hooks["chat.params"]!({ sessionID: sid, agent: "build", model: { providerID: "deepseek", id: "deepseek-v4-pro" } } as any, {} as any)
+    let msg = ""
+    try {
+      await hooks["tool.execute.before"]!({ tool: "read", sessionID: sid, callID: "c-g1" } as any, { args: { filePath: "/tmp/shot.png" } } as any)
+    } catch (exc) {
+      msg = String((exc as Error).message ?? exc)
+    }
+    expect(msg).toContain("no vision input")
+    expect(msg).toContain("/tmp/shot.png")
+    expect(msg).toContain('"lane":"vision"')
+  })
+
+  test("vision model / unknown session / non-image path → fail-open allowed (no throw)", async () => {
+    const sid = "s-imgguard-ok"
+    await hooks["chat.params"]!({ sessionID: sid, agent: "build", model: { providerID: "github-copilot", id: "claude-sonnet-5" } } as any, {} as any)
+    await hooks["tool.execute.before"]!({ tool: "read", sessionID: sid, callID: "c-g2" } as any, { args: { filePath: "/tmp/shot.png" } } as any)
+    await hooks["tool.execute.before"]!({ tool: "read", sessionID: "s-never-seen", callID: "c-g3" } as any, { args: { filePath: "/tmp/shot.png" } } as any)
+    await hooks["tool.execute.before"]!({ tool: "read", sessionID: sid, callID: "c-g4" } as any, { args: { filePath: "/tmp/notes.txt" } } as any)
+  })
 })

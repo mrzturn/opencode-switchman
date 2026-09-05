@@ -15,6 +15,12 @@ export interface RelayImageOpts {
   writeDir: string
   /** writer injection (for tests); default = mkdir + writeFileSync */
   writeFile?: (path: string, bytes: Uint8Array) => Promise<void> | void
+  /** [2026-09-05]-[compact note for non-last history messages: paths only, no delegation guidance (the full guidance stays on the last user message)]
+   *  [-avoids repeating the vision-delegation boilerplate once per historical image on every round-trip] */
+  compact?: boolean
+  /** [2026-09-05]-[cross-request persist memoization: cache-key → saved path; skips rewriting identical images on every LLM round-trip]
+   *  [-the transform hook fires per request, so without the cache each image would be re-decoded and rewritten dozens of times per session] */
+  persistCache?: Map<string, string>
 }
 
 export interface RelayImageResult {
@@ -22,6 +28,8 @@ export interface RelayImageResult {
   changed: boolean
   /** image paths involved in this relay (persisted or referenced by original value) */
   paths: string[]
+  /** [2026-09-05]-[count of images actually written this call (0 when served from persistCache)]-[lets the caller log only real writes] */
+  written: number
 }
 
 const IMAGE_EXT_FALLBACK = "png"
@@ -78,8 +86,11 @@ function imageOf(part: unknown): ImageHit | null {
   return null
 }
 
-function guidanceText(paths: string[], visionHead: string | null): string {
+function guidanceText(paths: string[], visionHead: string | null, compact?: boolean): string {
   const list = paths.join("\n")
+  if (compact) {
+    return `[opencode-switchman] image part withheld (session model has no vision input); available at:\n${list}`
+  }
   if (visionHead) {
     return `[opencode-switchman] This session's model has no vision input; images were not injected directly (avoids host errors). Persisted to disk:\n${list}\nTo read them: delegate the vision shell ${visionHead} (ROUTE_META {"lane":"vision","role":"observer","modality":"image","capability":"ro","source":"auto"}, include the paths above in the prompt), or call an MCP vision tool with these paths.`
   }
@@ -90,14 +101,16 @@ function guidanceText(paths: string[], visionHead: string | null): string {
  * Main flow: modelVision not false, or no image parts → return as-is (changed=false).
  * With image parts: data URLs are base64-decoded and persisted to `<writeDir>/<part.id>.<ext>`; local paths/http URLs keep the original value;
  * all image parts are replaced by a single text part at the first hit position (carrying all paths and reading guidance).
+ * persistCache hit → reuse the saved path without rewriting (request-scoped outputs are rebuilt every round-trip; disk writes happen once).
  * A single write failure → keep the original part (that image stays out of the guidance), the rest continue.
  */
 export async function relayImageParts(parts: unknown[], opts: RelayImageOpts): Promise<RelayImageResult> {
-  if (opts.modelVision !== false) return { parts, changed: false, paths: [] }
-  if (!Array.isArray(parts)) return { parts, changed: false, paths: [] }
+  if (opts.modelVision !== false) return { parts, changed: false, paths: [], written: 0 }
+  if (!Array.isArray(parts)) return { parts, changed: false, paths: [], written: 0 }
   const write = opts.writeFile ?? defaultWriteFile
   const out: unknown[] = []
   const saved: string[] = []
+  let written = 0
   let insertAt = -1
   let sid: string | undefined
   let mid: string | undefined
@@ -123,14 +136,24 @@ export async function relayImageParts(parts: unknown[], opts: RelayImageOpts): P
     } else if (ref) {
       path = ref.startsWith("file://") ? ref.slice("file://".length) : ref // local path: keep the original value
     }
-    if (bytes && bytes.byteLength > 0 && path) {
+    // [2026-09-05]-[defensive: raw-bytes image part without a url gets persisted too]-[previously it leaked through to the host]
+    if (!path && bytes && bytes.byteLength > 0) {
+      path = join(opts.writeDir, `${hit.id || `img-${saved.length + 1}`}.${extOfMime(hit.mime)}`)
+    }
+    // [2026-09-05]-[persistCache: identical image seen on a later round-trip → reuse the path, skip the write]
+    const cacheKey = bytes && bytes.byteLength > 0 ? `${hit.id || "img"}|${bytes.byteLength}|${String(hit.mime)}|${String(hit.url).slice(0, 64)}` : null
+    const cached = cacheKey ? opts.persistCache?.get(cacheKey) : undefined
+    if (cached) path = cached
+    if (bytes && bytes.byteLength > 0 && path && !cached) {
       try {
         await write(path, bytes)
+        written++
+        if (cacheKey) opts.persistCache?.set(cacheKey, path)
       } catch {
         out.push(parts[i]) // write failure fail-open: keep the original part
         continue
       }
-    } else if (!ref) {
+    } else if (!ref && !path) {
       out.push(parts[i]) // neither reference nor bytes: keep as-is
       continue
     }
@@ -144,15 +167,15 @@ export async function relayImageParts(parts: unknown[], opts: RelayImageOpts): P
       saved.push(path)
     }
   }
-  if (saved.length === 0) return { parts, changed: false, paths: [] }
+  if (saved.length === 0) return { parts, changed: false, paths: [], written: 0 }
   const textPart: Record<string, unknown> = {
     id: `${idSeed}-swm-relay`,
     type: "text",
-    text: guidanceText(saved, opts.visionHead),
+    text: guidanceText(saved, opts.visionHead, opts.compact),
     synthetic: true,
   }
   if (sid) textPart.sessionID = sid
   if (mid) textPart.messageID = mid
   out.splice(insertAt, 0, textPart)
-  return { parts: out, changed: true, paths: saved }
+  return { parts: out, changed: true, paths: saved, written }
 }

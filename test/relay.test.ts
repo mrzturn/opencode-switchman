@@ -1,6 +1,7 @@
 // [2026-09-04]-[English localization: translate runtime messages and comments; no logic change]
 // [2026-09-04]-[image relay fixture: relayImageParts pure-function cases (no-vision replaced+persisted / has-vision as-is / metadata unknown as-is)
 //  + write failure keeps the original part, and local paths keep the original-value reference]
+// [2026-09-05]-[history-relay extension: compact note mode, persistCache cross-request dedup, raw-bytes part persisted]
 import { describe, expect, test } from "bun:test"
 import { relayImageParts } from "../src/relay"
 
@@ -90,5 +91,65 @@ describe("relay: relayImageParts pure function", () => {
     expect(called).toBe(0)
     expect((r2.parts[0] as any).text).toContain("/home/u/pic/cat.png")
     expect((r2.parts[0] as any).text).toContain("call an MCP vision tool")
+  })
+
+  // [2026-09-05]-[history relay: non-last messages get a compact path-only note (no delegation boilerplate repeated per image)]
+  test("compact mode → path-only note without delegation guidance", async () => {
+    const written: string[] = []
+    const parts = [filePart("pc1", `data:image/png;base64,${PNG_B64}`)]
+    const res = await relayImageParts(parts, {
+      modelVision: false,
+      visionHead: "glm-mx-46v-high",
+      writeDir: "/tmp/switchman-relay-fixture/s4",
+      compact: true,
+      writeFile: async (path) => { written.push(path) },
+    })
+    expect(res.changed).toBe(true)
+    expect(written.length).toBe(1)
+    const text = (res.parts[0] as any).text
+    expect(text).toContain("available at")
+    expect(text).toContain("/tmp/switchman-relay-fixture/s4/pc1.png")
+    expect(text).not.toContain("delegate the vision shell")
+    expect(text).not.toContain('"lane":"vision"')
+  })
+
+  // [2026-09-05]-[persistCache: the transform fires per LLM round-trip — identical images must be written once, still replaced every time]
+  test("persistCache: second relay of the same image reuses the path and skips the write", async () => {
+    let calls = 0
+    const cache = new Map<string, string>()
+    const opts = {
+      modelVision: false as const,
+      visionHead: null,
+      writeDir: "/tmp/switchman-relay-fixture/s5",
+      writeFile: async () => { calls++ },
+      persistCache: cache,
+    }
+    const r1 = await relayImageParts([filePart("pk1", `data:image/png;base64,${PNG_B64}`)], opts)
+    expect(r1.changed).toBe(true)
+    expect(r1.written).toBe(1)
+    expect(calls).toBe(1)
+    const r2 = await relayImageParts([filePart("pk1", `data:image/png;base64,${PNG_B64}`)], opts)
+    expect(r2.changed).toBe(true)
+    expect(r2.written).toBe(0)
+    expect(calls).toBe(1)
+    expect(r2.paths).toEqual(r1.paths)
+    expect((r2.parts[0] as any).text).toContain(r1.paths[0]!)
+  })
+
+  // [2026-09-05]-[defensive shape: raw-bytes image part without a url is persisted instead of leaking to the host]
+  test("raw-bytes image part without a url → persisted and replaced", async () => {
+    const written: Array<{ path: string; bytes: Uint8Array }> = []
+    const parts = [{ id: "pb1", sessionID: "s1", messageID: "m1", type: "image", data: new Uint8Array([1, 2, 3]) }]
+    const res = await relayImageParts(parts, {
+      modelVision: false,
+      visionHead: null,
+      writeDir: "/tmp/switchman-relay-fixture/s6",
+      writeFile: async (path, bytes) => { written.push({ path, bytes }) },
+    })
+    expect(res.changed).toBe(true)
+    expect(written.length).toBe(1)
+    expect(written[0]!.path).toContain("pb1.")
+    expect(Array.from(written[0]!.bytes)).toEqual([1, 2, 3])
+    expect((res.parts[0] as any).type).toBe("text")
   })
 })

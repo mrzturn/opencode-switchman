@@ -131,6 +131,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   //  built by the config hook (vision verdict same source as shell injection), queried at runtime by experimental.chat.messages.transform]
   const sessionModelKey = new Map<string, ModelKey>()
   let metaIndexRuntime: Record<string, EffortInfo> | null = null
+  // [2026-09-05]-[image relay persist memoization: cache-key → saved path; the transform hook fires on EVERY LLM round-trip
+  //  (now relaying all historical user messages), so identical images are decoded/written once per process instead of per request]
+  const relayPersistCache = new Map<string, string>()
   // [2026-08-29]-[dynamic matrix v1.3: mode decided once; legacy = original static path byte-for-byte unchanged]
   const runMode = detectMode(options.matrix!.mode as MatrixModeOption, process.env.OPENCODE_CLIENT)
   const dynamic = runMode !== "legacy"
@@ -186,6 +189,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   //  and watermark pace estimation from recent samples]
   /** Binary/asset extensions: not meaningfully line-based — never sampled or gated */
   const BINARY_EXT = /\.(png|jpe?g|gif|webp|bmp|ico|svgz|pdf|zip|gz|tgz|bz2|xz|7z|tar|rar|mp3|mp4|mov|avi|wav|flac|woff2?|ttf|otf|eot|so|dylib|dll|exe|class|jar|wasm|node|lock)$/i
+  /** [2026-09-05]-[image file extensions for the no-vision read guard]-[svg excluded: text content, the host never attaches it as media] */
+  const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|avif|tiff?|ico)$/i
 
   /** 64KB head sample for read-cost estimation; null on any error (fail-open) */
   async function fileSample(path: string): Promise<FileSample | null> {
@@ -901,6 +906,35 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     }
   }
 
+  // [2026-09-05]-[no-vision image read guard: reading an image file makes the host attach media that a text-only model cannot
+  //  ingest — the tool result comes back as the bare host error "ERROR: Cannot read image (this model does not support image
+  //  input). Inform the user." (verified live), which surfaces as an unexplained dispatch failure. Deny early with an
+  //  actionable redirect (vision shell / MCP vision tool) so dispatchers self-heal; covers main AND shell sessions
+  //  (chat.params records both). Metadata unknown → fail-open allow, same rule as the message relay]
+  async function guardImageRead(input: { tool: string; sessionID?: string; callID: string }, output: { args?: any }): Promise<void> {
+    try {
+      if (options.relay?.image === false) return
+      const sid = input.sessionID
+      const filePath = typeof output.args?.filePath === "string" ? output.args.filePath : ""
+      if (!sid || !filePath || !IMAGE_EXT.test(filePath)) return
+      const key = sessionModelKey.get(sid)
+      if (!key) return
+      const meta = (metaIndexRuntime ?? bundledModelIndex())[key]
+      if (!meta || meta.vision !== false) return
+      const { ctx } = currentContext()
+      const head = laneHeadCandidate("vision", ctx)
+      const redirect = head
+        ? `delegate the vision shell ${head} (ROUTE_META {"lane":"vision","role":"observer","modality":"image","capability":"ro","source":"auto"}) with this path in the prompt`
+        : "call an MCP vision tool on this path"
+      denySkip.add(input.callID)
+      appendStatusLog(`image read guard: model ${key} has no vision input; denied read ${basename(filePath)} (session ${sid})`)
+      throw new Error(`[opencode-switchman] this session's model (${key}) has no vision input — the host would reject the image content of ${filePath}. Instead: ${redirect}, or skip reading this image.`)
+    } catch (exc) {
+      if (denySkip.has(input.callID)) throw exc
+      appendStatusLog(`image read guard fail-open (allowed): ${exc}`)
+    }
+  }
+
   /** [2026-09-04]-[autoRedirect: deny-postscript candidate shell name verbatim (firstCandidateHint reused; used by the index-layer silent redirect)] */
   function firstCandidateShell(agent: string, ctx: ReturnType<typeof loadContext>, extras?: { water?: WaterFactor; glmPeak?: boolean; states?: Record<string, unknown> }): string | null {
     try {
@@ -1194,19 +1228,24 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     // [2026-09-04]-[image relay: when the main session model has no vision, replace image parts in the last user message with a
     //  "persisted paths + image-reading guidance" text (vision shells/MCP vision tools pick up by path), so the host no longer errors;
     //  metadata unknown/model not found → fail-open, leave as-is; the whole hook is try/catch — the chat stream is never severed]
+    // [2026-09-05 fix]-[relay ALL user messages, not just the last: this hook fires on every LLM round-trip, and previously only the
+    //  last user message was rewritten (request-scoped) — earlier messages' stored image parts leaked back to the host on later
+    //  requests, which replaced them with "Cannot read <filename> (this model does not support image input)" error text. Root cause
+    //  of the recurring clipboard error. Last user message keeps the full delegation guidance; earlier ones get a compact path note;
+    //  persistCache deduplicates disk writes across round-trips]
     "experimental.chat.messages.transform": async (_input, output) => {
       try {
         if (options.relay?.image === false) return
         const msgs = (output as any)?.messages
         if (!Array.isArray(msgs) || msgs.length === 0) return
-        let target: { info: any; parts: unknown[] } | null = null
+        let lastUser: { info: any; parts: unknown[] } | null = null
         for (let i = msgs.length - 1; i >= 0; i--) {
-          if (msgs[i]?.info?.role === "user") { target = msgs[i]; break }
+          if (msgs[i]?.info?.role === "user") { lastUser = msgs[i]; break }
         }
-        if (!target || !Array.isArray(target.parts)) return
-        const sid = typeof target.info?.sessionID === "string" ? target.info.sessionID : undefined
+        if (!lastUser || !Array.isArray(lastUser.parts)) return
+        const sid = typeof lastUser.info?.sessionID === "string" ? lastUser.info.sessionID : undefined
         if (!sid || isShellOrInternalSession(sid)) return
-        const m = target.info?.model
+        const m = lastUser.info?.model
         const key = sessionModelKey.get(sid)
           ?? (typeof m?.providerID === "string" && typeof m?.id === "string" ? `${m.providerID}/${m.id}` as ModelKey : null)
         if (!key) return
@@ -1218,16 +1257,26 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         //  task's other artifacts); global state dir kept as fail-open fallback]
         const ws = await ensureWorkspace(sid)
         const writeDir = ws ? join(ws.abs, "media") : join(stateDir(), "media", sid)
-        const res = await relayImageParts(target.parts, {
-          modelVision,
-          visionHead: laneHeadCandidate("vision", ctx),
-          writeDir,
-        })
-        // write back to output only when parts actually changed (msgs elements are the output.messages[i] references)
-        if (res.changed) {
-          target.parts = res.parts
-          appendStatusLog(`image relay: model ${key} has no vision input; persisted ${res.paths.length} image(s) to disk and injected reading guidance (session ${sid})`)
+        let relayed = 0
+        let written = 0
+        for (let i = 0; i < msgs.length; i++) {
+          const msg = msgs[i]
+          if (msg?.info?.role !== "user" || !Array.isArray(msg.parts)) continue
+          const res = await relayImageParts(msg.parts, {
+            modelVision,
+            visionHead: msg === lastUser ? laneHeadCandidate("vision", ctx) : null,
+            writeDir,
+            compact: msg !== lastUser,
+            persistCache: relayPersistCache,
+          })
+          // write back to output only when parts actually changed (msgs elements are the output.messages[i] references)
+          if (res.changed) {
+            msg.parts = res.parts
+            relayed += res.paths.length
+            written += res.written
+          }
         }
+        if (written > 0) appendStatusLog(`image relay: model ${key} has no vision input; persisted ${written} image(s) to disk (${relayed} image part(s) relayed across session history, session ${sid})`)
       } catch (exc) {
         appendStatusLog(`image relay fail-open (passed through): ${exc}`)
       }
@@ -1236,6 +1285,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     "tool.execute.before": async (input, output) => {
       // [2026-09-04]-[read watermark gate: read-class/bash tools other than task are intercepted by tier per the measured session watermark]
       if (input.tool !== "task") {
+        // [2026-09-05]-[no-vision image read guard runs first: image files are skipped by the read budget gate (BINARY_EXT),
+        //  and a text-only session reading one triggers the host's bare "Cannot read image" error]
+        if (input.tool === "read") await guardImageRead(input as any, output as any)
         if (input.tool === "bash" || READ_CLASS_TOOLS.has(input.tool)) await handleReadGate(input as any, output as any)
         return
       }

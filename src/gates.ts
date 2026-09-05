@@ -309,10 +309,11 @@ export function shellLikeName(agent: string): boolean {
 /** [2026-08-29]-[dynamic-matrix gate 1, layer 1: shell-shaped name but not injected into the superset → deny (model disabled / no credentials / new provider needs a restart)]
  *  [2026-09-02]-[the injection face became the six-lane chain selection (selectInjectableDefs); copy added a "missed the selection" case to avoid misleading troubleshooting]
  *  [2026-09-02 fix]-[injection-face semantics became "available superset ∪ chain selection": available models are all injected, so uninjected = provider
- *  not connected / no credentials / non-chat model; the copy no longer mentions "missed the selection" to avoid misleading] */
+ *  not connected / no credentials / non-chat model; the copy no longer mentions "missed the selection" to avoid misleading]
+ *  [2026-09-05 fix]-[sentence separator: the restart clause was concatenated onto the closing paren ("...restart)if this is...") — split into its own sentence] */
 export function denyUninjected(agent: string, restartRequired: string[], hint: string | null): string {
   const restart = restartRequired.length > 0
     ? `provider(s) outside the superset detected (${restartRequired.join(", ")}): new providers require an opencode restart to register their shells`
     : "if this is a new provider, an opencode restart is required to register its shells"
-  return `${agent} not injected into the shell superset (provider not connected / no credentials / non-chat model; new providers require an opencode restart)${restart}${hint ? `, ${hint}` : ""}`
+  return `${agent} not injected into the shell superset (provider not connected / no credentials / non-chat model). ${restart}${hint ? `. ${hint}` : ""}`
 }
