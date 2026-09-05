@@ -28,6 +28,8 @@ export interface HandoverPort {
   forkFull(sessionID: string, directory: string): Promise<{ id: string; title: string | undefined } | null>
   /** Retitle ([backup] tag; fail-open on failure, does not block compaction) */
   setTitle(sessionID: string, directory: string, title: string): Promise<boolean>
+  /** All session titles in the directory (for backup sequence numbering); may return [] on failure (fail-open) */
+  listTitles(directory: string): Promise<string[]>
   /** Queue real compaction via the session.summarize channel (the TUI manual /compact route); true when accepted.
    *  model: only needed by v1-style adapters (v1 SummarizePayload requires providerID+modelID); the v2 TUI adapter
    *  derives it from the session record and ignores the parameter */
@@ -43,9 +45,25 @@ export interface HandoverResult {
   message: string
 }
 
-/** Backup title: fork-count suffix (orig (fork #N)) keeps repeated backups unique */
-export function backupTitle(forkTitle: string | undefined, sessionID: string): string {
-  return `[backup] ${forkTitle ?? sessionID}`
+// [2026-09-05]-[backup numbering defect (live evidence: every auto-handover backup of the same session was identically
+//  titled "[backup] X（fork #1）"): the server fork title counter is derived from the SOURCE session's title
+//  (getForkedTitle, opencode v1.18.9 session.ts:161-169 — strips " (fork #N)" from the source title, increments, else
+//  appends " (fork #1)"), and our source title never changes between backups, so every fork response comes back
+//  "X (fork #1)". Fix: number backups OURSELVES — strip the server suffix, then take 1 + max N among existing
+//  "[backup] <base> (fork #N)" titles from session.list (survives plugin restarts; deleted backups don't cause reuse)]
+const FORK_SUFFIX_RE = / ?[(（]fork #\d+[)）]$/
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
+/** Backup title: `[backup] <base> (fork #N)` with N = 1 + max N of existing backups of the same base (max, not count:
+ *  deleting an old backup must not recycle its number). existingTitles defaults to [] (first backup / list failure) */
+export function backupTitle(forkTitle: string | undefined, sessionID: string, existingTitles: string[] = []): string {
+  const base = (forkTitle ?? sessionID).replace(FORK_SUFFIX_RE, "")
+  const max = existingTitles.reduce((acc, t) => {
+    // count both paren styles (server emits half-width; tolerate full-width for robustness against legacy entries)
+    const m = t.match(new RegExp(`^${escapeRegExp(`[backup] ${base}`)} ?[(（]fork #(\\d+)[)）]$`))
+    return m ? Math.max(acc, parseInt(m[1], 10)) : acc
+  }, 0)
+  return `[backup] ${base} (fork #${max + 1})`
 }
 
 /** Backup leg only (fork + [backup] tag). Safe to await from the tool path: DB-local, completes instantly */
@@ -53,7 +71,9 @@ export async function backupSession(port: HandoverPort, sessionID: string, direc
   try {
     const forked = await port.forkFull(sessionID, directory)
     if (!forked?.id) return { ok: false, compacted: false, message: `session.fork failed (no new session returned)` }
-    const marked = await port.setTitle(forked.id, directory, backupTitle(forked.title, sessionID)).catch(() => false)
+    // fail-open: an unreachable list only degrades numbering back to (fork #1), never blocks the backup
+    const existingTitles = await port.listTitles(directory).catch(() => [] as string[])
+    const marked = await port.setTitle(forked.id, directory, backupTitle(forked.title, sessionID, existingTitles)).catch(() => false)
     return {
       ok: true,
       backupID: forked.id,
@@ -94,6 +114,7 @@ export function v1HandoverPort(client: {
   session: {
     fork(opts: any): Promise<any>
     update(opts: any): Promise<any>
+    list(opts?: any): Promise<any>
     summarize(opts: any): Promise<any>
   }
 }): HandoverPort {
@@ -106,6 +127,13 @@ export function v1HandoverPort(client: {
     async setTitle(sessionID, directory, title) {
       const res = await client.session.update({ path: { id: sessionID }, query: { directory }, body: { title } })
       return !res?.error
+    },
+    // [2026-09-05]-[titles feed the backup sequence counter (see backupTitle); array/absent shapes degrade to []]
+    async listTitles(directory) {
+      const res = await client.session.list({ query: { directory } })
+      const data: unknown = res?.data
+      if (!Array.isArray(data)) return []
+      return data.map((s: any) => (typeof s?.title === "string" ? s.title : "")).filter(Boolean)
     },
     // [2026-09-05]-[was session.command {command:"compact"}: "Command not found" — the registry has no compact command
     //  (init/review + markdown/MCP/skill only, opencode v1.18.9). session.summarize is the real channel the manual TUI

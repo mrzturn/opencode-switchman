@@ -564,6 +564,14 @@ function v2HandoverPort(api: TuiPluginApi): HandoverPort {
       const res = await api.client.session.update({ sessionID, directory, title })
       return !res?.error
     },
+    // [2026-09-05]-[titles feed the backup sequence counter (see handover-core backupTitle); v2 list may be a plain
+    //  array or a paginated {items} — both degrade to [] when absent]
+    async listTitles(directory) {
+      const res: any = await api.client.session.list({ directory })
+      const data = res?.data
+      const arr = Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : []
+      return arr.map((s: any) => (typeof s?.title === "string" ? s.title : "")).filter(Boolean)
+    },
     // [2026-09-05]-[was session.command {command:"compact"} → "Command not found" (registry: init/review + markdown/MCP/
     //  skill commands only, opencode v1.18.9); before that session.summarize was blamed for the deadlock, but the hang was
     //  caused by AWAITING it from tool.execute.after — the manual path runs detached from the palette. session.summarize

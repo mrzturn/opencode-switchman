@@ -4,6 +4,8 @@
 //  route — session.command has no compact command, registry is markdown/MCP/skill only at opencode v1.18.9, live
 //  "Command not found" incident); the v1 adapter requires a model face (server SummarizePayload mandates providerID+modelID)
 //  and sends auto:true (post-compaction continue turn); backup/compaction legs split — see test/auto-handover.test.ts]
+// [2026-09-05]-[backup numbering: the server fork counter derives from the SOURCE title (getForkedTitle, v1.18.9), so an
+//  unchanged source always returns "(fork #1)" — backups number themselves via listTitles max-N instead]
 import { describe, expect, mock, test } from "bun:test"
 import { runHandover, backupSession, compactSession, v1HandoverPort, backupTitle, type HandoverPort } from "../src/handover-core"
 
@@ -11,34 +13,51 @@ function makePort(overrides: Partial<HandoverPort> = {}): HandoverPort {
   return {
     async forkFull() { return { id: "ses_backup_1111", title: "Original session (fork #1)" } },
     async setTitle() { return true },
+    async listTitles() { return [] },
     async compact() { return true },
     ...overrides,
   }
 }
 
 describe("backupTitle", () => {
-  test("prepends the [backup] prefix when the fork title exists", () => {
-    expect(backupTitle("TaskA (fork #2)", "ses_x")).toBe("[backup] TaskA (fork #2)")
+  test("server always returns (fork #1) for an unchanged source — suffix is stripped, numbering starts at 1", () => {
+    expect(backupTitle("TaskA (fork #1)", "ses_x")).toBe("[backup] TaskA (fork #1)")
   })
-  test("falls back to sessionID when the fork title is missing", () => {
-    expect(backupTitle(undefined, "ses_x")).toBe("[backup] ses_x")
+  test("counts existing backups of the same base (max, so deleted numbers are never reused)", () => {
+    expect(backupTitle("TaskA (fork #1)", "ses_x", ["[backup] TaskA (fork #1)", "other"])).toBe("[backup] TaskA (fork #2)")
+    expect(backupTitle("TaskA (fork #1)", "ses_x", ["[backup] TaskA (fork #1)", "[backup] TaskA (fork #3)"])).toBe("[backup] TaskA (fork #4)")
+  })
+  test("different bases never cross-count; full-width legacy suffix tolerated; missing title falls back to sessionID", () => {
+    expect(backupTitle("TaskA (fork #1)", "ses_x", ["[backup] TaskB (fork #7)"])).toBe("[backup] TaskA (fork #1)")
+    expect(backupTitle("TaskA (fork #1)", "ses_x", ["[backup] TaskA（fork #2）"])).toBe("[backup] TaskA (fork #3)")
+    expect(backupTitle(undefined, "ses_x", ["[backup] ses_x (fork #1)"])).toBe("[backup] ses_x (fork #2)")
   })
 })
 
 describe("backupSession (backup leg only)", () => {
-  test("fork→[backup] tag, no compaction queued", async () => {
+  test("fork→list→[backup] tag with sequence, no compaction queued", async () => {
     const calls: string[] = []
     const port = makePort({
-      async forkFull(sid, dir) { calls.push(`fork:${sid}:${dir}`); return { id: "ses_b", title: "T" } },
+      async forkFull(sid, dir) { calls.push(`fork:${sid}:${dir}`); return { id: "ses_b", title: "T (fork #1)" } },
       async setTitle(sid, _dir, title) { calls.push(`title:${sid}:${title}`); return true },
+      async listTitles(dir) { calls.push(`list:${dir}`); return ["[backup] T (fork #1)"] },
       async compact(sid, _dir) { calls.push(`compact:${sid}`); return true },
     })
     const r = await backupSession(port, "ses_a", "/w")
     expect(r.ok).toBe(true)
     expect(r.backupID).toBe("ses_b")
     expect(r.compacted).toBe(false)
-    expect(calls).toEqual(["fork:ses_a:/w", "title:ses_b:[backup] T"])
+    expect(calls).toEqual(["fork:ses_a:/w", "list:/w", "title:ses_b:[backup] T (fork #2)"])
     expect(r.message).toContain("ses_b".slice(0, 8))
+  })
+
+  test("list failure is fail-open: numbering degrades to (fork #1), backup still succeeds", async () => {
+    const port = makePort({
+      async forkFull() { return { id: "ses_b", title: "T (fork #1)" } },
+      async listTitles() { throw new Error("list down") },
+    })
+    const r = await backupSession(port, "ses_a", "/w")
+    expect(r.ok).toBe(true)
   })
 
   test("title-tag failure is fail-open", async () => {
@@ -78,7 +97,7 @@ describe("runHandover orchestration (manual /handover path)", () => {
     expect(r.ok).toBe(true)
     expect(r.backupID).toBe("ses_b")
     expect(r.compacted).toBe(true)
-    expect(calls).toEqual(["fork", "title:[backup] T", "compact:ses_a"])
+    expect(calls).toEqual(["fork", "title:[backup] T (fork #1)", "compact:ses_a"])
     expect(r.message).toContain("current session compacted")
   })
 
@@ -99,6 +118,7 @@ describe("v1HandoverPort adapter", () => {
       session: {
         async fork(opts: any) { calls.push(["fork", opts]); return { data: { id: "ses_f", title: "FT" } } },
         async update(opts: any) { calls.push(["update", opts]); return { data: {} } },
+        async list(opts: any) { calls.push(["list", opts]); return { data: [{ title: "[backup] FT (fork #1)" }, { title: "plain" }, {}] } },
         async summarize(opts: any) { calls.push(["summarize", opts]); return { data: true } },
       },
     }
@@ -112,8 +132,10 @@ describe("v1HandoverPort adapter", () => {
     expect(c.calls[0]).toEqual(["fork", { path: { id: "ses_a" }, query: { directory: "/w" } }])
     expect(await port.setTitle("ses_f", "/w", "[backup] FT")).toBe(true)
     expect(c.calls[1]).toEqual(["update", { path: { id: "ses_f" }, query: { directory: "/w" }, body: { title: "[backup] FT" } }])
+    expect(await port.listTitles("/w")).toEqual(["[backup] FT (fork #1)", "plain"])
+    expect(c.calls[2]).toEqual(["list", { query: { directory: "/w" } }])
     expect(await port.compact("ses_a", "/w", { providerID: "copilot", modelID: "glm-5.3" })).toBe(true)
-    expect(c.calls[2]).toEqual([
+    expect(c.calls[3]).toEqual([
       "summarize",
       { path: { id: "ses_a" }, query: { directory: "/w" }, body: { providerID: "copilot", modelID: "glm-5.3", auto: true } },
     ])
@@ -126,16 +148,18 @@ describe("v1HandoverPort adapter", () => {
     expect(c.calls.filter((call) => call[0] === "summarize")).toHaveLength(0)
   })
 
-  test("fork without id / error fields: degrades to null/false", async () => {
+  test("fork without id / error fields: degrades to null/false/[]", async () => {
     const port = v1HandoverPort({
       session: {
         async fork() { return { data: undefined, error: "boom" } },
         async update() { return { error: "x" } },
+        async list() { return { error: "z" } },
         async summarize() { return { error: "y" } },
       },
     })
     expect(await port.forkFull("s", "/w")).toBeNull()
     expect(await port.setTitle("s", "/w", "t")).toBe(false)
+    expect(await port.listTitles("/w")).toEqual([])
     expect(await port.compact("s", "/w", { providerID: "p", modelID: "m" })).toBe(false)
   })
 })

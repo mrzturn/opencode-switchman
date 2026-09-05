@@ -32,7 +32,8 @@ test("auto-handover: backup leg bounded, compaction fired detached, cooldown gua
     provider: { list: async () => [] },
     session: {
       async fork(opts: any) { calls.push(`fork:${opts?.path?.id}`); return { data: { id: "ses_backup_auto", title: "T (fork #1)" } } },
-      async update(opts: any) { calls.push(`update:${opts?.path?.id}`); return { data: {} } },
+      async update(opts: any) { calls.push(`update:${opts?.path?.id}:${opts?.body?.title}`); return { data: {} } },
+      async list(opts: any) { calls.push(`list:${opts?.query?.directory}`); return { data: [] } },
       async summarize(opts: any) { calls.push(`summarize:${opts?.body?.providerID}/${opts?.body?.modelID}:${opts?.path?.id}`); return compactPending },
     },
   }
@@ -49,7 +50,7 @@ test("auto-handover: backup leg bounded, compaction fired detached, cooldown gua
   // the hook resolves while the summarize response is still pending — the deadlock regression
   expect(Date.now() - t0).toBeLessThan(5_000)
   expect(calls).toContain("fork:ses_auto_main")
-  expect(calls).toContain("update:ses_backup_auto")
+  expect(calls).toContain("update:ses_backup_auto:[backup] T (fork #1)")
   expect(calls).toContain("summarize:copilot/glm-5.3:ses_auto_main")
   expect(readStatusLog()).toContain("auto-handover backup done")
 
