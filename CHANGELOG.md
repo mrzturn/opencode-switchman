@@ -2,7 +2,7 @@
 
 This project follows [Semantic Versioning](https://semver.org/). Release notes describe user-visible behavior; implementation details remain in the technical specification and commit history.
 
-## [Unreleased]
+## [1.0.1] - 2026-09-07
 
 ### Added
 
@@ -23,6 +23,10 @@ This project follows [Semantic Versioning](https://semver.org/). Release notes d
 - **Blinking `[RESTART NEEDED]` in the TUI sidebar** — the restart tag next to the rainbow "switchman" label used to render as static red text that was easy to stop seeing; it now blinks (~600ms on/off off the marquee heartbeat) in bold red while `active-matrix.json.restartRequired` is non-empty, and stays hidden otherwise (fail-open unchanged).
 
 - **New provider models surface without a restart** — the plugin used to trust its cross-restart provider cache blindly and only refreshed it in the background for the *next* startup, so models a provider added mid-cycle (e.g. a new flagship appearing on GitHub Copilot) stayed missing from the shell matrix, the /modelRank and /poolConfig lists, and kept triggering a false "favorites contain invalid models" banner until a second restart. Now: a cache older than 24h triggers a live provider.list probe before the superset build (cache stays the fail-open fallback), and the background watchdog detects model-list drift against the running superset and rebuilds it in place — manifest, lists, banner and activation view turn consistent immediately. Dispatching the brand-new shells still needs one opencode restart (cfg.agent is injected once — platform constraint), and the status log says so explicitly.
+
+### Changed
+
+- **AI-assisted install guide in both READMEs** — the install flow now opens with a "let your AI install it for you" section: a copy-paste prompt that anchors the official repo and npm package and walks any AI through installing the latest npm release, completing the `opencode-switchman.jsonc` configuration, and verifying with `/switchman-doctor` plus the banner/load checks before declaring success.
 
 ## [1.0.0] - 2026-09-05
 
