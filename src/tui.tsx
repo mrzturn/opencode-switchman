@@ -314,8 +314,11 @@ function ViewInner(props: { api: TuiPluginApi; sessionID: string }) {
                 {(ch, i) => <span style={{ fg: hsvToHex(i() * 28 + tick() * 3, 0.65, 1) }}>{ch}</span>}
               </For>
             </b>
-            {restartRequired().length > 0 && (
-              <span style={{ fg: theme().error }}> [RESTART REQUIRED]</span>
+            {/* [2026-09-06]-[blinking restart tag: ~600ms on/off via the 150ms marquee heartbeat (tick/4 parity), bold
+                red — a pending shell-registration restart used to render as a static tag that was easy to stop seeing;
+                fail-open unchanged: empty restartRequired list renders nothing]-[impacts the sidebar title row only] */}
+            {restartRequired().length > 0 && Math.floor(tick() / 4) % 2 === 0 && (
+              <span style={{ fg: theme().error }}><b> [RESTART NEEDED]</b></span>
             )}
           </text>
           <For each={routes()}>

@@ -235,3 +235,38 @@ export function laneBaseChains(input: Omit<LanePolicyInput, "builtin">, builtinL
   }
   return out
 }
+
+/**
+ * [2026-09-06]-[health-aware seats: filter shells whose probe combo verdict is "down" BEFORE lane seat allocation.
+ * The seat caps in computeLaneChain (primary.slice(0,4) + fallbacks.slice(0,2)) are capability-tier-only, so without
+ * this pre-filter every seat can land on a dead combo (e.g. a whole provider answering 402) while healthy lower-tier
+ * shells are sliced out in advance and the lane ends empty at runtime ("all unavailable→terminal failure protocol").
+ * Pure: the verdict lookup is injected by the caller, no state-file IO here (same "matrix down" predicate the registry
+ * uses to mark a shell disabled in state.ts buildRegistry). Unknown/missing verdicts fail-open (kept); "strained" is
+ * not "down" and stays.]-[impact: dynamic base chains (index.ts baseChainFor) allocate seats to live shells only]
+ */
+export function filterMatrixDownShells<T extends { matrixKey: string }>(
+  shells: readonly T[],
+  comboStatusOf?: (matrixKey: string) => string | null | undefined,
+): T[] {
+  if (!comboStatusOf) return [...shells]
+  return shells.filter((s) => String(comboStatusOf(s.matrixKey) ?? "").toLowerCase() !== "down")
+}
+
+/**
+ * [2026-09-06]-[pool-exhaustion-aware seats (sibling of filterMatrixDownShells, same call site): exclude shells whose
+ * provider pool is PROVEN exhausted (snapshot-driven glmExhausted/copilotExhausted/deepseekExhausted verdict, NOT the
+ * policy-gated quotaExhaustedFlags) from base-chain SEATS. Without it, combos that probed "strained" (429 noise from a
+ * dead pool) or "unknown/missing" fail open, outrank healthy pools by tier, and take the lane head — the live
+ * mechanical chain headed with a Copilot shell while every Copilot call was doomed (monthly quota exhausted). This is
+ * SELECTION only, not dispatch denial: observe-only (routing:false) pools keep their no-hard-denial contract; the
+ * shells can still re-enter the chain via the computeLane health-aware backfill tail. Pure: resolver injected, no
+ * state-file IO here.]-[impact: dynamic base chains never seat a proven-exhausted pool ahead of live pools]
+ */
+export function filterPoolUnavailableShells<T extends { pool: string }>(
+  shells: readonly T[],
+  poolUnavailable?: (pool: string) => boolean,
+): T[] {
+  if (!poolUnavailable) return [...shells]
+  return shells.filter((s) => !poolUnavailable(String(s.pool)))
+}

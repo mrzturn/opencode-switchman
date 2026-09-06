@@ -307,6 +307,114 @@ describe("compute_lane", () => {
     expect(firstCross).toBeGreaterThanOrEqual(0)
     expect(firstCross).toBeLessThan(firstSame)
   })
+  // [2026-09-06]-[health-aware backfill contract: a seat-limited base whose every candidate dies to runtime health
+  //  gates (matrix-down / breaker) must backfill from the health-dropped set instead of reporting
+  //  "all unavailable→terminal failure protocol"; structural drops (pool-config / modality) are never resurrected]
+  test("26a [2026-09-06] health-aware backfill: every seated candidate matrix-down → chain re-ranked from the health-dropped set (non-empty, status ok)", () => {
+    const base = ["glm-mx-53f-high", "ds-mx-v4fv-high"]
+    const matrix = matrixOk()
+    for (const name of base) matrix[manifest.shells.find((s) => s.name === name)!.matrixKey] = { status: "down" }
+    const r = computeLane("vision", base, { registry: fullRegistry(), matrix, routing: { down_agents: {}, down_expiry: {} } } as any)
+    expect(r.dropped.map((d) => d.reason)).toEqual(["matrix-down", "matrix-down"])
+    expect([...r.chain.map((c) => c.shell)].sort()).toEqual([...base].sort())
+    expect(r.status).toBe("ok")
+  })
+  test("26b breaker-dropped candidate backfills the same way (health-class drop, single relaxed ranking pass)", () => {
+    const r = computeLane("main", ["glm-mx-53-high"], {
+      registry: fullRegistry(),
+      matrix: matrixOk(),
+      routing: { down_agents: { "glm-mx-53-high": "consecutive failures" }, down_expiry: {} },
+    } as any)
+    expect(r.dropped.map((d) => d.reason)).toEqual(["breaker"])
+    expect(r.chain.map((c) => c.shell)).toEqual(["glm-mx-53-high"])
+    expect(r.status).toBe("ok")
+  })
+  test("26c backfill must NOT resurrect pool-config-excluded candidates (lane stays exhausted)", () => {
+    const r = computeLane("vision", ["glm-mx-53f-high"], {
+      registry: fullRegistry(),
+      matrix: matrixOk(),
+      routing: { down_agents: {}, down_expiry: {} },
+      poolConfig: { vision: new Set(["deepseek-v4-flash-vision-exp"]) },
+    } as any)
+    expect(r.dropped.map((d) => d.reason)).toEqual(["pool-config"])
+    expect(r.chain).toEqual([])
+    expect(r.status).toBe("exhausted")
+  })
+  test("26d backfill must NOT resurrect modality-mismatched candidates (lane stays exhausted)", () => {
+    const r = computeLane("vision", ["glm-mx-53-high"], {
+      registry: fullRegistry(),
+      matrix: matrixOk(),
+      routing: { down_agents: {}, down_expiry: {} },
+      modality: "vision",
+    } as any)
+    expect(r.dropped.map((d) => d.reason)).toEqual(["modality"])
+    expect(r.chain).toEqual([])
+    expect(r.status).toBe("exhausted")
+  })
+  test("26e mixed drops: the matrix-down candidate backfills, the pool-config-excluded one does not", () => {
+    const matrix = matrixOk()
+    matrix[manifest.shells.find((s) => s.name === "glm-mx-53f-high")!.matrixKey] = { status: "down" }
+    const r = computeLane("vision", ["glm-mx-53f-high", "glm-mx-53-high"], {
+      registry: fullRegistry(),
+      matrix,
+      routing: { down_agents: {}, down_expiry: {} },
+      poolConfig: { vision: new Set(["glm-5.3-flash"]) }, // allows glm-5.3-flash, excludes glm-5.3
+    } as any)
+    expect(r.dropped.map((d) => d.reason)).toEqual(["matrix-down", "pool-config"])
+    expect(r.chain.map((c) => c.shell)).toEqual(["glm-mx-53f-high"])
+  })
+  test("26f no backfill while the chain is non-empty (healthy head stays; the down tail is not appended)", () => {
+    const matrix = matrixOk()
+    matrix[manifest.shells.find((s) => s.name === "ds-mx-v4fv-high")!.matrixKey] = { status: "down" }
+    const r = computeLane("vision", ["glm-mx-53f-high", "ds-mx-v4fv-high"], { registry: fullRegistry(), matrix, routing: { down_agents: {}, down_expiry: {} } } as any)
+    expect(r.chain.map((c) => c.shell)).toEqual(["glm-mx-53f-high"])
+  })
+  // [2026-09-06 pool-exhaustion-aware seats]-[observe-only SELECTION contract: a PROVEN-exhausted pool (snapshot-driven
+  //  poolUnavailable resolver, same math as copilotExhausted but NOT policy-gated) must not take the head seat by tier
+  //  (live incident: mechanical headed copilot-53codex-high — a strained 429 combo inside a 402-dead pool — while GLM
+  //  was healthy); its candidates may only re-enter as the chain TAIL via the relaxed backfill pass when nothing
+  //  healthy exists. No dispatch-denial semantics change]
+  test("26g proven-exhausted pool's tier-better shell loses the head seat to a healthy lower-tier shell (reason=pool-unavailable)", () => {
+    const r = computeLane("vision", ["copilot-mx-sol-high", "glm-mx-53f-high"], {
+      registry: fullRegistry(),
+      matrix: matrixOk(),
+      routing: { down_agents: {}, down_expiry: {} },
+      poolUnavailable: (pool: string) => pool === "copilot",
+    } as any)
+    expect(r.dropped.map((d) => d.reason)).toEqual(["pool-unavailable"])
+    expect(r.chain.map((c) => c.shell)).toEqual(["glm-mx-53f-high"])
+    expect(r.status).toBe("ok")
+  })
+  test("26h exhausted-pool shell backfills the chain TAIL when the lane would otherwise be empty (never ahead of healthy candidates)", () => {
+    const r = computeLane("vision", ["copilot-mx-sol-high"], {
+      registry: fullRegistry(),
+      matrix: matrixOk(),
+      routing: { down_agents: {}, down_expiry: {} },
+      poolUnavailable: (pool: string) => pool === "copilot",
+    } as any)
+    expect(r.dropped.map((d) => d.reason)).toEqual(["pool-unavailable"])
+    expect(r.chain.map((c) => c.shell)).toEqual(["copilot-mx-sol-high"])
+    expect(r.status).toBe("ok")
+  })
+  test("26i backfill class order: health-dropped candidates rank ahead of proven-exhausted-pool candidates", () => {
+    const r = computeLane("vision", ["glm-mx-53-high", "copilot-mx-sol-high"], {
+      registry: fullRegistry(),
+      matrix: matrixOk(),
+      routing: { down_agents: { "glm-mx-53-high": "consecutive failures" }, down_expiry: {} },
+      poolUnavailable: (pool: string) => pool === "copilot",
+    } as any)
+    expect(r.dropped.map((d) => d.reason)).toEqual(["breaker", "pool-unavailable"])
+    expect(r.chain.map((c) => c.shell)).toEqual(["glm-mx-53-high", "copilot-mx-sol-high"])
+  })
+  test("26j resolver absent or pool healthy → today's tier ordering unchanged (fail-open identity)", () => {
+    const p = { registry: fullRegistry(), matrix: matrixOk(), routing: { down_agents: {}, down_expiry: {} } } as any
+    // absent resolver: the tier-better exhausted-pool shell still heads, exactly as before the fix
+    const noResolver = computeLane("vision", ["copilot-mx-sol-high", "glm-mx-53f-high"], p)
+    expect(noResolver.chain.map((c) => c.shell)).toEqual(["copilot-mx-sol-high", "glm-mx-53f-high"])
+    // resolver present but the pool not exhausted: unchanged
+    const healthy = computeLane("vision", ["copilot-mx-sol-high", "glm-mx-53f-high"], { ...p, poolUnavailable: () => false })
+    expect(healthy.chain.map((c) => c.shell)).toEqual(["copilot-mx-sol-high", "glm-mx-53f-high"])
+  })
 })
 
 // ================= 4. Breaker (3)=================

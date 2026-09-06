@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { computeLaneChain } from "../src/lane-policy"
+import { computeLaneChain, filterMatrixDownShells, filterPoolUnavailableShells } from "../src/lane-policy"
 import { loadManifest } from "../src/state"
 import { baseScoreFromCapabilityIndex, loadBundledCapability } from "../src/capability"
 import { baseScore } from "../src/model-ranks"
@@ -211,5 +211,52 @@ describe("candidate-chain algorithm", () => {
       expect(ds < 0 || ds === chain.length - 1).toBe(true)
     }
     expect(manifest.lanes.review.every((name) => manifest.shells.find((shell) => shell.name === name)!.capability === "ro")).toBe(true)
+  })
+  // [2026-09-06]-[health-aware seats contract: seat caps are capability-tier-only, so matrix-down shells must be
+  //  filtered BEFORE seat allocation (pure filterMatrixDownShells, verdict lookup injected — same predicate as the
+  //  registry's disabled mark); otherwise a whole provider answering 402 slices healthy lower-tier shells out and the
+  //  lane ends empty (live incident: vision/review went fully empty on 2026-09-06)]
+  test("[2026-09-06] health-aware seats: matrix-down shells are filtered before seat allocation; unknown/missing verdicts and strained fail-open", () => {
+    const cand = [
+      { name: "s-dead", modelId: "s", pool: "copilot", effort: "high", capability: "rw", vision: false, matrixKey: "p|s|high" },
+      { name: "b-alive", modelId: "b", pool: "glm", effort: "high", capability: "rw", vision: false, matrixKey: "p|b|high" },
+      { name: "c-unprobed", modelId: "c", pool: "glm", effort: "high", capability: "rw", vision: false, matrixKey: "p|c|high" },
+    ]
+    const statusOf = (key: string) => ({ "p|s|high": "down", "p|b|high": "ok", "p|c|high": null }[key] ?? null)
+    expect(filterMatrixDownShells(cand, statusOf).map((s) => s.name)).toEqual(["b-alive", "c-unprobed"])
+    // no lookup injected = identity (fail-open)
+    expect(filterMatrixDownShells(cand)).toHaveLength(3)
+    // strained is not down: stays; verdict lookup is case-tolerant ("DOWN" filters too)
+    expect(filterMatrixDownShells(cand, (k) => (k === "p|s|high" ? "strained" : "ok"))).toHaveLength(3)
+    expect(filterMatrixDownShells(cand, (k) => (k === "p|s|high" ? "DOWN" : "ok")).map((s) => s.name)).toEqual(["b-alive", "c-unprobed"])
+  })
+  test("[2026-09-06] health-aware seats: tier-only seat caps fill with dead S/A shells — after the pre-filter the healthy lower-tier shell takes the seat", () => {
+    const five = [
+      { name: "s1", modelId: "s1", pool: "copilot", effort: "high", capability: "rw", vision: true },
+      { name: "s2", modelId: "s2", pool: "copilot", effort: "high", capability: "rw", vision: true },
+      { name: "a3", modelId: "a3", pool: "copilot", effort: "high", capability: "rw", vision: true },
+      { name: "a4", modelId: "a4", pool: "copilot", effort: "high", capability: "rw", vision: true },
+      { name: "b5", modelId: "b5", pool: "glm", effort: "high", capability: "rw", vision: true },
+    ]
+    const cap = (id: string) => ({ s1: 1, s2: 1, a3: 0.85, a4: 0.85, b5: 0.7 }[id]!)
+    const capTier = (id: string) => ({ s1: "S", s2: "S", a3: "A", a4: "A", b5: "B" }[id] as "S" | "A" | "B")
+    const capOf = (id: string) => ({ score: cap(id), tier: capTier(id) })
+    // tier-only world: the four S/A shells occupy all four primary seats, the healthy B shell is sliced out
+    expect(computeLaneChain(five, capOf, "vision")).toEqual(["s1", "s2", "a3", "a4"])
+    // with the dead S/A shells pre-filtered (baseChainFor health-aware seats), the live B shell heads the chain
+    const dead = new Set(["s1", "s2", "a3", "a4"])
+    expect(computeLaneChain(five.filter((s) => !dead.has(s.name)), capOf, "vision")).toEqual(["b5"])
+  })
+  test("[2026-09-06] pool-exhaustion-aware seats: proven-exhausted pools are filtered before seat allocation; resolver absent = identity (fail-open)", () => {
+    const cand = [
+      { name: "cp-dead-pool", modelId: "cp", pool: "copilot", effort: "high", capability: "rw", vision: true, matrixKey: "p|cp|high" },
+      { name: "glm-alive", modelId: "glm", pool: "glm", effort: "high", capability: "rw", vision: true, matrixKey: "p|glm|high" },
+    ]
+    const sunk = filterPoolUnavailableShells(cand, (pool) => pool === "copilot")
+    expect(sunk.map((s) => s.name)).toEqual(["glm-alive"])
+    // no resolver = identity (fail-open, e.g. quota data unavailable)
+    expect(filterPoolUnavailableShells(cand)).toHaveLength(2)
+    // a healthy pool is never sunk
+    expect(filterPoolUnavailableShells(cand, () => false)).toHaveLength(2)
   })
 })

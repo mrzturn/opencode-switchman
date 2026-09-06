@@ -14,7 +14,7 @@ import { basename, join } from "node:path"
 import { AGENTS_MD } from "./assets/agents-md"
 import { DELEGATION_TEMPLATE } from "./assets/delegation-template"
 import {
-  loadContext, buildRegistry, loadManifest, laneShells, paths,
+  loadContext, buildRegistry, loadManifest, laneShells, paths, loadMatrix,
   cleanExpired, ensureStateDir, stateDir, loadSupersetShells, writeJsonAtomic,
   appendStatusLog,
   writeRouteSnapshot,
@@ -68,7 +68,7 @@ import { parseRouteMeta } from "./meta"
 import { relayImageParts } from "./relay"
 import { syncBundledSkills } from "./skill-sync"
 import { MatrixManager } from "./matrix-manager"
-import { laneBaseChain } from "./lane-policy"
+import { laneBaseChain, filterMatrixDownShells, filterPoolUnavailableShells } from "./lane-policy"
 import {
   buildShells, loadCatalog, bundledModelIndex, isConversational, toManifestEntry, freeFloorModels,
   contextWindowOf,
@@ -770,6 +770,32 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     }
   }
 
+  // [2026-09-06]-[pool-exhaustion-aware seats: snapshot-driven "pool is PROVEN exhausted" resolver for chain SELECTION
+  //  (base-chain seat filter + computeLane pool-unavailable drop/backfill-tail). Same exhaustion math as
+  //  quotaExhaustedFlags (glmExhausted/copilotExhausted/deepseekExhausted over the live quota snapshot) but deliberately
+  //  NOT gated by policy.<pool>.routing: under observe-only (routing:false, factory default) pools keep their
+  //  no-hard-denial contract, yet a proven-exhausted pool (e.g. Copilot has_quota=false / remaining<0) must not take
+  //  chain-head seats by tier ahead of live pools. Missing snapshot (observe off) or any error reads false = fail-open
+  //  (no proof, no sinking). SELECTION only — the six dispatch gates never receive this resolver, so no denial path
+  //  changes]
+  function poolUnavailableOf(): (pool: string) => boolean {
+    try {
+      const qv = quotaView(creds as any, { observe: {
+        glm: policy.glm.observe,
+        deepseek: policy.deepseek.observe,
+        copilot: policy.copilot.observe,
+      } })
+      const flags = {
+        glm: glmExhausted(qv.glm, options.quota!.glm!.fiveHourReservePct)[0],
+        copilot: copilotExhausted(qv.copilot)[0],
+        deepseek: deepseekExhausted(qv.deepseek)[0],
+      }
+      return (pool: string) => flags[pool as Pool] === true
+    } catch {
+      return () => false
+    }
+  }
+
   function currentContext() {
     warmup()
     const ctx = loadContext(options, creds as any, dynamic ? dynamicManifest() : undefined)
@@ -808,8 +834,20 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     if (!dynamic || !manager) return laneShells(loadContext(options, creds as any), lane)
     const m = loadManifest()
     const attrs = new Map<string, { effort: string; capability: string; vision: boolean; pool: string; provider: string; modelId: string; cost: number | null }>()
+    // [2026-09-06]-[health-aware seats: matrix-down shells are removed BEFORE seat allocation (same "combo down"
+    //  verdict the registry uses to mark a shell disabled), so the capability-tier-only top-4/top-2 seat caps can no
+    //  longer spend every seat on dead combos while healthy lower-tier shells get sliced out — vision/review went
+    //  fully empty when a whole provider answered 402 and the seated shells all probed down. Unknown/missing combos
+    //  fail-open (kept). [pool-exhaustion-aware seats: shells of a PROVEN-exhausted pool (snapshot-driven, observe-only
+    //  safe) are excluded from seats the same way — a "strained" 429 combo inside a dead pool must not outrank live
+    //  pools by tier (live mechanical head was copilot-53codex-high while Copilot monthly quota was exhausted)]]
+    //  -[impact: dynamic lane base chains; static/custom lanes untouched]
+    const comboStatusOf = (matrixKey: string): string | null => {
+      const st = loadMatrix()?.combos?.[matrixKey]?.status
+      return typeof st === "string" ? st : null
+    }
     // [2026-08-29]-[failure classification: dynamic filters retired-model shells first, so models 404ing continuously never re-enter redirect candidates]
-    for (const s of filterRetiredShells((dynamicManifest() ?? m).shells)) {
+    for (const s of filterPoolUnavailableShells(filterMatrixDownShells(filterRetiredShells((dynamicManifest() ?? m).shells), comboStatusOf), poolUnavailableOf())) {
       attrs.set(s.name, { effort: s.effort, capability: s.capability, vision: s.vision, pool: String(s.pool), provider: s.provider, modelId: s.modelId, cost: costOf(s.modelId) })
     }
     return laneBaseChain(lane, {
@@ -869,6 +907,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
                preferredModels: preferredModelIds(),
                // [2026-09-03]-[task-pool selection: banner recommendation matches each lane's selection list]
                poolConfig: loadPoolConfig(),
+               // [2026-09-06]-[pool-exhaustion-aware seats: banner heads with live pools even under observe-only policy]
+               poolUnavailable: poolUnavailableOf(),
             })
           } catch { /* one lane failing never affects the others */ }
         }
@@ -998,6 +1038,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         glmPeak: extras.glmPeak,
         states: extras.states as any,
         poolConfig: loadPoolConfig(),
+        // [2026-09-06]-[pool-exhaustion-aware seats: lane-head hints point at live pools, same source as the banner]
+        poolUnavailable: poolUnavailableOf(),
       } as any, undefined)
     } catch { return null }
   }
@@ -1107,6 +1149,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         states: extras?.states as any,
         // [2026-09-03]-[deny-postscript candidates never recommend models outside the task-pool selection list (same source as gate 5.5/banner)]
         poolConfig: loadPoolConfig(),
+        // [2026-09-06]-[pool-exhaustion-aware seats: redirect hints point at live pools, same source as the banner]
+        poolUnavailable: poolUnavailableOf(),
       } as any, agent)
     } catch {
       return null
