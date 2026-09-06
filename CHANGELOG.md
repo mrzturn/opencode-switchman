@@ -12,6 +12,8 @@ This project follows [Semantic Versioning](https://semver.org/). Release notes d
 
 ### Fixed
 
+- **Split-screen pane no longer missing when the main session re-invokes a previously used subagent** — a task call carrying `task_id` makes opencode reuse the previous child session instead of creating a new one, so no `session.created` event fires and the pane trigger (which relied entirely on that event) never ran — resume dispatches opened no pane. The plugin now detects the reuse at the allowed dispatch sites, verifies the reused session still exists (a stale `task_id` falls back to a fresh session, which the existing event path covers), and opens/maintains the pane directly; a viewer pane the user closed moments earlier no longer swallows the re-display either.
+
 - **New provider models surface without a restart** — the plugin used to trust its cross-restart provider cache blindly and only refreshed it in the background for the *next* startup, so models a provider added mid-cycle (e.g. a new flagship appearing on GitHub Copilot) stayed missing from the shell matrix, the /modelRank and /poolConfig lists, and kept triggering a false "favorites contain invalid models" banner until a second restart. Now: a cache older than 24h triggers a live provider.list probe before the superset build (cache stays the fail-open fallback), and the background watchdog detects model-list drift against the running superset and rebuilds it in place — manifest, lists, banner and activation view turn consistent immediately. Dispatching the brand-new shells still needs one opencode restart (cfg.agent is injected once — platform constraint), and the status log says so explicitly.
 
 ## [1.0.0] - 2026-09-05

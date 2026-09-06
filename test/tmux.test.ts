@@ -232,6 +232,43 @@ describe("TmuxPaneManager lifecycle", () => {
     expect(log).toEqual([])
   })
 
+  // [2026-09-06 fix]-[resume contract: "repeat-call a previously used subagent" is a task_id REUSE of the same child
+  //  session (no session.created fires) — noteChild must (re)display it in both stale-slot and completed states]
+  test("resume of the same child re-displays after its viewer pane was user-closed (stale slot swept before the duplicate check)", async () => {
+    const log: string[][] = []
+    const dead = new Set<string>()
+    const m = await inited(manager(log, {}, { deadPanes: dead }), log)
+    m.noteChild("main", "ses_a", "agent-a")
+    await m.flush()
+    expect(m.stats().panes).toBe(1)
+    dead.add("%1") // user quit the viewer pane while the child still runs (slot lingers up to one 4s poll period)
+    log.length = 0
+    m.noteChild("main", "ses_a", "agent-a") // main session resumes the same subagent (task_id reuse)
+    await m.flush()
+    expect(m.stats().panes).toBe(1)
+    const resawns = calls(log, "respawn-pane")
+    expect(resawns.length).toBe(1)
+    expect(resawns[0][resawns[0].length - 1]).toContain("-s ses_a")
+    expect(m.tracking("ses_a")).toBe(true)
+  })
+
+  test("resume of a finished child (slot already closed by completion) opens a fresh pane", async () => {
+    const log: string[][] = []
+    const m = await inited(manager(log), log)
+    m.noteChild("main", "ses_a", "agent-a")
+    await m.flush()
+    m.noteChildEnd("ses_a")
+    await m.flush()
+    expect(m.stats().panes).toBe(0)
+    log.length = 0
+    m.noteChild("main", "ses_a", "agent-a") // task_id reuse of the finished session
+    await m.flush()
+    expect(m.stats().panes).toBe(1)
+    expect(calls(log, "split-window").length).toBe(1)
+    const resawns = calls(log, "respawn-pane")
+    expect(resawns[0][resawns[0].length - 1]).toContain("-s ses_a")
+  })
+
   test("focus preservation: if the window's active pane moved during ops, select-pane restores it", async () => {
     const log: string[][] = []
     // active-pane query sequence: %0 before ops, %1 after (split moved focus) → restore to %0

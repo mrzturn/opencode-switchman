@@ -384,6 +384,35 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     } catch { /* fail-open */ }
   }
 
+  /**
+   * [2026-09-06 fix]-[tmux pane mirroring resume: a task call carrying task_id REUSES the previous child session
+   *  (opencode task tool skips sessions.create) — no session.created event fires, so the intent-matching trigger
+   *  never runs and the pane would never (re)open. Verify the reused session exists first: on a stale/unknown
+   *  task_id opencode silently falls back to a FRESH session whose pane still arrives via session.created, and a
+   *  blind pane here would attach to nothing. A lookup error fails open (pane opened anyway — house style; the
+   *  session clearly existed or the model would have no task_id). Called right after every allowed-dispatch
+   *  traceDispatch — never on deny paths]
+   */
+  function noteResumedChild(sessionID: string | undefined, shellName: string, args: unknown): void {
+    try {
+      const tid = (args as any)?.task_id
+      if (!sessionID || isShellOrInternalSession(sessionID) || typeof tid !== "string" || !tid) return
+      void withTimeout(Promise.resolve(
+        (pluginClient as any)?.session?.get?.({ path: { id: tid }, query: { directory: pluginDirectory } }),
+      ), 3_000)
+        .then((res) => {
+          // verified missing → opencode will create a fresh session; the session.created path covers that pane
+          if (res && !(res as any)?.data?.id) return
+          void tmuxPanes.noteChild(sessionID, tid, shellName)
+          appendStatusLog(`tmux pane mirroring: resume dispatch ses_${tid.slice(-6)} (${shellName}) — task_id reuse, pane opened directly (no session.created will fire)`)
+        })
+        .catch(() => {
+          void tmuxPanes.noteChild(sessionID, tid, shellName)
+          appendStatusLog(`tmux pane mirroring: resume dispatch ses_${tid.slice(-6)} (${shellName}) — session lookup failed, fail-open pane`)
+        })
+    } catch { /* fail-open */ }
+  }
+
   function clearBannerCache(): void {
     bannerCache = null
   }
@@ -1447,6 +1476,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
               if (cand && tryRedirect(cand, output.args?.prompt)) {
                 appendStatusLog(`auto-redirect ${agent} → ${cand} (uninjected shell; redirected to the chain-head candidate)`)
                 traceDispatch(input.sessionID, cand, output.args?.prompt, true)
+                noteResumedChild(input.sessionID, cand, output.args)
                 return
               }
             }
@@ -1471,6 +1501,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
                   output.args.prompt = newPrompt
                   appendStatusLog(`auto-redirect ${agent} → ${cand} (built-in agent blocked; appended a synthetic ROUTE_META)`)
                   traceDispatch(input.sessionID, cand, newPrompt, true)
+                  noteResumedChild(input.sessionID, cand, output.args)
                   return
                 }
               }
@@ -1480,16 +1511,21 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           }
           appendStatusLog(noteUnknownAgent(agent))
           traceDispatch(input.sessionID, agent, output.args?.prompt, false)
+          noteResumedChild(input.sessionID, agent, output.args)
           return
         }
         const r = checkShell(agent, shell, output.args?.prompt, gateSnap)
         if (r.note) appendStatusLog(r.note)
-        if (!r.deny) traceDispatch(input.sessionID, agent, output.args?.prompt, false)
+        if (!r.deny) {
+          traceDispatch(input.sessionID, agent, output.args?.prompt, false)
+          noteResumedChild(input.sessionID, agent, output.args)
+        }
         if (r.deny) {
           // [2026-09-04]-[autoRedirect: denied and a hint candidate is already computed → one-hop silent redirect (guard re-check), zero retries]
           if (tryRedirect(r.redirect, output.args?.prompt)) {
             appendStatusLog(`auto-redirect ${agent} → ${r.redirect} (${r.deny.slice(0, 60)})`)
             traceDispatch(input.sessionID, r.redirect ?? agent, output.args?.prompt, true)
+            noteResumedChild(input.sessionID, r.redirect ?? agent, output.args)
             return
           }
           // [2026-09-04]-[autoRedirect: gate 6 META invalid — synthesize a ROUTE_META at the prompt tail for non-review lanes and re-check the same
@@ -1506,6 +1542,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
                 output.args.prompt = newPrompt
                 appendStatusLog(`auto-redirect ${agent} (added ROUTE_META, ${lane} lane)`)
                 traceDispatch(input.sessionID, agent, newPrompt, true)
+                noteResumedChild(input.sessionID, agent, output.args)
                 return
               }
             }
@@ -1617,7 +1654,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             // [2026-09-05]-[artifact workspace: registered AFTER the agent classification above (shell/internal sessions excluded)]
             noteWorkspaceSession((event as any).properties?.info)
             // [2026-09-06]-[tmux pane mirroring: a child session (parentID set) whose agent matches a recorded dispatch
-            //  intent opens as a live attach pane; internal sessions (title/summary/compaction) never match and are ignored]
+            //  intent opens as a live attach pane; internal sessions (title/summary/compaction) never match and are ignored.
+            //  task_id RESUME dispatches reuse the child session and never fire session.created — noteResumedChild at the
+            //  allowed dispatch sites covers them]
             const childParent = (event as any).properties?.info?.parentID
             if (typeof childParent === "string" && childParent) {
               const q = pendingTask.get(childParent)

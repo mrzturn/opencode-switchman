@@ -172,6 +172,9 @@ export class TmuxPaneManager {
     this.children.set(childSessionId, { id: childSessionId, agent, main: mainSessionId })
     this.enqueue(async () => {
       if (!this.ready || !this.optionsOf().enabled) return
+      // [2026-09-06 fix]-[resume re-display: sweep dead panes BEFORE the duplicate check — a user-closed viewer of
+      //  this same child lingers in slots up to one poll period (4s) and would otherwise swallow the re-display]
+      await this.dropDeadSlots()
       if (this.queue.some((c) => c.id === childSessionId) || this.slots.some((s) => s.child.id === childSessionId)) return
       await this.displayChild({ id: childSessionId, agent, main: mainSessionId })
     })
