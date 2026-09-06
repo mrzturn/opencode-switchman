@@ -5,7 +5,7 @@ import { canonicalKeyOf, defaultProviderConfig, genericProviderDefaults, PROVIDE
 import type { PeakRange, ProviderKey, ProviderUserConfig } from "./provider-config"
 import type { CapabilityTierThresholds, Lane, Pool, RoutePolicy, SwitchmanOptions } from "./types"
 import { DEFAULT_LANG_CANDIDATES } from "./types"
-import { DEFAULT_READ_BUDGET_TOKENS, MAX_READ_BUDGET_TOKENS, MIN_READ_BUDGET_TOKENS } from "./context-watch"
+import { DEFAULT_READ_BUDGET_TOKENS, MAX_READ_BUDGET_TOKENS, MAX_SUBAGENT_CAP_TOKENS, MIN_READ_BUDGET_TOKENS, MIN_SUBAGENT_CAP_TOKENS } from "./context-watch"
 
 export interface ConfigDiagnostic { code: string; level: "error" | "warn" | "info"; path?: string; hint?: string }
 // [2026-09-04]-[English localization: translate CLI messages and comments; no logic change]
@@ -16,7 +16,7 @@ export interface ConfigDiagnostic { code: string; level: "error" | "warn" | "inf
 export interface UserQuotaConfig { glmFiveHourReservePct: number; deepseekLowBalanceWarnCny: number }
 export interface UserCapabilityConfig { enabled: boolean; source: "auto" | "artificial-analysis" | "openrouter"; apiKey?: string; tierThresholds?: CapabilityTierThresholds | "quantile"; lmarenaCheck: boolean }
 export interface UserMatrixConfig { mode: "auto" | "app" | "tui" | "legacy"; watch: boolean }
-export interface UserContextConfig { gates: boolean; softTokens: number; hardTokens: number; forceTokens: number; autoHandover: boolean; readBudgetTokens?: number }
+export interface UserContextConfig { gates: boolean; softTokens: number; hardTokens: number; forceTokens: number; autoHandover: boolean; readBudgetTokens?: number; subagentForceTokens: number; subagentCap: boolean }
 export interface UserConfig {
   version: number
   providers: Record<string, ProviderUserConfig>
@@ -43,7 +43,7 @@ export interface UserConfig {
 }
 export interface LoadedUserConfig { path: string; config: UserConfig; diagnostics: ConfigDiagnostic[]; generated: boolean }
 
-export const DEFAULT_CONTEXT_TOKENS = { soft: 60_000, hard: 80_000, force: 120_000 } as const
+export const DEFAULT_CONTEXT_TOKENS = { soft: 60_000, hard: 80_000, force: 120_000, subagentForce: 100_000 } as const
 export const DEFAULT_DELEGATION_FLOOR = 3_000
 
 /** Factory defaults for behavior sections (fillMissing baseline; only bad-typed values fall back and report SWM037) */
@@ -55,7 +55,7 @@ export function defaultBehaviorConfig(): Pick<UserConfig, "quota" | "cost" | "ca
     matrix: { mode: "auto", watch: true },
     banner: { enabled: true },
     rules: { enabled: true, delegationFloor: DEFAULT_DELEGATION_FLOOR },
-    context: { gates: true, softTokens: DEFAULT_CONTEXT_TOKENS.soft, hardTokens: DEFAULT_CONTEXT_TOKENS.hard, forceTokens: DEFAULT_CONTEXT_TOKENS.force, autoHandover: true, readBudgetTokens: DEFAULT_READ_BUDGET_TOKENS },
+    context: { gates: true, softTokens: DEFAULT_CONTEXT_TOKENS.soft, hardTokens: DEFAULT_CONTEXT_TOKENS.hard, forceTokens: DEFAULT_CONTEXT_TOKENS.force, autoHandover: true, readBudgetTokens: DEFAULT_READ_BUDGET_TOKENS, subagentForceTokens: DEFAULT_CONTEXT_TOKENS.subagentForce, subagentCap: true },
     builtinAgents: { mode: "deny" },
     injection: { mode: "chain" },
     dispatch: { autoRedirect: true },
@@ -182,6 +182,9 @@ export function validateUserConfig(value: unknown): { config: UserConfig; diagno
   if (typeof tk.autoHandover !== "boolean") bad("context.autoHandover", () => { filled.context.autoHandover = defaults.context.autoHandover })
   // [2026-09-05]-[v1 read budget: finite token number clamped to [MIN_READ_BUDGET_TOKENS, MAX_READ_BUDGET_TOKENS]; bad values fall back to the factory default (SWM037)]
   if (typeof tk.readBudgetTokens !== "number" || !Number.isFinite(tk.readBudgetTokens) || tk.readBudgetTokens < MIN_READ_BUDGET_TOKENS || tk.readBudgetTokens > MAX_READ_BUDGET_TOKENS) bad("context.readBudgetTokens", () => { filled.context.readBudgetTokens = defaults.context.readBudgetTokens })
+  // [2026-09-06]-[subagent hard cap: finite token number clamped to [MIN_SUBAGENT_CAP_TOKENS, MAX_SUBAGENT_CAP_TOKENS] + on/off switch; bad values fall back (SWM037)]
+  if (typeof tk.subagentCap !== "boolean") bad("context.subagentCap", () => { filled.context.subagentCap = defaults.context.subagentCap })
+  if (typeof tk.subagentForceTokens !== "number" || !Number.isFinite(tk.subagentForceTokens) || tk.subagentForceTokens < MIN_SUBAGENT_CAP_TOKENS || tk.subagentForceTokens > MAX_SUBAGENT_CAP_TOKENS) bad("context.subagentForceTokens", () => { filled.context.subagentForceTokens = defaults.context.subagentForceTokens })
   if (filled.builtinAgents.mode !== "deny" && filled.builtinAgents.mode !== "allow") bad("builtinAgents.mode", () => { filled.builtinAgents.mode = defaults.builtinAgents.mode })
   if (filled.injection.mode !== "chain" && filled.injection.mode !== "all") bad("injection.mode", () => { filled.injection.mode = defaults.injection.mode })
   // [2026-09-05]-[artifact workspace: enabled boolean + flat directory name (path separators/".."/absolute values rejected, fallback ".switchman")]

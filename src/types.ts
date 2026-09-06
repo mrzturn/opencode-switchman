@@ -294,6 +294,12 @@ export interface ContextOptions {
   autoHandover?: boolean
   /** Per-call self-read budget R* in tokens: reads estimated above this are auto-bounded or denied with bounded-retry params; default 1500 (clamped 200..20000) */
   readBudgetTokens?: number
+  /** [2026-09-06]-[subagent hard cap (tokens): when a shell subagent's measured context reaches it, every further tool
+   *  call in that session is denied with a wrap-up order (the next text-only answer = detailed progress summary = task
+   *  result) and the session is permanently terminated (no task_id resume); default 100_000, clamped 20k..1M, window-capped
+   *  at 90%; subagentCap: false disables the mechanism entirely] */
+  subagentForceTokens?: number
+  subagentCap?: boolean
 }
 // [2026-09-04]-[Builtin subagent block: explore/general compete with shell routing and were previously fail-open allowed;
 //  default deny with economy/main redirect suggestions; allow restores the old behavior]

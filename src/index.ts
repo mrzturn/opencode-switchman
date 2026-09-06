@@ -21,6 +21,7 @@ import {
   writeQuotaBrief,
   loadProviderCache, saveProviderCache, nowIso,
   providerCacheStale, providerModelsDelta,
+  loadSubagentCapRegistry, saveSubagentCapRegistry, withPathLock,
 } from "./state"
 import { checkShell, noteUnknownAgent, shellLikeName, denyUninjected, builtinAgentDeny, BUILTIN_SUBAGENTS } from "./gates"
 import {
@@ -30,7 +31,8 @@ import {
 import {
   READ_CLASS_TOOLS, estimateContextTokens, thresholdsOf, watermarkLevel,
   budgetGateDecision, estimateReadRange, estimateOutputTokens, readBudgetOf, turnBudgetOf,
-  capThresholdsByWindow,
+  capThresholdsByWindow, subagentCapOf, capByWindow,
+  subagentCapDenyMessage, subagentResumeDenyMessage,
 } from "./context-watch"
 import type { ReadEstimate, FileSample, ContextThresholds } from "./context-watch"
 import { backupSession, compactSession, v1HandoverPort, type HandoverResult } from "./handover-core"
@@ -155,6 +157,12 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   // [2026-09-04]-[measured session context watermark: message.updated token usage → main-session (non-shell/non-internal) watermark;
   //  past the line, read-class tools get the tiered gate (nudge first, then hard deny) — turns rules self-reporting into mechanism enforcement]
   const sessionWatermark = new Map<string, { tokens: number; at: number }>()
+  // [2026-09-06]-[subagent hard cap: parallel watermark map for DISPATCHED SHELL sessions (the main-session map above
+  //  explicitly excludes them) + the in-process mirror of the persistent termination registry. Past the cap every tool
+  //  call in that session is denied with a wrap-up order (the next text-only answer = progress summary = task result)
+  //  and the session can never be resumed via task_id; fresh dispatches are unaffected]
+  const shellWatermark = new Map<string, { tokens: number; at: number }>()
+  const terminatedSessions = new Set<string>()
   // [2026-09-05]-[v1 read budget: per-turn self-read spend (resets each user turn), watermark sample history for
   //  pace estimation, and last-seen user message id for turn-boundary detection (assistant parentID comparison)]
   const turnReadUsage = new Map<string, { used: number; at: number }>()
@@ -203,6 +211,14 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     if (dynamic) return manager?.skipSystemInjection(sessionID) === true
     const agent = sessionAgent.get(sessionID) ?? ""
     return /-mx-/.test(agent) || agent === "title" || agent === "compaction" || agent === "summary"
+  }
+
+  // [2026-09-06]-[subagent cap scope: true only for DISPATCHED SHELL sessions — skipSystemInjection unions internal
+  //  sessions (title/compaction/summary), which are short-lived and must never be terminated by the cap]
+  function isShellAgentSession(sessionID: string | undefined): boolean {
+    if (!sessionID) return false
+    if (dynamic) return manager?.isShellSession(sessionID) === true
+    return /-mx-/.test(sessionAgent.get(sessionID) ?? "")
   }
 
   function kk(n: number): string { return `${Math.round(n / 1000)}k` }
@@ -262,6 +278,41 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       return thresholdsOf(options.context)
     }
   }
+
+  // [2026-09-06]-[subagent hard cap: configured cap window-capped at 90% of the shell model's context window (same
+  //  clamp as sessionThresholds; shell sessions record their model key in sessionMsgModel too); null = disabled]
+  function effectiveSubagentCap(sessionId: string | undefined): number | null {
+    const base = subagentCapOf(options.context)
+    if (base === null) return null
+    try {
+      const key = sessionId ? sessionMsgModel.get(sessionId) : undefined
+      const win = key ? contextWindowOf(metaIndexRuntime ?? bundledModelIndex(), key) : undefined
+      return capByWindow(base, win)
+    } catch {
+      return base
+    }
+  }
+
+  // [2026-09-06]-[termination persistence: read-merge-write under the state file's path lock so parallel terminations
+  //  (several capped subagents in flight) never clobber each other; bounded at 500 entries, oldest dropped first]
+  function persistTerminatedSession(sessionId: string, tokens: number, agent: string | undefined): void {
+    void (async () => {
+      try {
+        await withPathLock(paths().subagentCap, async () => {
+          const reg = loadSubagentCapRegistry()
+          reg[sessionId] = { at: Date.now(), tokens, ...(agent ? { agent } : {}) }
+          const ids = Object.keys(reg)
+          if (ids.length > 500) {
+            for (const id of ids.sort((a, b) => (reg[a].at ?? 0) - (reg[b].at ?? 0)).slice(0, ids.length - 500)) delete reg[id]
+          }
+          saveSubagentCapRegistry(reg)
+        })
+      } catch { /* fail-open: the in-process Set still enforces the cap for this session */ }
+    })()
+  }
+  try {
+    for (const id of Object.keys(loadSubagentCapRegistry())) terminatedSessions.add(id)
+  } catch { /* fail-open */ }
 
   /** Mean per-turn context growth from recent watermark samples (positive deltas only, mean of last 5 of last 9) */
   function watermarkPace(sessionId: string): { delta: number; turnsToHard: number } | null {
@@ -1445,6 +1496,31 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     },
 
     "tool.execute.before": async (input, output) => {
+      // [2026-09-06]-[subagent hard cap gate, runs before every other gate: (a) any tool inside a terminated shell
+      //  subagent session is denied with a wrap-up order — the model's next text-only answer (detailed progress
+      //  summary) becomes the task result returned to the delegator; (b) any task call resuming a terminated session
+      //  via task_id is rejected permanently (fresh dispatches without task_id are unaffected). subagentCap: false
+      //  prevents NEW terminations only — already-terminated sessions stay dead]
+      try {
+        const capSid = (input as any).sessionID as string | undefined
+        if (capSid && terminatedSessions.has(capSid)) {
+          denySkip.add(input.callID)
+          const cap = effectiveSubagentCap(capSid) ?? subagentCapOf(options.context) ?? 0
+          appendStatusLog(`subagent context cap: tool '${input.tool}' denied in terminated session ${capSid}`)
+          throw new Error(subagentCapDenyMessage(shellWatermark.get(capSid)?.tokens ?? cap, cap))
+        }
+        if (input.tool === "task") {
+          const tid = (output.args as any)?.task_id
+          if (typeof tid === "string" && tid && terminatedSessions.has(tid)) {
+            denySkip.add(input.callID)
+            appendStatusLog(`subagent context cap: resume of terminated session ses_${tid.slice(-6)} denied (permanent)`)
+            throw new Error(subagentResumeDenyMessage(tid))
+          }
+        }
+      } catch (e) {
+        if (denySkip.has(input.callID)) throw e
+        // internal error on our side (never one of our own denies) → fail-open, do not break the tool path
+      }
       // [2026-09-04]-[read watermark gate: read-class/bash tools other than task are intercepted by tier per the measured session watermark]
       if (input.tool !== "task") {
         // [2026-09-05]-[no-vision image read guard runs first: image files are skipped by the read budget gate (BINARY_EXT),
@@ -1758,6 +1834,26 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
                 turnReadUsage.delete(sid)
               }
             }
+          } else if (typeof sid === "string" && isShellAgentSession(sid) && info?.role === "assistant") {
+            // [2026-09-06]-[subagent hard cap: shell sessions get a parallel watermark; on first crossing of the
+            //  window-capped cap the session is terminated — every later tool call is denied with a wrap-up order
+            //  (the next text-only answer = detailed progress summary = task result) and task_id resumes are
+            //  permanently rejected via the persistent registry. Internal sessions (title/summary) never land here.]
+            const am = info as { modelID?: unknown; providerID?: unknown }
+            if (typeof am.modelID === "string" && typeof am.providerID === "string") {
+              sessionMsgModel.set(sid, `${am.providerID}/${am.modelID}`)
+            }
+            const est = estimateContextTokens(info)
+            if (est !== null) {
+              shellWatermark.set(sid, { tokens: est, at: Date.now() })
+              const cap = effectiveSubagentCap(sid)
+              if (cap !== null && est >= cap && !terminatedSessions.has(sid)) {
+                terminatedSessions.add(sid)
+                const agentName = dynamic ? manager?.sessionAgentName(sid) : sessionAgent.get(sid)
+                persistTerminatedSession(sid, est, agentName)
+                appendStatusLog(`subagent context cap: session ${sid}${agentName ? ` (${agentName})` : ""} reached ~${Math.round(est / 1000)}k tokens (cap ${Math.round(cap / 1000)}k) — tools denied, progress summary demanded, session terminated (no task_id resume)`)
+              }
+            }
           }
           return
         }
@@ -1767,6 +1863,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           const sid = sessionDeletedId((event as any).properties)
           if (sid) {
             sessionWatermark.delete(sid)
+            shellWatermark.delete(sid) // [2026-09-06]-[subagent cap watermark follows the same cleanup; terminatedSessions is intentionally NOT cleaned — termination is permanent]
             turnReadUsage.delete(sid)
             wmHistory.delete(sid)
             lastUserMsg.delete(sid)

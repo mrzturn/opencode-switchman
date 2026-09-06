@@ -51,6 +51,10 @@ export const SHELL_BODY = [
   "3. Only do work within the target scope; record out-of-scope issues under \"Remaining Issues\" instead of fixing them opportunistically.",
   "4. Report truthfully: call a failure a failure, a skip a skip, mark uncertainty as uncertain; write \"verified\" only for what has been verified.",
   "5. Project AGENTS.md and the delegator's explicit constraints take priority over personal preferences; never output secrets, credentials, or configuration contents under any circumstances.",
+  // [2026-09-06]-[subagent hard cap pre-arm: the cap itself is enforced by the plugin (every tool call denied past the
+  //  line, session permanently terminated); this rule makes the first deny land immediately instead of after retries.
+  //  Static text — the deny message carries the exact numbers]
+  "6. Context cap: your shell session is hard-capped (~100k tokens). If a tool call is rejected with a context-cap error, stop calling tools immediately and output your detailed work-progress summary (completed work, key findings with file:line evidence, remaining work, next steps) as your final text answer — it is returned to the delegating session as the task result. Never repeat a denied call.",
 ].join("\n")
 
 /** Single shell → opencode AgentConfig (for config-hook injection) */

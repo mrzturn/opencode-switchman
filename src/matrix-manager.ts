@@ -122,6 +122,11 @@ export class MatrixManager {
     return this.sessions.get(sessionID)?.isShell ?? false
   }
 
+  /** [2026-09-06]-[agent name recorded at session.created/chat.params (subagent-cap termination logs / registry entries)] */
+  sessionAgentName(sessionID: string): string | undefined {
+    return this.sessions.get(sessionID)?.agent
+  }
+
   /** transform-phase system-injection skip check: shell sessions union internal agents (title/compaction/summary) --
    *  classified by the agent name in pre-registration/registry, effective from the first turn (session.created pre-registration) */
   skipSystemInjection(sessionID: string): boolean {

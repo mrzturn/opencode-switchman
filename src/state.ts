@@ -38,6 +38,9 @@ export const paths = () => {
     //  replaces the fixed thinking-parameter table probe.ts/shells.ts previously guessed by modelId prefix]
     copilotThinking: join(dir, "copilot-thinking.json"),
     shellSuperset: join(dir, "shell-superset.json"),
+    // [2026-09-06]-[subagent hard cap: persistent registry of force-terminated shell subagent sessions (sessionID →
+    //  {at, tokens, agent}); survives restarts so a terminated session can never be resumed via task_id]
+    subagentCap: join(dir, "subagent-cap.json"),
     // [2026-09-01]-[provider.list result cached across restarts: written only on real probe success (not fallback), so next
     //  startup builds shells straight from cache and no longer waits out the provider.list network race on every restart —
     //  new providers are discovered by the background probe, only then is a restart hinted]
@@ -269,6 +272,19 @@ export function loadProviderCache(): ProviderCache | null {
 }
 export function saveProviderCache(cache: ProviderCache): void {
   writeJsonAtomic(paths().providerCache, cache)
+}
+
+// [2026-09-06]-[subagent hard cap registry: sessionID → termination record; broken/missing file = empty registry
+//  (fail-open — a lost registry only means an already-dead session could be resumed into a fresh cap denial)]
+export interface SubagentCapEntry { at: number; tokens: number; agent?: string }
+export type SubagentCapRegistry = Record<string, SubagentCapEntry>
+export function loadSubagentCapRegistry(): SubagentCapRegistry {
+  const data = readJson<SubagentCapRegistry>(paths().subagentCap)
+  if (!data || typeof data !== "object" || Array.isArray(data)) return {}
+  return data
+}
+export function saveSubagentCapRegistry(registry: SubagentCapRegistry): void {
+  writeJsonAtomic(paths().subagentCap, registry)
 }
 
 // [2026-09-06]-[provider cache freshness + model-set delta: the startup stale-cache live probe and the watchdog superset

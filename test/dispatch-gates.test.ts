@@ -179,7 +179,7 @@ describe("config: new behavior-section validation", () => {
   test("defaults: context 60/80/100k, gates on, builtinAgents deny, injection chain, floor 3000", () => {
     const { config, diagnostics } = validateUserConfig(base)
     expect(diagnostics.filter((d) => d.level === "error")).toEqual([])
-    expect(config.context).toEqual({ gates: true, softTokens: 60_000, hardTokens: 80_000, forceTokens: 120_000, readBudgetTokens: 1_500, autoHandover: true })
+    expect(config.context).toEqual({ gates: true, softTokens: 60_000, hardTokens: 80_000, forceTokens: 120_000, readBudgetTokens: 1_500, autoHandover: true, subagentForceTokens: 100_000, subagentCap: true })
     expect(config.builtinAgents.mode).toBe("deny")
     expect(config.injection.mode).toBe("chain")
     expect(config.rules.delegationFloor).toBe(3_000)
