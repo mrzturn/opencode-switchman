@@ -541,6 +541,7 @@ function RankPickerDialog(props: { api: TuiPluginApi }) {
   return (
     <props.api.ui.DialogSelect
       title="Model capability ranking (#1 strongest; ctrl+up/ctrl+down move the highlighted model; enter = per-model actions)"
+      placeholder="Search · alt+up/alt+down mirror ctrl+up/ctrl+down (also work)"
       options={rows().map((r, i) => ({
         title: `#${String(i + 1).padStart(2, "0")} ${r.modelId}`,
         value: r.key,
