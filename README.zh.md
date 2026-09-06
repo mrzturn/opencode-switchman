@@ -164,6 +164,7 @@ TUI 插件没有目录自动发现机制，需要在 **`tui.jsonc`/`tui.json`** 
 
 ### v1.x——确定性上下文治理与更强的手动覆盖（1.0.0 之后）
 
+- **壳子代理上下文硬顶**：每条壳子代理会话现在都有硬性上下文上限（`context.subagentForceTokens`，默认 100k token）——越过上限后每次工具调用都会被拒绝并附收尾指令，子代理以一份详细的进度总结作为任务结果交回主会话，且该会话永远无法再经 `task_id` 续接（持久化注册表）；经 `context.subagentCap` 配置（详见 [子代理上下文硬顶](#子代理上下文硬顶)）。
 - **常开逐次调用读预算（核心算法更新）**：用确定性预算闸取代旧的「每工具一次性提醒」（那种优惠券式提醒会被模型用重试/试探理性烧掉）。自第 1 轮起，每次读取都按 `context.readBudgetTokens`（默认 1500，钳制 200..20000）计费——预估超限的读取就地追加 `limit` 有界放行，或以精确的有界重试参数拒绝；每轮 2× 自读上限（用户发言即重置）阻断连续读取链；无法预估的工具输出事后记账。水位只保留生命周期职责（软=建议、硬=收尾拒绝、压=自动交接）。交付/验证类 bash（git、测试/lint、构建）任何水位放行；无界翻史（不带 `-n` 的 `git log -p`）任何水位拦截并附收窄提示。
 - **项目级语言偏好**：每轮注入 `[LANG]` 铁律行（会话 / 注释与提交 / 文档三种语言），首次使用每会话询问一次并按项目落盘，`/switchman-lang` 可随时修改。
 - **待办纪律**：规程 §0.7 + 每轮 `[TODO]` 状态行，主会话待办实时更新（含委派壳的结果）。
@@ -202,7 +203,8 @@ v0.2.0 将 switchman 从固定多供应商调度器升级为实时、能力感�
 | `matrix.mode / watch` | `auto / true` | 激活矩阵：`auto` 按宿主自动（desktop=可见模型 / CLI/TUI=favorites），`app`/`tui` 强制指定，`legacy` 旧静态矩阵；`watch`=配置面变化即重算并全量刷新探针（mode/watch 为启动级，重启生效） |
 | `banner.enabled` | `true` | 四行横幅注入开关 |
 | `rules.enabled / delegationFloor` | `true / 3000` | 调度员规程（AGENTS.md）随包注入开关；`delegationFloor`＝自做底价（token），注入规程时插值 |
-| `context.gates / softTokens / hardTokens / forceTokens / readBudgetTokens` | `true / 60000 / 80000 / 120000 / 1500` | **会话上下文水位实测＋自读预算闸**：插件从消息 token usage 实测主会话上下文并每轮注入 `[水位·会话]` 行（附每轮增速与距硬水位剩余轮数估算）。自读从第 1 轮起按 `readBudgetTokens` 计费：预估超限的读取自动追加 `limit` 有界放行，或以精确的有界重试参数拒绝；每轮另有 2× 上限阻断连续读取，无法预估的工具输出事后记账。验证/交付类 bash（git、测试/lint、构建）全水位放行；无界历史翻查（如不带 `-n` 的 `git log -p`）任何水位一律拦截并附收窄提示；超硬水位读取类关闭（收尾模式）；超压水位横幅强制立即压缩。壳子代理会话豁免；三档水位在可知时额外以当前会话模型上下文窗口（models.dev）的 90% 封顶 |
+| `context.gates / softTokens / hardTokens / forceTokens / readBudgetTokens` | `true / 60000 / 80000 / 120000 / 1500` | **会话上下文水位实测＋自读预算闸**：插件从消息 token usage 实测主会话上下文并每轮注入 `[水位·会话]` 行（附每轮增速与距硬水位剩余轮数估算）。自读从第 1 轮起按 `readBudgetTokens` 计费：预估超限的读取自动追加 `limit` 有界放行，或以精确的有界重试参数拒绝；每轮另有 2× 上限阻断连续读取，无法预估的工具输出事后记账。验证/交付类 bash（git、测试/lint、构建）全水位放行；无界历史翻查（如不带 `-n` 的 `git log -p`）任何水位一律拦截并附收窄提示；超硬水位读取类关闭（收尾模式）；超压水位横幅强制立即压缩。壳子代理会话不适用本水位，改走自身的单道硬顶（见 `context.subagentForceTokens` / `context.subagentCap`）；三档水位在可知时额外以当前会话模型上下文窗口（models.dev）的 90% 封顶 |
+| `context.subagentForceTokens / subagentCap` | `100000 / true` | **子代理上下文硬顶**：壳子代理会话只有一道硬顶（实测＝最新 assistant 消息的 input + output + reasoning + cache.read，与会话水位同口径），钳制 20k..1M 并额外以壳模型上下文窗口的 90% 封顶。触顶即拒绝该会话所有后续工具调用并下达收尾指令，子代理的下一份纯文本答复（详细的工作进度总结）直接作为任务结果返回委派方，会话永久终止；此后带 `task_id` 恢复该会话的 `task` 调用一律永久拒绝（持久登记 `~/.config/opencode/opencode-switchman/subagent-cap.json`，重启不失效），不带 `task_id` 的全新派发不受影响；`subagentCap: false` 只阻止新的终止——已终止的会话不复活 |
 | `dispatch.autoRedirect` | `true` | 派发被拒时在途改写 `subagent_type` 到拒绝消息已点名的链首候选（单跳、同快照守卫复检）——首次派发直接落在最优可用壳上，不再烧「拒绝-重试」轮次；`false` 恢复拒绝-重试 |
 | `relay.image` | `true` | 无视觉主模型：用户附带图片自动落盘并替换为路径文本＋阅读指引（委托 vision 壳或交给 MCP 视觉工具）；本地路径 / http URL 原样透传；全程 fail-open |
 | `lang.enabled / ask / candidates` | `true / true / 出厂清单` | 项目级语言偏好：每轮 `[LANG]` 铁律行（会话 / 注释与提交 / 文档），首次使用每会话询问一次，落盘 `.switchman/settings.json`（AGENTS.md 标记为只读回退），`/switchman-lang` 重新询问 |
@@ -257,6 +259,14 @@ opencode 服务器自身运行在 tmux 中时，每条被委派的子代理会�
 - **观看须知**：该窗格是附加到子代理会话的真实交互式 TUI——不要在里面打字（按键会进入子代理会话）。退出观看窗格只是移除显示，子代理继续运行。
 
 由 `opencode-switchman.jsonc` 的可选 `tmux` 段配置（`enabled` / `rightPct` / `maxPanes` / `mini`，默认 `true` / `60` / `3` / `false`）。
+
+## 子代理上下文硬顶
+
+主会话享有软/硬/压三档水位＋自动交接；被委派的壳子代理会话此前完全没有上下文控制，一路跑过 18 万 token 也无人拦截。现在每个壳子代理会话只有一道硬顶（`context.subagentForceTokens`，默认 100,000 token，钳制 20k..1M，并在可知时额外以壳模型上下文窗口的 90% 封顶），实测口径与会话水位相同：最新 assistant 消息的 input + output + reasoning + cache.read。触顶后，插件拒绝该子代理会话内的所有后续工具调用并下达收尾指令；子代理随后给出的纯文本答复——一份详细的工作进度总结（已完成 / 关键发现含 file:line 证据 / 未完成 / 下一步）——即作为任务结果返回给委派方，会话随即永久终止（终止事件写入状态日志）。合规两侧预先约定：子代理系统提示的壳规则第 6 条（首次触顶拒绝即停止、交回总结），随包调度员规程第 2 节约定编排侧契约（绝不重试已终止的会话；重新派发、只注入所需上下文）。
+
+终止是永久且有意的：此后任何通过 `task_id` 恢复该会话的 `task` 调用都会被永久拒绝（持久登记 `~/.config/opencode/opencode-switchman/subagent-cap.json`，重启不失效），不带 `task_id` 的全新派发不受影响。理由：子代理是可复现的工人（其规格写在委派 prompt 里），「终止并交回」优于「压缩后续跑」。`context.subagentCap: false` 只阻止新的终止——已终止的会话不复活。
+
+由 `opencode-switchman.jsonc` 的 `context.subagentForceTokens`（默认 `100000`）/ `context.subagentCap`（默认 `true`）配置（详见配置项表）。
 
 ## 核心思想
 
