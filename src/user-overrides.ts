@@ -132,6 +132,29 @@ export function overrideSummary(): { rankModels: number; poolLanes: number } {
   return { rankModels: rank?.models.length ?? 0, poolLanes: Object.keys(loadPoolConfig()).length }
 }
 
+// ---- Pure manual-ranking move (shared semantics for the TUI /modelRank dialog: enter actions and ctrl+up/ctrl+down hotkeys) ----
+
+/** [2026-09-06]-[/modelRank hotkeys: extract the reorder rules shared by the RankActions dialog and the new list-level
+ *  ctrl+up/ctrl+down hotkeys into one pure helper so both surfaces stay in lockstep]-
+ *  [delta 0 = pin to top; ±1 = move one spot toward the front/back (unranked + down is a no-op, unranked + up/pin
+ *  materializes an entry: pin → front, up → appended at the end, mirroring the dialog's "Add to ranking (at the end)").
+ *  Boundary-hit ranked moves return null (no write). Pure: returns the next list + the model's new index, no I/O] */
+export function applyRankMove(models: readonly string[], key: string, delta: -1 | 0 | 1): { models: string[]; index: number } | null {
+  const cur = [...models]
+  const i = cur.indexOf(key)
+  if (delta === 0) {
+    if (i >= 0) cur.splice(i, 1)
+    cur.unshift(key)
+    return { models: cur, index: 0 }
+  }
+  if (i < 0) return delta === 1 ? { models: [...cur, key], index: cur.length } : null
+  const target = i + delta
+  if (target < 0 || target >= cur.length) return null
+  cur.splice(i, 1)
+  cur.splice(target, 0, key)
+  return { models: cur, index: target }
+}
+
 // ---- Writes (shared by CLI/TUI; atomic replacement + cache invalidation; empty list = delete key/file back to default) ----
 
 export function writeCapabilityRank(models: string[]): CapabilityRankFile {

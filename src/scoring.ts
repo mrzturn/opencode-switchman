@@ -181,22 +181,36 @@ export interface RankContext {
   billingBoostOf?: (provider: string) => number
   /** [2026-08-31]-[de-vendorization: provider → billing-peak active (any provider's peak config evaluated)] */
   peakOf?: (provider: string) => boolean
-  /** [2026-09-02]-[favorites first: favorite models (by modelId) sort first within the same tier; tiers never invert;
+  /** [2026-08-31]-[favorites first: favorite models (by modelId) sort first within the same tier; tiers never invert;
    *  no effect under immediate (latency-only ordering)] */
   preferredModels?: ReadonlySet<string> | null
+  /** [2026-09-06]-[pool-exhaustion-aware seats: snapshot-driven "pool is PROVEN exhausted" resolver (same source as
+   *  computeLane's poolUnavailable param) — proven-exhausted-pool shells are gated out of the ranking like other hard
+   *  drops, but are skipped by the relaxHealthGates backfill pass so they can serve as chain-tail last resorts] */
+  poolUnavailable?: (pool: string) => boolean
+  /** [2026-09-06]-[health-aware backfill: when true, the health gates (matrix down / disabled status / breaker /
+   *  real-fail isolation / proven-exhausted pool) are skipped for that single ranking pass, so computeLane can backfill
+   *  a lane whose seated candidates all died at runtime. Structural gates (modality / capability) and the policy-gated
+   *  quota-exhaustion / retirement gates stay active — illegitimate candidates are never resurrected.]-[impact: isGated only] */
+  relaxHealthGates?: boolean
 }
 
 /** Hard gates: matrix down (strained is not down) / breaker / exhaustion / retirement / real-call isolation / semantic gates (same source as computeLane) */
 function isGated(s: Rankable, ctx: RankContext): boolean {
-  if (s.matrixStatus === "down") return true
+  // [2026-09-06]-[health-aware backfill: relaxHealthGates skips only the health-class gates below (matrix down /
+  //  disabled / breaker / real-fail isolation / pool-unavailable); quotaExhausted / retiredModels / modality /
+  //  capability gating is deliberately kept active in the relaxed pass]
+  const relax = ctx.relaxHealthGates === true
+  if (!relax && s.matrixStatus === "down") return true
   const registry = ctx.registry
   const shell = registry?.[s.key]
-  if (shell && shell.status !== "enabled") return true
+  if (!relax && shell && shell.status !== "enabled") return true
   const down = ctx.routing?.down_agents
-  if (down && (s.key in down || (shell?.comboKey && shell.comboKey in down))) return true
+  if (!relax && down && (s.key in down || (shell?.comboKey && shell.comboKey in down))) return true
   if (shell && ctx.retiredModels?.has(`${shell.provider}/${shell.modelId}`)) return true
-  if (shell?.comboKey && ctx.realFailedCombos?.has(shell.comboKey)) return true
+  if (!relax && shell?.comboKey && ctx.realFailedCombos?.has(shell.comboKey)) return true
   if (shell && ctx.quotaExhausted?.[shell.pool as Pool] && ctx.routePolicy?.[shell.pool as Pool]?.routing !== false) return true
+  if (!relax && shell && ctx.poolUnavailable?.(String(shell.pool))) return true
   // [2026-09-05]-[review same-family hard drop removed: family moved from elimination to ordering — cross-family
   //  candidates rank ahead via famClassOf below and a same-family shell is a last-resort DOWNGRADED self-review seat
   //  (denied at the dispatch gate only while a cross-family reviewer exists on the chain)]

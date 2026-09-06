@@ -255,6 +255,12 @@ export interface ComputeLaneParams {
    *  lane → normalized modelId set participating in that task pool (the same model may join several lanes); a non-empty
    *  list takes effect, missing key/empty = fail-open all models; unselected models after configuration get reason=pool-config] */
   poolConfig?: Partial<Record<string, ReadonlySet<string>>> | null
+  /** [2026-09-06]-[pool-exhaustion-aware seats: snapshot-driven "pool is PROVEN exhausted" resolver (same math as
+   *  glmExhausted/copilotExhausted/deepseekExhausted, NOT the policy-gated quotaExhaustedFlags) — proven-exhausted
+   *  pools sink out of the seats (reason=pool-unavailable) even under observe-only (routing:false) policy, and their
+   *  candidates become tail-backfill-eligible. Absent/throwing = fail-open (no pool sunk). SELECTION only: no dispatch
+   *  denial is derived from this resolver, the six gates stay untouched] */
+  poolUnavailable?: (pool: string) => boolean
 }
 
 /** agentDown reference (implemented here to avoid a circular dependency: purely reads the passed-in routing) */
@@ -312,6 +318,11 @@ export function computeLane(lane: Lane, base: string[], p: ComputeLaneParams): L
         //  match, filter only when the list exists and is non-empty, missing key = fail-open all models]
         const allow = p.poolConfig?.[lane]
         if (allow && allow.size > 0 && !allow.has(normalizeModelKey(shell.modelId))) reason = "pool-config"
+        // [2026-09-06]-[pool-exhaustion-aware seats: AFTER pool-config so an explicitly excluded shell keeps its
+        //  non-resurrectable pool-config reason; proven-exhausted-pool shells sink with reason=pool-unavailable and
+        //  become tail-backfill-eligible (unlike the policy-gated pool-exhausted class, which dispatch gates deny and
+        //  which therefore stays non-backfillable)]
+        else if (p.poolUnavailable?.(String(shell.pool))) reason = "pool-unavailable"
       }
     }
     if (reason) {
@@ -382,6 +393,90 @@ export function computeLane(lane: Lane, base: string[], p: ComputeLaneParams): L
   } catch (exc) {
     appendStatusLog(`scoring failed, fell back to rule-based ordering: ${exc}`)
     legacySort(chain, p, glmPeak, immediate)
+  }
+
+  // [2026-09-06]-[health-aware backfill: the seat-limited base chain can be wiped out entirely by runtime health gates
+  //  (registry disabled mark from a matrix "down" combo / breaker) while structurally valid candidates exist — the lane
+  //  then reported "all unavailable→terminal failure protocol" even though routing targets were merely unhealthy, and
+  //  deny-redirects had no candidate to name. When the ranked chain is empty, re-rank the candidates that were dropped
+  //  ONLY by health reasons (status-disabled / matrix-down / breaker) once with relaxHealthGates so the lane backfills
+  //  instead of starving; healthy candidates always rank ahead (here the chain was empty, so everything appended is
+  //  backfill by definition). Structural and pool-level gates (modality / capability / pool-config / exhaustion /
+  //  retirement) stay active in the relaxed pass — pool-config-excluded, modality-mismatched, exhausted or retired
+  //  candidates are never resurrected. Still empty → the "exhausted" status and terminal failure protocol are kept as
+  //  today.]-[impact: computeLane never returns an empty chain while a structurally-valid health-dropped candidate
+  //  exists; firstCandidate / deny-redirect postscripts share this same source]
+  //  [2026-09-06 extension]-[pool-unavailable tail: proven-exhausted-pool candidates (reason=pool-unavailable,
+  //  observe-only SELECTION drop) may backfill the chain TAIL when nothing healthy exists — a dead Copilot model as
+  //  last resort is still better than an empty lane. They rank strictly AFTER health-dropped candidates (class order,
+  //  rank order within a class): a merely-suspect shell beats a proven-dead pool. The policy-gated pool-exhausted
+  //  class stays non-backfillable (dispatch gates deny those; backfilling them would only produce guaranteed denies)]
+  if (chain.length === 0 && regOk && mcombos) {
+    const healthDrops = new Set(["status-disabled", "matrix-down", "breaker"])
+    const classOf = (reason: string): 0 | 1 | null => healthDrops.has(reason) ? 0 : reason === "pool-unavailable" ? 1 : null
+    const backfillNames = dropped
+      .map((d) => ({ shell: d.shell, cls: classOf(d.reason) }))
+      .filter((d): d is { shell: string; cls: 0 | 1 } => d.cls !== null && Boolean(registry![d.shell]))
+    if (backfillNames.length > 0) try {
+      const rankables = backfillNames.map(({ shell: name }) => {
+        const sh = registry![name]!
+        const entry = mcombos![sh.matrixKey]
+        return {
+          key: name,
+          modelId: sh.modelId,
+          effort: sh.effort,
+          pool: sh.pool,
+          family: sh.family,
+          capability: sh.capability,
+          vision: sh.vision,
+          matrixStatus: String(entry?.status ?? "").toLowerCase() || "missing",
+          latencyMs: typeof entry?.latency_ms === "number" ? entry.latency_ms : null,
+        }
+      })
+      const { ranked, breakdowns } = rankCandidates(rankables, {
+        lane,
+        immediate,
+        glmPeak,
+        water: p.water ?? {},
+        routing,
+        registry,
+        quotaExhausted: exhausted,
+        routePolicy: p.routePolicy,
+        retiredModels: p.retiredModels,
+        realFailedCombos: p.realFailedCombos,
+        producerFamily: p.producerFamily,
+        modality: p.modality,
+        capability: p.capability,
+        costs: p.costs,
+        billingBoostOf: p.billingBoostOf,
+        peakOf: p.peakOf,
+        preferredModels: p.preferredModels,
+        relaxHealthGates: true,
+      })
+      const order = new Map(ranked.map((r, i) => [r.key, i]))
+      const cls = new Map(backfillNames.map((d) => [d.shell, d.cls]))
+      // class 0 (health-suspect) ranks ahead of class 1 (proven-exhausted pool); rank order within a class
+      const appended = [...order.keys()].sort((a, b) => (cls.get(a) ?? 1) - (cls.get(b) ?? 1) || (order.get(a) ?? 0) - (order.get(b) ?? 0))
+      for (const name of appended) {
+        const sh = registry![name]!
+        const lat = mcombos![sh.matrixKey]?.latency_ms
+        chain.push({
+          shell: name,
+          pool: sh.pool,
+          family: sh.family,
+          effort: sh.effort,
+          capability: sh.capability,
+          vision: sh.vision,
+          latency_ms: typeof lat === "number" ? lat : null,
+        })
+      }
+      for (const c of chain) {
+        const bd = breakdowns.get(c.shell)
+        if (bd) c.score = bd
+      }
+    } catch (exc) {
+      appendStatusLog(`backfill ranking failed (lane stays empty): ${exc}`)
+    }
   }
 
   // [2026-08-31]-[de-vendorization: removed the auto_ok/DS-only gating — api-billed models with source=auto are no

@@ -294,6 +294,12 @@ export interface ContextOptions {
   autoHandover?: boolean
   /** Per-call self-read budget R* in tokens: reads estimated above this are auto-bounded or denied with bounded-retry params; default 1500 (clamped 200..20000) */
   readBudgetTokens?: number
+  /** [2026-09-06]-[subagent hard cap (tokens): when a shell subagent's measured context reaches it, every further tool
+   *  call in that session is denied with a wrap-up order (the next text-only answer = detailed progress summary = task
+   *  result) and the session is permanently terminated (no task_id resume); default 100_000, clamped 20k..1M, window-capped
+   *  at 90%; subagentCap: false disables the mechanism entirely] */
+  subagentForceTokens?: number
+  subagentCap?: boolean
 }
 // [2026-09-04]-[Builtin subagent block: explore/general compete with shell routing and were previously fail-open allowed;
 //  default deny with economy/main redirect suggestions; allow restores the old behavior]
@@ -331,6 +337,19 @@ export interface LangOptions {
   /** Candidate language labels offered in the ask (custom free input always allowed besides these) */
   candidates?: string[]
 }
+// [2026-09-06]-[tmux pane mirroring: dispatched subagent sessions open as live `opencode attach` panes in a
+//  right-hand column of the home tmux window (main pane left, subagent panes right; status line untouched);
+//  inert outside tmux — see src/tmux.ts]
+export interface TmuxOptions {
+  /** Master switch (default true); effective only when the server itself runs inside tmux */
+  enabled?: boolean
+  /** Width share of the right subagent column in percent (default 60 = main 40 / right 60) */
+  rightPct?: number
+  /** Max simultaneously visible subagent panes in the right column (default 3; extras wait in a FIFO queue) */
+  maxPanes?: number
+  /** Use the minimal attach interface instead of the full TUI (default false) */
+  mini?: boolean
+}
 /** Factory default ask candidates (labels; users may configure their own via jsonc lang.candidates) */
 export const DEFAULT_LANG_CANDIDATES: readonly string[] = ["English", "简体中文", "日本語", "Español", "Français", "Deutsch"]
 // [2026-09-01]-[Config surface consolidated into opencode-switchman.jsonc: tuple options demoted to a compatibility shim
@@ -352,4 +371,5 @@ export interface SwitchmanOptions {
   relay?: RelayOptions
   workspace?: WorkspaceOptions
   lang?: LangOptions
+  tmux?: TmuxOptions
 }

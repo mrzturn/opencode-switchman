@@ -14,6 +14,28 @@ OpenCode 六档壳矩阵编排插件——让主模型成为调度员，把任�
 
 ## 安装与使用
 
+### 推荐方式：让 AI 替你安装
+
+AI 时代强烈推荐由 AI 自主完成安装配置——AI 能读取你的真实环境、写入正确的值，并自行验证结果，比手动复制粘贴更不容易出错。
+
+把下面这段话直接复制给你当前使用的 AI，让它帮你装：
+
+```text
+请严格按照官方说明为我的 opencode 安装并配置 opencode-switchman 插件。
+
+官方来源（以此为准，不要凭记忆猜测）：
+- GitHub 仓库：https://github.com/mrzturn/opencode-switchman
+- npm 包：https://www.npmjs.com/package/opencode-switchman
+请先阅读仓库 README 的「安装与使用」章节，然后严格照做。
+
+步骤：
+1. 安装 npm 上发布的最新版本：运行 `npx -y opencode-switchman@latest`（或 `bunx opencode-switchman@latest`），它会把我的 opencode 配置里的 `plugin` 条目改写为精确最新版本（若我用的是项目级 `opencode.json`，它同样适用）。
+2. 完成功能配置：插件全部配置都在我 opencode 配置目录下独立的 `opencode-switchman.jsonc` 文件中，首次启动自动生成并带注释；请对照我的 provider（如 `zhipuai-coding-plan` / `deepseek` / `github-copilot`）检查并按需调整。
+3. 校验配置正确性、确保 opencode 能正常加载启动运行该插件：在 opencode 内运行 `/switchman-doctor` 出本地脱敏诊断报告并修复所有报错；然后重启 opencode 确认插件确实已加载——日志应出现 `[opencode-switchman] injected N model shells (agents)`（注入 N 只模型空壳），且主模型的系统提示中应带有实时 `[ROUTES]/[WATERMARK]/[LIMITS]` 横幅块。
+
+三个步骤全部通过才算完成；请汇报你做的改动并给出验证证据。
+```
+
 ### 前置条件
 
 - [opencode](https://opencode.ai)——**强烈推荐以 CLI/TUI 为主力界面**（插件的操作面——侧栏状态面板、`/poolConfig` / `/modelRank` 弹窗、实时横幅——在 TUI 里最完整）：建议先用 TUI 完成全部配置，之后可自行选择是否换用桌面端体验；两端共享同一份配置与状态
@@ -134,14 +156,14 @@ TUI 插件没有目录自动发现机制，需要在 **`tui.jsonc`/`tui.json`** 
 
 ### /poolConfig —— 任务池选配（手动弹窗；会话式用 /poolConfig-chat）
 
-- **TUI（/poolConfig）**：弹出选择框（与选模型/思考等级同款交互）——先选任务池（economy / mechanical / main / hard / vision / review），再对全部可用模型上下勾选：选中即参与该池、再选即移出，附能力档标注，改动实时落盘并 toast 回执。
+- **TUI（/poolConfig）**：弹出选择框（与选模型/思考等级同款交互）——先选任务池（economy / mechanical / main / hard / vision / review），再对全部可用模型上下勾选：选中即参与该池、再选即移出，附能力档标注。快捷项：「全选」与「全部取消」（重建模式——只勾选想保留的几个；一个都没勾就退出则保持原选配不变，清空后第一次勾选即写入新清单）。改动实时落盘并 toast 回执。
 - **非 TUI / 会话内（/poolConfig-chat）**：会话式流程——注入各池选配总览（带池名可看 `[x]/[ ]` 完整清单），回复「main 只留 3 5」「economy 勾 1、取消 2」由 agent 调 `switchman-config.js` 落盘。
 - **语义**：选配=让各任务池的候选模型**体现差异化**（如 economy 只配轻量模型、hard 只配重思考模型）——某池的手动清单**优先于系统默认候选集**，清单内模型仍按能力等级排序推荐；**同一模型可重复参与多个池**；未配置/空清单的池走系统默认决策。「清除配置」=恢复该池系统默认。
 - **配置文件**：`~/.config/opencode/opencode-switchman/pool-config.json`（键=任务池名，值=参与该池的 modelId 数组）。
 
 ![/poolConfig 第一步——选择任务池，各池显示已参与模型数](docs/assets/tui-pool-config-pools.png)
 
-![/poolConfig 第二步——按能力档逐个勾选模型，支持全选/清除快捷项](docs/assets/tui-pool-config-models.png)
+![/poolConfig 第二步——按能力档逐个勾选模型，支持全选/全部取消/清除快捷项](docs/assets/tui-pool-config-models.png)
 
 ### /modelRank —— 模型能力排名（手动弹窗；会话式用 /modelRank-chat）
 
@@ -164,12 +186,14 @@ TUI 插件没有目录自动发现机制，需要在 **`tui.jsonc`/`tui.json`** 
 
 ### v1.x——确定性上下文治理与更强的手动覆盖（1.0.0 之后）
 
+- **壳子代理上下文硬顶**：每条壳子代理会话现在都有硬性上下文上限（`context.subagentForceTokens`，默认 100k token）——越过上限后每次工具调用都会被拒绝并附收尾指令，子代理以一份详细的进度总结作为任务结果交回主会话，且该会话永远无法再经 `task_id` 续接（持久化注册表）；经 `context.subagentCap` 配置（详见 [子代理上下文硬顶](#子代理上下文硬顶)）。
 - **常开逐次调用读预算（核心算法更新）**：用确定性预算闸取代旧的「每工具一次性提醒」（那种优惠券式提醒会被模型用重试/试探理性烧掉）。自第 1 轮起，每次读取都按 `context.readBudgetTokens`（默认 1500，钳制 200..20000）计费——预估超限的读取就地追加 `limit` 有界放行，或以精确的有界重试参数拒绝；每轮 2× 自读上限（用户发言即重置）阻断连续读取链；无法预估的工具输出事后记账。水位只保留生命周期职责（软=建议、硬=收尾拒绝、压=自动交接）。交付/验证类 bash（git、测试/lint、构建）任何水位放行；无界翻史（不带 `-n` 的 `git log -p`）任何水位拦截并附收窄提示。
 - **项目级语言偏好**：每轮注入 `[LANG]` 铁律行（会话 / 注释与提交 / 文档三种语言），首次使用每会话询问一次并按项目落盘，`/switchman-lang` 可随时修改。
 - **待办纪律**：规程 §0.7 + 每轮 `[TODO]` 状态行，主会话待办实时更新（含委派壳的结果）。
 - **/expert 专家咨询与随包 agent skills**：需求一键派给当前最强跨家族专家；开箱技能启动时同步进 opencode 全局技能目录（只增改不删、标记门控清理、fail-open）。
 - **review 档兜底**：跨家族只读壳全灭时保留最优 ro 壳、允许同族评审并标注 `DOWNGRADED`，不再出现空链。
 - **自动交接健壮性**：`[backup]` 备份自行编号（重启不乱、编号不回收）、压缩走与手动 `/compact` 相同通道、压缩腿异步化不再死锁会话。
+- **tmux 窗格镜像**：opencode 服务器自身跑在 tmux 里时，每条被委派的子代理都会在主 tmux 窗口右侧列以实时 `opencode attach` 窗格打开——可见窗格封顶＋FIFO 队列、原地接管、完成即重新均分布局，全程 fail-open（详见 [tmux 窗格镜像](#tmux-窗格镜像可选)）。
 
 ### v1.0.0——英文优先的稳定版
 
@@ -201,7 +225,8 @@ v0.2.0 将 switchman 从固定多供应商调度器升级为实时、能力感�
 | `matrix.mode / watch` | `auto / true` | 激活矩阵：`auto` 按宿主自动（desktop=可见模型 / CLI/TUI=favorites），`app`/`tui` 强制指定，`legacy` 旧静态矩阵；`watch`=配置面变化即重算并全量刷新探针（mode/watch 为启动级，重启生效） |
 | `banner.enabled` | `true` | 四行横幅注入开关 |
 | `rules.enabled / delegationFloor` | `true / 3000` | 调度员规程（AGENTS.md）随包注入开关；`delegationFloor`＝自做底价（token），注入规程时插值 |
-| `context.gates / softTokens / hardTokens / forceTokens / readBudgetTokens` | `true / 60000 / 80000 / 120000 / 1500` | **会话上下文水位实测＋自读预算闸**：插件从消息 token usage 实测主会话上下文并每轮注入 `[水位·会话]` 行（附每轮增速与距硬水位剩余轮数估算）。自读从第 1 轮起按 `readBudgetTokens` 计费：预估超限的读取自动追加 `limit` 有界放行，或以精确的有界重试参数拒绝；每轮另有 2× 上限阻断连续读取，无法预估的工具输出事后记账。验证/交付类 bash（git、测试/lint、构建）全水位放行；无界历史翻查（如不带 `-n` 的 `git log -p`）任何水位一律拦截并附收窄提示；超硬水位读取类关闭（收尾模式）；超压水位横幅强制立即压缩。壳子代理会话豁免；三档水位在可知时额外以当前会话模型上下文窗口（models.dev）的 90% 封顶 |
+| `context.gates / softTokens / hardTokens / forceTokens / readBudgetTokens` | `true / 60000 / 80000 / 120000 / 1500` | **会话上下文水位实测＋自读预算闸**：插件从消息 token usage 实测主会话上下文并每轮注入 `[水位·会话]` 行（附每轮增速与距硬水位剩余轮数估算）。自读从第 1 轮起按 `readBudgetTokens` 计费：预估超限的读取自动追加 `limit` 有界放行，或以精确的有界重试参数拒绝；每轮另有 2× 上限阻断连续读取，无法预估的工具输出事后记账。验证/交付类 bash（git、测试/lint、构建）全水位放行；无界历史翻查（如不带 `-n` 的 `git log -p`）任何水位一律拦截并附收窄提示；超硬水位读取类关闭（收尾模式）；超压水位横幅强制立即压缩。壳子代理会话不适用本水位，改走自身的单道硬顶（见 `context.subagentForceTokens` / `context.subagentCap`）；三档水位在可知时额外以当前会话模型上下文窗口（models.dev）的 90% 封顶 |
+| `context.subagentForceTokens / subagentCap` | `100000 / true` | **子代理上下文硬顶**：壳子代理会话只有一道硬顶（实测＝最新 assistant 消息的 input + output + reasoning + cache.read，与会话水位同口径），钳制 20k..1M 并额外以壳模型上下文窗口的 90% 封顶。触顶即拒绝该会话所有后续工具调用并下达收尾指令，子代理的下一份纯文本答复（详细的工作进度总结）直接作为任务结果返回委派方，会话永久终止；此后带 `task_id` 恢复该会话的 `task` 调用一律永久拒绝（持久登记 `~/.config/opencode/opencode-switchman/subagent-cap.json`，重启不失效），不带 `task_id` 的全新派发不受影响；`subagentCap: false` 只阻止新的终止——已终止的会话不复活 |
 | `dispatch.autoRedirect` | `true` | 派发被拒时在途改写 `subagent_type` 到拒绝消息已点名的链首候选（单跳、同快照守卫复检）——首次派发直接落在最优可用壳上，不再烧「拒绝-重试」轮次；`false` 恢复拒绝-重试 |
 | `relay.image` | `true` | 无视觉主模型：用户附带图片自动落盘并替换为路径文本＋阅读指引（委托 vision 壳或交给 MCP 视觉工具）；本地路径 / http URL 原样透传；全程 fail-open |
 | `lang.enabled / ask / candidates` | `true / true / 出厂清单` | 项目级语言偏好：每轮 `[LANG]` 铁律行（会话 / 注释与提交 / 文档），首次使用每会话询问一次，落盘 `.switchman/settings.json`（AGENTS.md 标记为只读回退），`/switchman-lang` 重新询问 |
@@ -209,6 +234,7 @@ v0.2.0 将 switchman 从固定多供应商调度器升级为实时、能力感�
 | `injection.mode` | `chain` | 壳注入面：`chain`＝六档链精选∪favorites/可见集（task 工具描述每会话省约 6-10k token，链外模型点名走 denyUninjected 提示）；`all`＝可用全集（旧行为）。启动级，重启生效 |
 | `lanes` | 内置六档链 | 自定义各档壳链（覆盖内置偏好序）；键=economy/mechanical/main/hard/vision/review |
 | `workspace.enabled / dirname` | `true / ".switchman"` | 工件工作区：每个主会话自动创建 `<project-root>/.switchman/<yyyy-mm-dd>/<sessionId>-<title>/` 目录，路径每轮注入调度员规程；目录内含 `SESSION.md` / `dispatches.jsonl` / `media/`。关闭后不再创建目录，规程段落同步失效 |
+| `tmux.enabled / rightPct / maxPanes / mini` | `true / 60 / 3 / false` | tmux 窗格镜像（仅当 opencode 服务器自身运行在 tmux 中时生效）：每条被委派的子代理在主 tmux 窗口右侧列实时打开一个 `opencode attach` 窗格；`rightPct`＝右列宽度百分比（10..90，主窗格占其余），`maxPanes`＝可见子代理窗格上限（1..4；超出的派发在 FIFO 队列等待），`mini`＝用极简 attach 界面取代完整 TUI |
 
 > **旧元组 options 迁移**：`quota.*.enabled`→`providers.<id>.observe`（SWM042）、`billingWindow.*`→`providers.<id>.peak`（SWM043）、其余行为段（`quota` 阈值/`cost`/`capability`/`matrix`/`banner`/`rules`/`lanes`）→同名 jsonc 段（SWM044）；`providers.glm/deepseek`（凭证收集清单）从未实际生效，已删除。元组显式配置兼容一代（值仍优先），下个大版本移除。
 
@@ -240,6 +266,29 @@ v0.2.0 将 switchman 从固定多供应商调度器升级为实时、能力感�
 - `media/` — 视觉委派中转的图片（已从旧全局状态目录迁来，fail-open 兜底）
 
 由 `opencode-switchman.jsonc` 的 `workspace.enabled` / `workspace.dirname` 配置（默认 `true` / `".switchman"`）；关闭后不再创建任何目录，规程中的对应段落同步失效。
+
+## tmux 窗格镜像（可选）
+
+opencode 服务器自身运行在 tmux 中时，每条被委派的子代理会话都会以 `opencode attach <server> -s <session>` 实时窗格打开，在主 tmux 窗口右侧纵向堆叠（主窗格保持左侧份额——默认 40%，子代理列占右侧 60%）。窗口只会在主窗格（服务器启动时所在窗格，即启动时的 `TMUX_PANE`）上切分：你自己的侧边窗格与 tmux 状态栏绝不会被触碰；从其他窗格接入的 TUI 客户端同样能在那里看到这些子代理窗格。
+
+![tmux 分屏镜像：主会话居左，子代理实时 pane 竖排居右](docs/assets/tmux-pane-mirroring.png)
+
+> 开箱即用，无需任何配置。唯一前提：在 tmux 会话中运行 opencode；tmux 之外该功能完全惰性、零副作用。
+
+- **可见上限＋FIFO**：子代理窗格最多同时可见 3 个（`tmux.maxPanes`，1..4）；超出的并发派发在 FIFO 队列中等待，某个可见子代理结束后，排队者原地接管其窗格（原地重生，窗格数不变）。每次完成都会收缩右列并重新均分布局：3→2 均分 → 1 独占右列 → 0 = 只剩主窗格（全宽恢复）。
+- **卫生**：窗格通过 pane 标题标记为 `swm:<agent-name>`；上次崩溃残留的窗格会在插件启动时清扫（kill，按标题前缀或 attach 启动命令匹配）。每次布局操作后都会恢复窗口的活动窗格（焦点保持）。
+- **天生安全**：不在 tmux 中或 `tmux.enabled=false` 时完全惰性；所有 tmux 失败一律 fail-open——只写状态日志，绝不阻塞派发。
+- **观看须知**：该窗格是附加到子代理会话的真实交互式 TUI——不要在里面打字（按键会进入子代理会话）。退出观看窗格只是移除显示，子代理继续运行。
+
+由 `opencode-switchman.jsonc` 的可选 `tmux` 段配置（`enabled` / `rightPct` / `maxPanes` / `mini`，默认 `true` / `60` / `3` / `false`）。
+
+## 子代理上下文硬顶
+
+主会话享有软/硬/压三档水位＋自动交接；被委派的壳子代理会话此前完全没有上下文控制，一路跑过 18 万 token 也无人拦截。现在每个壳子代理会话只有一道硬顶（`context.subagentForceTokens`，默认 100,000 token，钳制 20k..1M，并在可知时额外以壳模型上下文窗口的 90% 封顶），实测口径与会话水位相同：最新 assistant 消息的 input + output + reasoning + cache.read。触顶后，插件拒绝该子代理会话内的所有后续工具调用并下达收尾指令；子代理随后给出的纯文本答复——一份详细的工作进度总结（已完成 / 关键发现含 file:line 证据 / 未完成 / 下一步）——即作为任务结果返回给委派方，会话随即永久终止（终止事件写入状态日志）。合规两侧预先约定：子代理系统提示的壳规则第 6 条（首次触顶拒绝即停止、交回总结），随包调度员规程第 2 节约定编排侧契约（绝不重试已终止的会话；重新派发、只注入所需上下文）。
+
+终止是永久且有意的：此后任何通过 `task_id` 恢复该会话的 `task` 调用都会被永久拒绝（持久登记 `~/.config/opencode/opencode-switchman/subagent-cap.json`，重启不失效），不带 `task_id` 的全新派发不受影响。理由：子代理是可复现的工人（其规格写在委派 prompt 里），「终止并交回」优于「压缩后续跑」。`context.subagentCap: false` 只阻止新的终止——已终止的会话不复活。
+
+由 `opencode-switchman.jsonc` 的 `context.subagentForceTokens`（默认 `100000`）/ `context.subagentCap`（默认 `true`）配置（详见配置项表）。
 
 ## 核心思想
 

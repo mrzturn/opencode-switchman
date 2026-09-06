@@ -245,6 +245,37 @@ describe("rankCandidates", () => {
     expect(r.ranked.map((s) => s.key)).toEqual(["strained"])
     expect(r.breakdowns.get("strained")!.health).toBe(0.6)
   })
+  test("[2026-09-06] relaxHealthGates: health gates (down/disabled/breaker/isolation) skip for the backfill pass; exhausted/retired gating stays active", () => {
+    const shells = [
+      rankable({ key: "down", matrixStatus: "down" }),
+      rankable({ key: "breaker" }),
+      rankable({ key: "exhausted", pool: "copilot", family: "gpt", modelId: "gpt-5.6" }),
+      rankable({ key: "retired" }),
+    ]
+    const registry = {
+      down: shellReg({ name: "down" }),
+      breaker: shellReg({ name: "breaker" }),
+      exhausted: shellReg({ name: "exhausted", pool: "copilot", modelId: "gpt-5.6", family: "gpt" }),
+      retired: shellReg({ name: "retired", provider: "p", modelId: "m" }),
+    }
+    const r = rankCandidates(shells, ctx({
+      routing: { down_agents: { breaker: "x" }, down_expiry: {} },
+      registry,
+      quotaExhausted: { copilot: true },
+      retiredModels: new Set(["p/m"]),
+      relaxHealthGates: true,
+    }))
+    // health-class candidates come back for the backfill; pool-exhausted and retired stay out
+    expect([...r.ranked.map((s) => s.key)].sort()).toEqual(["breaker", "down"])
+    // without the flag the same input keeps today's hard-gate semantics
+    const strict = rankCandidates(shells, ctx({
+      routing: { down_agents: { breaker: "x" }, down_expiry: {} },
+      registry,
+      quotaExhausted: { copilot: true },
+      retiredModels: new Set(["p/m"]),
+    }))
+    expect(strict.ranked).toEqual([])
+  })
   test("end-to-end mini sample: when main has no same-level B, fall back to the adjacent A rather than the farther S", () => {
     const shells = [
       rankable({ key: "ds-s", modelId: "deepseek-v4-pro", pool: "deepseek", family: "deepseek", latencyMs: 5 }),

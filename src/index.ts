@@ -14,12 +14,14 @@ import { basename, join } from "node:path"
 import { AGENTS_MD } from "./assets/agents-md"
 import { DELEGATION_TEMPLATE } from "./assets/delegation-template"
 import {
-  loadContext, buildRegistry, loadManifest, laneShells, paths,
+  loadContext, buildRegistry, loadManifest, laneShells, paths, loadMatrix,
   cleanExpired, ensureStateDir, stateDir, loadSupersetShells, writeJsonAtomic,
   appendStatusLog,
   writeRouteSnapshot,
   writeQuotaBrief,
   loadProviderCache, saveProviderCache, nowIso,
+  providerCacheStale, providerModelsDelta,
+  loadSubagentCapRegistry, saveSubagentCapRegistry, withPathLock,
 } from "./state"
 import { checkShell, noteUnknownAgent, shellLikeName, denyUninjected, builtinAgentDeny, BUILTIN_SUBAGENTS } from "./gates"
 import {
@@ -29,7 +31,8 @@ import {
 import {
   READ_CLASS_TOOLS, estimateContextTokens, thresholdsOf, watermarkLevel,
   budgetGateDecision, estimateReadRange, estimateOutputTokens, readBudgetOf, turnBudgetOf,
-  capThresholdsByWindow,
+  capThresholdsByWindow, subagentCapOf, capByWindow,
+  subagentCapDenyMessage, subagentResumeDenyMessage,
 } from "./context-watch"
 import type { ReadEstimate, FileSample, ContextThresholds } from "./context-watch"
 import { backupSession, compactSession, v1HandoverPort, type HandoverResult } from "./handover-core"
@@ -56,6 +59,7 @@ import { classifyFailure } from "./failclass"
 import { LANE_ORDER, DEFAULT_LANG_CANDIDATES } from "./types"
 import type { SwitchmanOptions, Lane, LaneResult, Pool, ShellRegEntry, ModelKey } from "./types"
 import { WorkspaceTracker, DEFAULT_WORKSPACE_DIRNAME, type EnsuredWorkspace } from "./workspace"
+import { TmuxPaneManager, serverOriginOf } from "./tmux"
 import { loadLangConfig, renderLangLine, renderAskDirective, saveLangFromQuestion } from "./lang-config"
 import { detectMode, readConfigured, normalizeProviderListResponse } from "./activation"
 import type { MatrixModeOption } from "./activation"
@@ -66,7 +70,7 @@ import { parseRouteMeta } from "./meta"
 import { relayImageParts } from "./relay"
 import { syncBundledSkills } from "./skill-sync"
 import { MatrixManager } from "./matrix-manager"
-import { laneBaseChain } from "./lane-policy"
+import { laneBaseChain, filterMatrixDownShells, filterPoolUnavailableShells } from "./lane-policy"
 import {
   buildShells, loadCatalog, bundledModelIndex, isConversational, toManifestEntry, freeFloorModels,
   contextWindowOf,
@@ -147,9 +151,18 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   const conflictNames = new Set<string>()
   let supersetDefs: ShellDefinition[] = []
   let degradedModelCount = 0
+  // [2026-09-06]-[model list the current superset was built from: the provider.list watchdog diffs fresh probe results
+  // against it to detect mid-session model drift (provider added/dropped models) and rebuild the superset manifest]
+  let lastSupersetModels: string[] = []
   // [2026-09-04]-[measured session context watermark: message.updated token usage → main-session (non-shell/non-internal) watermark;
   //  past the line, read-class tools get the tiered gate (nudge first, then hard deny) — turns rules self-reporting into mechanism enforcement]
   const sessionWatermark = new Map<string, { tokens: number; at: number }>()
+  // [2026-09-06]-[subagent hard cap: parallel watermark map for DISPATCHED SHELL sessions (the main-session map above
+  //  explicitly excludes them) + the in-process mirror of the persistent termination registry. Past the cap every tool
+  //  call in that session is denied with a wrap-up order (the next text-only answer = progress summary = task result)
+  //  and the session can never be resumed via task_id; fresh dispatches are unaffected]
+  const shellWatermark = new Map<string, { tokens: number; at: number }>()
+  const terminatedSessions = new Set<string>()
   // [2026-09-05]-[v1 read budget: per-turn self-read spend (resets each user turn), watermark sample history for
   //  pace estimation, and last-seen user message id for turn-boundary detection (assistant parentID comparison)]
   const turnReadUsage = new Map<string, { used: number; at: number }>()
@@ -180,12 +193,32 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   // [2026-09-05]-[project language preference: per-session first-ask latch (released on capture/session delete);
   //  the config itself is re-read from disk EVERY turn, so "configured = never ask again" holds across restarts]
   const langAsked = new Set<string>()
+  // [2026-09-06]-[tmux pane mirroring: dispatched subagent sessions open as live `opencode attach` panes in the home
+  //  tmux window — main pane left / subagent column right (max 3 visible, FIFO replacement on completion); inert
+  //  outside tmux, fail-open everywhere. pendingTask = dispatch intents recorded per main session, consumed by the
+  //  matching child session.created (parentID + agent name) so internal sessions (title/summary) never open panes]
+  const tmuxPanes = new TmuxPaneManager({
+    options: () => options.tmux,
+    serverOrigin: serverOriginOf((input as any).serverUrl, process.env.OPENCODE_PORT) ?? "",
+    dir: pluginDirectory,
+    log: (m) => appendStatusLog(m),
+  })
+  void tmuxPanes.init()
+  const pendingTask = new Map<string, Array<{ agent: string; at: number }>>()
 
   function isShellOrInternalSession(sessionID: string | undefined): boolean {
     if (!sessionID) return false
     if (dynamic) return manager?.skipSystemInjection(sessionID) === true
     const agent = sessionAgent.get(sessionID) ?? ""
     return /-mx-/.test(agent) || agent === "title" || agent === "compaction" || agent === "summary"
+  }
+
+  // [2026-09-06]-[subagent cap scope: true only for DISPATCHED SHELL sessions — skipSystemInjection unions internal
+  //  sessions (title/compaction/summary), which are short-lived and must never be terminated by the cap]
+  function isShellAgentSession(sessionID: string | undefined): boolean {
+    if (!sessionID) return false
+    if (dynamic) return manager?.isShellSession(sessionID) === true
+    return /-mx-/.test(sessionAgent.get(sessionID) ?? "")
   }
 
   function kk(n: number): string { return `${Math.round(n / 1000)}k` }
@@ -245,6 +278,41 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       return thresholdsOf(options.context)
     }
   }
+
+  // [2026-09-06]-[subagent hard cap: configured cap window-capped at 90% of the shell model's context window (same
+  //  clamp as sessionThresholds; shell sessions record their model key in sessionMsgModel too); null = disabled]
+  function effectiveSubagentCap(sessionId: string | undefined): number | null {
+    const base = subagentCapOf(options.context)
+    if (base === null) return null
+    try {
+      const key = sessionId ? sessionMsgModel.get(sessionId) : undefined
+      const win = key ? contextWindowOf(metaIndexRuntime ?? bundledModelIndex(), key) : undefined
+      return capByWindow(base, win)
+    } catch {
+      return base
+    }
+  }
+
+  // [2026-09-06]-[termination persistence: read-merge-write under the state file's path lock so parallel terminations
+  //  (several capped subagents in flight) never clobber each other; bounded at 500 entries, oldest dropped first]
+  function persistTerminatedSession(sessionId: string, tokens: number, agent: string | undefined): void {
+    void (async () => {
+      try {
+        await withPathLock(paths().subagentCap, async () => {
+          const reg = loadSubagentCapRegistry()
+          reg[sessionId] = { at: Date.now(), tokens, ...(agent ? { agent } : {}) }
+          const ids = Object.keys(reg)
+          if (ids.length > 500) {
+            for (const id of ids.sort((a, b) => (reg[a].at ?? 0) - (reg[b].at ?? 0)).slice(0, ids.length - 500)) delete reg[id]
+          }
+          saveSubagentCapRegistry(reg)
+        })
+      } catch { /* fail-open: the in-process Set still enforces the cap for this session */ }
+    })()
+  }
+  try {
+    for (const id of Object.keys(loadSubagentCapRegistry())) terminatedSessions.add(id)
+  } catch { /* fail-open */ }
 
   /** Mean per-turn context growth from recent watermark samples (positive deltas only, mean of last 5 of last 9) */
   function watermarkPace(sessionId: string): { delta: number; turnsToHard: number } | null {
@@ -349,6 +417,13 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   function traceDispatch(sessionID: string | undefined, shellName: string, prompt: unknown, redirected: boolean): void {
     try {
       if (!sessionID || isShellOrInternalSession(sessionID)) return
+      // [2026-09-06]-[tmux pane mirroring: record the dispatch intent; the matching child session.created consumes it]
+      {
+        const q = (pendingTask.get(sessionID) ?? []).filter((e) => Date.now() - e.at < 10 * 60_000)
+        q.push({ agent: shellName, at: Date.now() })
+        if (q.length > 8) q.splice(0, q.length - 8)
+        pendingTask.set(sessionID, q)
+      }
       const [meta] = parseRouteMeta(prompt)
       workspace.traceDispatch(sessionID, {
         ts: nowIso(), session: sessionID, shell: shellName,
@@ -357,6 +432,35 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         source: typeof meta?.source === "string" ? meta.source : undefined,
         redirected: redirected || undefined,
       })
+    } catch { /* fail-open */ }
+  }
+
+  /**
+   * [2026-09-06 fix]-[tmux pane mirroring resume: a task call carrying task_id REUSES the previous child session
+   *  (opencode task tool skips sessions.create) — no session.created event fires, so the intent-matching trigger
+   *  never runs and the pane would never (re)open. Verify the reused session exists first: on a stale/unknown
+   *  task_id opencode silently falls back to a FRESH session whose pane still arrives via session.created, and a
+   *  blind pane here would attach to nothing. A lookup error fails open (pane opened anyway — house style; the
+   *  session clearly existed or the model would have no task_id). Called right after every allowed-dispatch
+   *  traceDispatch — never on deny paths]
+   */
+  function noteResumedChild(sessionID: string | undefined, shellName: string, args: unknown): void {
+    try {
+      const tid = (args as any)?.task_id
+      if (!sessionID || isShellOrInternalSession(sessionID) || typeof tid !== "string" || !tid) return
+      void withTimeout(Promise.resolve(
+        (pluginClient as any)?.session?.get?.({ path: { id: tid }, query: { directory: pluginDirectory } }),
+      ), 3_000)
+        .then((res) => {
+          // verified missing → opencode will create a fresh session; the session.created path covers that pane
+          if (res && !(res as any)?.data?.id) return
+          void tmuxPanes.noteChild(sessionID, tid, shellName)
+          appendStatusLog(`tmux pane mirroring: resume dispatch ses_${tid.slice(-6)} (${shellName}) — task_id reuse, pane opened directly (no session.created will fire)`)
+        })
+        .catch(() => {
+          void tmuxPanes.noteChild(sessionID, tid, shellName)
+          appendStatusLog(`tmux pane mirroring: resume dispatch ses_${tid.slice(-6)} (${shellName}) — session lookup failed, fail-open pane`)
+        })
     } catch { /* fail-open */ }
   }
 
@@ -461,6 +565,69 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     }
   }
 
+  /** [2026-09-06]-[superset face build extracted from the config hook: one shared body for startup and the provider.list
+   * watchdog's model-drift rebuild. Persists shell-superset.json (the /modelRank //poolConfig candidate source) and refreshes
+   * the closure views (supersetDefs / metaIndexRuntime / degradedModelCount / lastSupersetModels). Deliberately does NOT touch
+   * cfg.agent — that surface is one-shot (opencode plugin API constraint); the startup path injects shells right after, while
+   * the watchdog path relies on updateSuperset + a restart hint for dispatch]-[new provider models visible without restart] */
+  async function computeSupersetFace(
+    stateRoot: string,
+    providerModels: { models: string[]; providers: string[] },
+  ): Promise<{
+    defs: ShellDefinition[]
+    supersetModels: string[]
+    knownProviders: Set<string>
+    fullShells: number
+    configured: ReturnType<typeof readConfiguredSafe>
+  }> {
+    // [2026-09-06]-[extracted to plugin level, TS aliased narrowing (dynamic) no longer applies; both call sites are dynamic-path
+    //  only (config hook after the !dynamic early return / watchdog scheduled there), so legacy never reaches here]
+    const configured = readConfiguredSafe(stateRoot, runMode as "desktop" | "cli")
+    const catalog = await loadCatalog().catch(() => ({ index: {}, status: "none" as const, etag: null }))
+    const freeFloor = freeFloorModels(catalog.index)
+    const floorModels = freeFloor.length > 0
+      ? freeFloor
+      : [...new Set(loadManifest().shells.map((s) => `${s.provider}/${s.modelId}`))]
+    if (freeFloor.length > 0) appendStatusLog(`floor = ${freeFloor.length} OpenCode Zen free models (catalog ${catalog.status})`)
+    else appendStatusLog(`floor fell back to the static manifest (catalog ${catalog.status}, 0 free models)`)
+    const realKnownProviders = new Set(providerModels.providers)
+    const invalidFavoriteModels = configured.models.filter((m) => !realKnownProviders.has(m.slice(0, m.indexOf("/"))))
+    if (invalidFavoriteModels.length > 0) {
+      appendStatusLog(`visible set/favorites contain invalid models with unknown provider (provider not connected; ignored, no shells built): ${invalidFavoriteModels.join(", ")}`)
+    }
+    const validConfiguredModels = configured.models.filter((m) => realKnownProviders.has(m.slice(0, m.indexOf("/"))))
+    const supersetModels = [...new Set([...validConfiguredModels, ...providerModels.models, ...floorModels])]
+      .filter((full) => isConversational(full.slice(full.indexOf("/") + 1)))
+      .sort()
+    const metaIndex: Record<string, EffortInfo> = { ...bundledModelIndex(), ...catalog.index }
+    metaIndexRuntime = metaIndex
+    let defs = buildShells(supersetModels, metaIndex, {
+      roAliases: true, degradedFamilyByProvider: true, markDegraded: true,
+    })
+    const fullShells = defs.length
+    defs = selectInjectableDefs(defs, {
+      customLanes: (options.lanes as Record<string, readonly string[]> | null) ?? null,
+      keepModels: options.injection!.mode === "all" ? new Set(supersetModels) : new Set(validConfiguredModels),
+      preferredModels: new Set(validConfiguredModels.map((m) => m.slice(m.indexOf("/") + 1))),
+      capabilityOf: (modelId) => baseScoreDynamic(modelId),
+      billingBoostOf, unknownOf: unknownOfModel,
+      costOf: (modelId) => costOf(modelId),
+    })
+    degradedModelCount = new Set(defs.filter((d) => d.degraded).map((d) => `${d.provider}/${d.modelId}`)).size
+    supersetDefs = defs
+    lastSupersetModels = supersetModels
+    try {
+      writeJsonAtomic(paths().shellSuperset, {
+        generated_at: new Date().toISOString(),
+        counts: { superset_models: supersetModels.length, shells: defs.length, full_shells: fullShells, degraded: degradedModelCount },
+        mode: runMode,
+        shells: defs.map(toManifestEntry),
+      })
+    } catch { /* fail-open */ }
+    const knownProviders = new Set<string>([...supersetModels.map((m) => m.slice(0, m.indexOf("/"))), ...providerModels.providers])
+    return { defs, supersetModels, knownProviders, fullShells, configured }
+  }
+
   /** [2026-09-01]-[P3 startup race fix: single attempt with a short timeout (blocks briefly); failure/not-ready throws for the caller's backoff retry]-
    *  single provider.list probe (no retry logic here; retries belong to collectProviderModels's backoff scheduling) */
   async function attemptProviderList(
@@ -532,6 +699,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   function scheduleProviderListWatchdog(
     input: { client?: { provider?: { list?: () => Promise<unknown> } } },
     knownProviders: ReadonlySet<string>,
+    stateRoot: string,
   ): void {
     const delays = [15_000, 30_000, 60_000] // 3 background rounds, increasing gaps, 105s more in total; process exit ends it naturally, no explicit cancel
     const run = async () => {
@@ -545,6 +713,26 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           if (fresh.length > 0) {
             appendStatusLog(`provider.list background probe: new provider(s) connected (${fresh.join(", ")}) — restart opencode to complete shell registration`)
             clearBannerCache()
+          }
+          // [2026-09-06]-[model-drift heal: when the fresh list differs from the one the current superset was built from
+          // (a provider added/dropped models mid-session — e.g. a new flagship appearing on Copilot), rebuild the superset
+          // manifest and the activation view so /modelRank and /poolConfig list the new models without a restart; dispatch of
+          // the brand-new shells still needs one restart (cfg.agent is one-shot), which the log states explicitly]-[fail-open]
+          const delta = providerModelsDelta(lastSupersetModels, result.models)
+          if (delta.added.length > 0 || delta.removed.length > 0) {
+            try {
+              const face = await computeSupersetFace(stateRoot, { models: result.models, providers: result.providers })
+              manager?.updateSuperset(face.defs, face.knownProviders)
+              clearBannerCache()
+              refreshSidebarState()
+              const drift = [
+                delta.added.length > 0 ? `added: ${delta.added.join(", ")}` : null,
+                delta.removed.length > 0 ? `removed: ${delta.removed.join(", ")}` : null,
+              ].filter(Boolean).join("; ")
+              appendStatusLog(`provider.list background probe: model list drifted (${drift}) — superset manifest rebuilt, /modelRank //poolConfig lists updated${delta.added.length > 0 ? "; new shells dispatch after the next opencode restart" : ""}`)
+            } catch (exc) {
+              appendStatusLog(`provider.list background probe: superset rebuild failed (kept previous manifest): ${exc}`)
+            }
           }
           return
         } catch { /* keep backing off to the next round, fail-open */ }
@@ -633,6 +821,32 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     }
   }
 
+  // [2026-09-06]-[pool-exhaustion-aware seats: snapshot-driven "pool is PROVEN exhausted" resolver for chain SELECTION
+  //  (base-chain seat filter + computeLane pool-unavailable drop/backfill-tail). Same exhaustion math as
+  //  quotaExhaustedFlags (glmExhausted/copilotExhausted/deepseekExhausted over the live quota snapshot) but deliberately
+  //  NOT gated by policy.<pool>.routing: under observe-only (routing:false, factory default) pools keep their
+  //  no-hard-denial contract, yet a proven-exhausted pool (e.g. Copilot has_quota=false / remaining<0) must not take
+  //  chain-head seats by tier ahead of live pools. Missing snapshot (observe off) or any error reads false = fail-open
+  //  (no proof, no sinking). SELECTION only — the six dispatch gates never receive this resolver, so no denial path
+  //  changes]
+  function poolUnavailableOf(): (pool: string) => boolean {
+    try {
+      const qv = quotaView(creds as any, { observe: {
+        glm: policy.glm.observe,
+        deepseek: policy.deepseek.observe,
+        copilot: policy.copilot.observe,
+      } })
+      const flags = {
+        glm: glmExhausted(qv.glm, options.quota!.glm!.fiveHourReservePct)[0],
+        copilot: copilotExhausted(qv.copilot)[0],
+        deepseek: deepseekExhausted(qv.deepseek)[0],
+      }
+      return (pool: string) => flags[pool as Pool] === true
+    } catch {
+      return () => false
+    }
+  }
+
   function currentContext() {
     warmup()
     const ctx = loadContext(options, creds as any, dynamic ? dynamicManifest() : undefined)
@@ -671,8 +885,20 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     if (!dynamic || !manager) return laneShells(loadContext(options, creds as any), lane)
     const m = loadManifest()
     const attrs = new Map<string, { effort: string; capability: string; vision: boolean; pool: string; provider: string; modelId: string; cost: number | null }>()
+    // [2026-09-06]-[health-aware seats: matrix-down shells are removed BEFORE seat allocation (same "combo down"
+    //  verdict the registry uses to mark a shell disabled), so the capability-tier-only top-4/top-2 seat caps can no
+    //  longer spend every seat on dead combos while healthy lower-tier shells get sliced out — vision/review went
+    //  fully empty when a whole provider answered 402 and the seated shells all probed down. Unknown/missing combos
+    //  fail-open (kept). [pool-exhaustion-aware seats: shells of a PROVEN-exhausted pool (snapshot-driven, observe-only
+    //  safe) are excluded from seats the same way — a "strained" 429 combo inside a dead pool must not outrank live
+    //  pools by tier (live mechanical head was copilot-53codex-high while Copilot monthly quota was exhausted)]]
+    //  -[impact: dynamic lane base chains; static/custom lanes untouched]
+    const comboStatusOf = (matrixKey: string): string | null => {
+      const st = loadMatrix()?.combos?.[matrixKey]?.status
+      return typeof st === "string" ? st : null
+    }
     // [2026-08-29]-[failure classification: dynamic filters retired-model shells first, so models 404ing continuously never re-enter redirect candidates]
-    for (const s of filterRetiredShells((dynamicManifest() ?? m).shells)) {
+    for (const s of filterPoolUnavailableShells(filterMatrixDownShells(filterRetiredShells((dynamicManifest() ?? m).shells), comboStatusOf), poolUnavailableOf())) {
       attrs.set(s.name, { effort: s.effort, capability: s.capability, vision: s.vision, pool: String(s.pool), provider: s.provider, modelId: s.modelId, cost: costOf(s.modelId) })
     }
     return laneBaseChain(lane, {
@@ -732,6 +958,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
                preferredModels: preferredModelIds(),
                // [2026-09-03]-[task-pool selection: banner recommendation matches each lane's selection list]
                poolConfig: loadPoolConfig(),
+               // [2026-09-06]-[pool-exhaustion-aware seats: banner heads with live pools even under observe-only policy]
+               poolUnavailable: poolUnavailableOf(),
             })
           } catch { /* one lane failing never affects the others */ }
         }
@@ -861,6 +1089,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         glmPeak: extras.glmPeak,
         states: extras.states as any,
         poolConfig: loadPoolConfig(),
+        // [2026-09-06]-[pool-exhaustion-aware seats: lane-head hints point at live pools, same source as the banner]
+        poolUnavailable: poolUnavailableOf(),
       } as any, undefined)
     } catch { return null }
   }
@@ -970,6 +1200,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         states: extras?.states as any,
         // [2026-09-03]-[deny-postscript candidates never recommend models outside the task-pool selection list (same source as gate 5.5/banner)]
         poolConfig: loadPoolConfig(),
+        // [2026-09-06]-[pool-exhaustion-aware seats: redirect hints point at live pools, same source as the banner]
+        poolUnavailable: poolUnavailableOf(),
       } as any, agent)
     } catch {
       return null
@@ -1033,7 +1265,6 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         // [2026-08-29]-[superset injection: config once (cfg.agent is immutable at runtime) → runtime activation gating]
         // superset = config surface ∪ all conversational models of credentialed providers ∪ floor models; embedding classes excluded
         const stateRoot = resolveOpencodeStateRoot()
-        const configured = readConfiguredSafe(stateRoot, runMode)
         // [2026-09-01]-[instant startup across restarts: after the first successful provider.list probe, providers/models are cached (written only on
         //  real success, see scheduleProviderListWatchdog/the success branch below); non-first startups build shells straight from the cache,
         //  no longer blocking on the provider.list network race at every restart (the old backoff took up to ~30s) — the cache may lag the
@@ -1042,80 +1273,45 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         const providerCache = loadProviderCache()
         let providerModels: { models: string[]; providers: string[]; fellBack: boolean }
         let usedProviderCache = false
-        if (providerCache) {
+        if (providerCache && !providerCacheStale(providerCache)) {
           providerModels = { models: providerCache.models, providers: providerCache.providers, fellBack: false }
           usedProviderCache = true
           appendStatusLog(`provider.list using cross-restart cache (${providerCache.providers.length} providers, cached at ${providerCache.at}); verifying additions in background`)
+        } else if (providerCache) {
+          // [2026-09-06]-[stale cache no longer trusted blindly: provider model lists grow over time (new flagship models), and
+          // the old "cache first, heal next restart" flow locked brand-new models out of the injected surface until a second
+          // restart. A cache past TTL (or with an unparseable timestamp) now triggers a live probe (full backoff budget) before
+          // the superset build; on probe failure the stale cache is still used (fail-open) and the background watchdog keeps
+          // retrying]-[new provider models surface in the same restart]
+          appendStatusLog(`provider.list cache stale (cached at ${providerCache.at}), probing live before the superset build`)
+          const live = await collectProviderModels(input, cfg)
+          if (!live.fellBack) {
+            providerModels = live
+            saveProviderCache({ at: nowIso(), models: live.models, providers: live.providers })
+          } else {
+            providerModels = { models: providerCache.models, providers: providerCache.providers, fellBack: false }
+            usedProviderCache = true
+          }
         } else {
           providerModels = await collectProviderModels(input, cfg)
           if (!providerModels.fellBack) saveProviderCache({ at: nowIso(), models: providerModels.models, providers: providerModels.providers })
         }
-        const catalog = await loadCatalog().catch(() => ({ index: {}, status: "none" as const, etag: null }))
-        // [2026-09-01]-[floor source change: opencode's bundled free models (OpenCode Zen, models.dev opencode provider
-        //  -free ∪ big-pickle special case, 24h rolling) take priority; catalog unavailable (offline cold start) fail-open falls back to the static manifest]
-        const freeFloor = freeFloorModels(catalog.index)
-        const floorModels = freeFloor.length > 0
-          ? freeFloor
-          : [...new Set(loadManifest().shells.map((s) => `${s.provider}/${s.modelId}`))]
-        if (freeFloor.length > 0) appendStatusLog(`floor = ${freeFloor.length} OpenCode Zen free models (catalog ${catalog.status})`)
-        else appendStatusLog(`floor fell back to the static manifest (catalog ${catalog.status}, 0 free models)`)
-        // [2026-09-01]-[hardening: configured (visible set/favorites) used to be merged into supersetModels blindly; dirty favorites (e.g. accidentally
-        // favoriting "provider/not-a-model" whose provider is not in the real connected set) would be built by buildShells as real,
-        // dispatchable-but-doomed shells, and would pollute knownProviders below, distorting computeActivation's "provider known"
-        // verdict so the dirty data was never detected. Now filter by the real connected provider set first, logging filtered entries
-        // separately instead of passively promoting them into "seemingly legal" shells]
-        const realKnownProviders = new Set(providerModels.providers)
-        const invalidFavoriteModels = configured.models.filter((m) => !realKnownProviders.has(m.slice(0, m.indexOf("/"))))
-        if (invalidFavoriteModels.length > 0) {
-          appendStatusLog(`visible set/favorites contain invalid models with unknown provider (provider not connected; ignored, no shells built): ${invalidFavoriteModels.join(", ")}`)
-        }
-        const validConfiguredModels = configured.models.filter((m) => realKnownProviders.has(m.slice(0, m.indexOf("/"))))
-        const supersetModels = [...new Set([...validConfiguredModels, ...providerModels.models, ...floorModels])]
-          .filter((full) => isConversational(full.slice(full.indexOf("/") + 1)))
-          .sort()
-        const metaIndex: Record<string, EffortInfo> = { ...bundledModelIndex(), ...catalog.index }
-        // [2026-09-04]-[image relay: the same metadata index serves messages.transform runtime vision queries (same source as shell injection)]
-        metaIndexRuntime = metaIndex
-        supersetDefs = buildShells(supersetModels, metaIndex, {
-          roAliases: true, degradedFamilyByProvider: true, markDegraded: true,
-        })
-        // [2026-09-04]-[injection surface mode configurable: chain (default) = six-lane chain curation ∪ favorites/visible set (saves 6-10k
-        //  tokens/session on the task tool description; out-of-chain models called by name go through denyUninjected hinting to enable them
-        //  in model management); all = the full usable set (old behavior, any available model callable). cfg.agent takes effect once;
-        //  changing the config needs a restart]
-        const injectKeepModels = options.injection!.mode === "all"
-          ? new Set(supersetModels)
-          : new Set(validConfiguredModels)
-        const fullSupersetCount = supersetDefs.length
-        supersetDefs = selectInjectableDefs(supersetDefs, {
-          customLanes: (options.lanes as Record<string, readonly string[]> | null) ?? null,
-          keepModels: injectKeepModels,
-          preferredModels: new Set(validConfiguredModels.map((m) => m.slice(m.indexOf("/") + 1))),
-          capabilityOf: (modelId) => baseScoreDynamic(modelId),
-          billingBoostOf, unknownOf: unknownOfModel,
-          costOf: (modelId) => costOf(modelId),
-        })
-        degradedModelCount = new Set(supersetDefs.filter((d) => d.degraded).map((d) => `${d.provider}/${d.modelId}`)).size
-        const { injected, conflicts } = injectShellDefs(cfg, supersetDefs)
+        // [2026-09-06]-[superset build moved into computeSupersetFace (shared with the watchdog's model-drift rebuild);
+        // the hook keeps only the one-shot cfg.agent injection]-[single source of truth for the superset build]
+        const face = await computeSupersetFace(stateRoot, providerModels)
+        const fullSupersetCount = face.fullShells
+        const { injected, conflicts } = injectShellDefs(cfg, face.defs)
         injectedNames.clear()
         for (const n of injected) injectedNames.add(n)
         conflictNames.clear()
         for (const n of conflicts) conflictNames.add(n)
-        try {
-          writeJsonAtomic(paths().shellSuperset, {
-            generated_at: new Date().toISOString(),
-            counts: { superset_models: supersetModels.length, shells: supersetDefs.length, full_shells: fullSupersetCount, degraded: degradedModelCount },
-            mode: runMode,
-            shells: supersetDefs.map(toManifestEntry),
-          })
-        } catch { /* fail-open */ }
-        const knownProviders = new Set<string>([...supersetModels.map((m) => m.slice(0, m.indexOf("/"))), ...providerModels.providers])
-        // [2026-09-01]-[async fallback: when the in-hook backoff still falls back entirely, or this startup used the cross-restart cache (no live probe),
+        const knownProviders = face.knownProviders
+        // [2026-08-29]-[async fallback: when the in-hook backoff still falls back entirely, or this startup used the cross-restart cache (no live probe),
         //  the background keeps probing — a newly seen provider can only be hinted as restart-required (hard cfg.agent one-shot constraint, see
         //  the scheduleProviderListWatchdog comment), but at least "would a restart take effect now" becomes a live, explicit status hint]
-        if (providerModels.fellBack || usedProviderCache) scheduleProviderListWatchdog(input, knownProviders)
+        if (providerModels.fellBack || usedProviderCache) scheduleProviderListWatchdog(input, knownProviders, stateRoot)
         manager = new MatrixManager({
-          stateRoot, mode: runMode, superset: supersetDefs,
+          stateRoot, mode: runMode, superset: face.defs,
           injectedNames, knownProviders,
           watchEnabled: options.matrix!.watch === true,
           onRecompute: (state, newTargets, source) => {
@@ -1140,9 +1336,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             appendStatusLog(`activation matrix recomputed (gen=${state.generation}, active shells ${state.activeShells.length}, probes ${source}×${targets.length})`)
           },
         })
-        manager.recompute(configured)
+        manager.recompute(face.configured)
         manager.start()
-        appendStatusLog(`injected ${injected.size} shells (mode=${runMode}, injection surface=${options.injection!.mode}=${fullSupersetCount}→${supersetDefs.length} after curation, conflicts ${conflicts.size}; activation gating active)`)
+        appendStatusLog(`injected ${injected.size} shells (mode=${runMode}, injection surface=${options.injection!.mode}=${fullSupersetCount}→${face.defs.length} after curation, conflicts ${conflicts.size}; activation gating active)`)
         // [2026-08-29]-[config hook triggers the self-update check]-[async check; failure never blocks startup]
         refreshSelfUpdate().then((state) => { if (state?.outdated) clearBannerCache() }).catch(() => {})
       } catch (exc) {
@@ -1300,6 +1496,31 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     },
 
     "tool.execute.before": async (input, output) => {
+      // [2026-09-06]-[subagent hard cap gate, runs before every other gate: (a) any tool inside a terminated shell
+      //  subagent session is denied with a wrap-up order — the model's next text-only answer (detailed progress
+      //  summary) becomes the task result returned to the delegator; (b) any task call resuming a terminated session
+      //  via task_id is rejected permanently (fresh dispatches without task_id are unaffected). subagentCap: false
+      //  prevents NEW terminations only — already-terminated sessions stay dead]
+      try {
+        const capSid = (input as any).sessionID as string | undefined
+        if (capSid && terminatedSessions.has(capSid)) {
+          denySkip.add(input.callID)
+          const cap = effectiveSubagentCap(capSid) ?? subagentCapOf(options.context) ?? 0
+          appendStatusLog(`subagent context cap: tool '${input.tool}' denied in terminated session ${capSid}`)
+          throw new Error(subagentCapDenyMessage(shellWatermark.get(capSid)?.tokens ?? cap, cap))
+        }
+        if (input.tool === "task") {
+          const tid = (output.args as any)?.task_id
+          if (typeof tid === "string" && tid && terminatedSessions.has(tid)) {
+            denySkip.add(input.callID)
+            appendStatusLog(`subagent context cap: resume of terminated session ses_${tid.slice(-6)} denied (permanent)`)
+            throw new Error(subagentResumeDenyMessage(tid))
+          }
+        }
+      } catch (e) {
+        if (denySkip.has(input.callID)) throw e
+        // internal error on our side (never one of our own denies) → fail-open, do not break the tool path
+      }
       // [2026-09-04]-[read watermark gate: read-class/bash tools other than task are intercepted by tier per the measured session watermark]
       if (input.tool !== "task") {
         // [2026-09-05]-[no-vision image read guard runs first: image files are skipped by the read budget gate (BINARY_EXT),
@@ -1375,6 +1596,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
               if (cand && tryRedirect(cand, output.args?.prompt)) {
                 appendStatusLog(`auto-redirect ${agent} → ${cand} (uninjected shell; redirected to the chain-head candidate)`)
                 traceDispatch(input.sessionID, cand, output.args?.prompt, true)
+                noteResumedChild(input.sessionID, cand, output.args)
                 return
               }
             }
@@ -1399,6 +1621,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
                   output.args.prompt = newPrompt
                   appendStatusLog(`auto-redirect ${agent} → ${cand} (built-in agent blocked; appended a synthetic ROUTE_META)`)
                   traceDispatch(input.sessionID, cand, newPrompt, true)
+                  noteResumedChild(input.sessionID, cand, output.args)
                   return
                 }
               }
@@ -1408,16 +1631,21 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           }
           appendStatusLog(noteUnknownAgent(agent))
           traceDispatch(input.sessionID, agent, output.args?.prompt, false)
+          noteResumedChild(input.sessionID, agent, output.args)
           return
         }
         const r = checkShell(agent, shell, output.args?.prompt, gateSnap)
         if (r.note) appendStatusLog(r.note)
-        if (!r.deny) traceDispatch(input.sessionID, agent, output.args?.prompt, false)
+        if (!r.deny) {
+          traceDispatch(input.sessionID, agent, output.args?.prompt, false)
+          noteResumedChild(input.sessionID, agent, output.args)
+        }
         if (r.deny) {
           // [2026-09-04]-[autoRedirect: denied and a hint candidate is already computed → one-hop silent redirect (guard re-check), zero retries]
           if (tryRedirect(r.redirect, output.args?.prompt)) {
             appendStatusLog(`auto-redirect ${agent} → ${r.redirect} (${r.deny.slice(0, 60)})`)
             traceDispatch(input.sessionID, r.redirect ?? agent, output.args?.prompt, true)
+            noteResumedChild(input.sessionID, r.redirect ?? agent, output.args)
             return
           }
           // [2026-09-04]-[autoRedirect: gate 6 META invalid — synthesize a ROUTE_META at the prompt tail for non-review lanes and re-check the same
@@ -1434,6 +1662,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
                 output.args.prompt = newPrompt
                 appendStatusLog(`auto-redirect ${agent} (added ROUTE_META, ${lane} lane)`)
                 traceDispatch(input.sessionID, agent, newPrompt, true)
+                noteResumedChild(input.sessionID, agent, output.args)
                 return
               }
             }
@@ -1544,7 +1773,27 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             else sessionAgent.set(info.id, info.agent)
             // [2026-09-05]-[artifact workspace: registered AFTER the agent classification above (shell/internal sessions excluded)]
             noteWorkspaceSession((event as any).properties?.info)
+            // [2026-09-06]-[tmux pane mirroring: a child session (parentID set) whose agent matches a recorded dispatch
+            //  intent opens as a live attach pane; internal sessions (title/summary/compaction) never match and are ignored.
+            //  task_id RESUME dispatches reuse the child session and never fire session.created — noteResumedChild at the
+            //  allowed dispatch sites covers them]
+            const childParent = (event as any).properties?.info?.parentID
+            if (typeof childParent === "string" && childParent) {
+              const q = pendingTask.get(childParent)
+              const idx = q ? q.findIndex((e) => e.agent === info.agent) : -1
+              if (q && idx >= 0) {
+                q.splice(idx, 1)
+                if (!q.length) pendingTask.delete(childParent)
+                void tmuxPanes.noteChild(childParent, info.id, info.agent)
+              }
+            }
           }
+          return
+        }
+        // [2026-09-06]-[tmux pane mirroring: child session loop finished → promote a queued child or shrink the column]
+        if (event.type === "session.idle") {
+          const sid = (event as any).properties?.sessionID
+          if (typeof sid === "string" && tmuxPanes.tracking(sid)) void tmuxPanes.noteChildEnd(sid)
           return
         }
         // [2026-09-05]-[artifact workspace: session.updated carries the generated/edited title → record + ensure
@@ -1585,6 +1834,26 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
                 turnReadUsage.delete(sid)
               }
             }
+          } else if (typeof sid === "string" && isShellAgentSession(sid) && info?.role === "assistant") {
+            // [2026-09-06]-[subagent hard cap: shell sessions get a parallel watermark; on first crossing of the
+            //  window-capped cap the session is terminated — every later tool call is denied with a wrap-up order
+            //  (the next text-only answer = detailed progress summary = task result) and task_id resumes are
+            //  permanently rejected via the persistent registry. Internal sessions (title/summary) never land here.]
+            const am = info as { modelID?: unknown; providerID?: unknown }
+            if (typeof am.modelID === "string" && typeof am.providerID === "string") {
+              sessionMsgModel.set(sid, `${am.providerID}/${am.modelID}`)
+            }
+            const est = estimateContextTokens(info)
+            if (est !== null) {
+              shellWatermark.set(sid, { tokens: est, at: Date.now() })
+              const cap = effectiveSubagentCap(sid)
+              if (cap !== null && est >= cap && !terminatedSessions.has(sid)) {
+                terminatedSessions.add(sid)
+                const agentName = dynamic ? manager?.sessionAgentName(sid) : sessionAgent.get(sid)
+                persistTerminatedSession(sid, est, agentName)
+                appendStatusLog(`subagent context cap: session ${sid}${agentName ? ` (${agentName})` : ""} reached ~${Math.round(est / 1000)}k tokens (cap ${Math.round(cap / 1000)}k) — tools denied, progress summary demanded, session terminated (no task_id resume)`)
+              }
+            }
           }
           return
         }
@@ -1594,6 +1863,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           const sid = sessionDeletedId((event as any).properties)
           if (sid) {
             sessionWatermark.delete(sid)
+            shellWatermark.delete(sid) // [2026-09-06]-[subagent cap watermark follows the same cleanup; terminatedSessions is intentionally NOT cleaned — termination is permanent]
             turnReadUsage.delete(sid)
             wmHistory.delete(sid)
             lastUserMsg.delete(sid)
@@ -1601,6 +1871,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             sessionTodos.delete(sid)
             workspace.forget(sid)
             langAsked.delete(sid)
+            // [2026-09-06]-[tmux pane mirroring: deleted child frees its pane; deleted main drops its dispatch intents]
+            if (tmuxPanes.tracking(sid)) void tmuxPanes.noteChildEnd(sid)
+            pendingTask.delete(sid)
             if (dynamic && manager?.noteSessionDeleted(sid)) manager.scheduleRecompute(50, "session")
           }
           return

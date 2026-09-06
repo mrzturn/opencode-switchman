@@ -38,6 +38,9 @@ export const paths = () => {
     //  replaces the fixed thinking-parameter table probe.ts/shells.ts previously guessed by modelId prefix]
     copilotThinking: join(dir, "copilot-thinking.json"),
     shellSuperset: join(dir, "shell-superset.json"),
+    // [2026-09-06]-[subagent hard cap: persistent registry of force-terminated shell subagent sessions (sessionID →
+    //  {at, tokens, agent}); survives restarts so a terminated session can never be resumed via task_id]
+    subagentCap: join(dir, "subagent-cap.json"),
     // [2026-09-01]-[provider.list result cached across restarts: written only on real probe success (not fallback), so next
     //  startup builds shells straight from cache and no longer waits out the provider.list network race on every restart —
     //  new providers are discovered by the background probe, only then is a restart hinted]
@@ -269,6 +272,43 @@ export function loadProviderCache(): ProviderCache | null {
 }
 export function saveProviderCache(cache: ProviderCache): void {
   writeJsonAtomic(paths().providerCache, cache)
+}
+
+// [2026-09-06]-[subagent hard cap registry: sessionID → termination record; broken/missing file = empty registry
+//  (fail-open — a lost registry only means an already-dead session could be resumed into a fresh cap denial)]
+export interface SubagentCapEntry { at: number; tokens: number; agent?: string }
+export type SubagentCapRegistry = Record<string, SubagentCapEntry>
+export function loadSubagentCapRegistry(): SubagentCapRegistry {
+  const data = readJson<SubagentCapRegistry>(paths().subagentCap)
+  if (!data || typeof data !== "object" || Array.isArray(data)) return {}
+  return data
+}
+export function saveSubagentCapRegistry(registry: SubagentCapRegistry): void {
+  writeJsonAtomic(paths().subagentCap, registry)
+}
+
+// [2026-09-06]-[provider cache freshness + model-set delta: the startup stale-cache live probe and the watchdog superset
+// rebuild share these pure predicates; provider model lists grow over time (new flagship models), so a cache past TTL (or
+// with an unparseable timestamp) must not be trusted blindly]-[pure layer for testability]
+export const PROVIDER_CACHE_MAX_AGE_MS = 24 * 3_600_000
+/** Cache age in ms; null when the timestamp is missing/unparseable (callers should treat null as stale) */
+export function providerCacheAgeMs(cache: ProviderCache, now = Date.now()): number | null {
+  const t = Date.parse(cache.at ?? "")
+  return Number.isFinite(t) ? now - t : null
+}
+/** True = do not trust this cache for the superset build (stale past TTL, or timestamp unparseable/missing) */
+export function providerCacheStale(cache: ProviderCache, now = Date.now(), maxAgeMs = PROVIDER_CACHE_MAX_AGE_MS): boolean {
+  const age = providerCacheAgeMs(cache, now)
+  return age === null || age > maxAgeMs
+}
+/** Order-insensitive diff between the model list the current superset was built from and a fresh provider.list result */
+export function providerModelsDelta(builtFrom: readonly string[], fresh: readonly string[]): { added: string[]; removed: string[] } {
+  const prev = new Set(builtFrom)
+  const next = new Set(fresh)
+  return {
+    added: [...next].filter((m) => !prev.has(m)).sort(),
+    removed: [...prev].filter((m) => !next.has(m)).sort(),
+  }
 }
 
 export function ensureStateDir(): void {

@@ -140,6 +140,14 @@ export function renderDefaultConfigJsonc(): string {
     // Directory name under the project root (flat name, no path separators).
     "dirname": ".switchman"
   },
+  // Tmux pane mirroring: dispatched subagent sessions open as live "opencode attach" panes in a right-hand
+  // column of the home tmux window (main pane left / subagents right; status line untouched). Inert outside tmux.
+  // "tmux": {
+  //   "enabled": true,     // master switch (effective only when the server runs inside tmux)
+  //   "rightPct": 60,      // right column width percent (10..90; default 60 = main 40 / right 60)
+  //   "maxPanes": 3,       // max visible subagent panes (1..4; extra dispatches wait in a FIFO queue and take over freed panes)
+  //   "mini": false        // true = minimal attach interface instead of the full TUI
+  // },
   // Third-party/future extension data goes under namespace keys, not into providers.
   "extensions": {}
 }

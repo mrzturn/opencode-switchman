@@ -132,6 +132,43 @@ export function turnBudgetOf(readBudget: number): number {
   return readBudget * 2
 }
 
+// [2026-09-06]-[subagent hard cap: shell subagent sessions previously had no context control (they could run past 180k
+//  tokens indefinitely); unlike the main session's three-tier watermark + auto-handover, a subagent is a reproducible
+//  worker (its spec lives in the delegation prompt), so the correct lifecycle is terminate-and-hand-back: past ONE hard
+//  cap every tool call in that session is denied with a wrap-up instruction, the model's next text-only answer (the
+//  detailed progress summary) becomes the task result returned to the delegator, and the session is permanently
+//  terminated (no task_id resume; fresh dispatches unaffected)]
+export const DEFAULT_SUBAGENT_CAP_TOKENS = 100_000
+export const MIN_SUBAGENT_CAP_TOKENS = 20_000
+export const MAX_SUBAGENT_CAP_TOKENS = 1_000_000
+
+/** Effective subagent hard cap in tokens (defensive defaults — config validation already guarantees sane values, but
+ *  the plugin-tuple compat shim can bypass it); null = mechanism disabled */
+export function subagentCapOf(context: { subagentCap?: boolean; subagentForceTokens?: number } | undefined): number | null {
+  if (context?.subagentCap === false) return null
+  const raw = context?.subagentForceTokens
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return DEFAULT_SUBAGENT_CAP_TOKENS
+  return Math.min(MAX_SUBAGENT_CAP_TOKENS, Math.max(MIN_SUBAGENT_CAP_TOKENS, Math.round(raw)))
+}
+
+/** Window clamp shared with the main-session thresholds: never force past 90% of the model's context window */
+export function capByWindow(cap: number, windowTokens?: number): number {
+  if (typeof windowTokens !== "number" || !Number.isFinite(windowTokens) || windowTokens <= 0) return cap
+  return Math.min(cap, Math.floor(windowTokens * 0.9))
+}
+
+const fmtK = (n: number): string => `${Math.round(n / 1000)}k`
+
+/** Deny text injected as the tool error inside a capped subagent session — doubles as the wrap-up order */
+export function subagentCapDenyMessage(tokens: number, cap: number): string {
+  return `[opencode-switchman] SUBAGENT CONTEXT CAP REACHED (~${fmtK(tokens)}/${fmtK(cap)} tokens): this session is terminated and all tools are denied. Immediately output your detailed work-progress summary as your final text answer — what was completed, key findings with file:line evidence, what remains, concrete next steps — it is returned to the delegating session as the task result. Do NOT call any more tools: repeated attempts cannot resume you and only waste the return trip.`
+}
+
+/** Deny text for any task call trying to resume a terminated session (task_id = child sessionID) */
+export function subagentResumeDenyMessage(sessionId: string): string {
+  return `[opencode-switchman] session ${sessionId} was force-terminated at the subagent context cap and can never be resumed (permanent). Start a FRESH dispatch (task call without task_id) with a new self-contained prompt re-seeding only the context the new subagent needs; the terminated session's final progress summary was already returned to you as its task result.`
+}
+
 /** Post-hoc charging for tool outputs we could not pre-estimate (bash, glob/grep/list): ~3.5 bytes/token */
 export function estimateOutputTokens(outputLength: number): number {
   return Math.ceil(outputLength / 3.5)

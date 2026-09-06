@@ -122,6 +122,11 @@ export class MatrixManager {
     return this.sessions.get(sessionID)?.isShell ?? false
   }
 
+  /** [2026-09-06]-[agent name recorded at session.created/chat.params (subagent-cap termination logs / registry entries)] */
+  sessionAgentName(sessionID: string): string | undefined {
+    return this.sessions.get(sessionID)?.agent
+  }
+
   /** transform-phase system-injection skip check: shell sessions union internal agents (title/compaction/summary) --
    *  classified by the agent name in pre-registration/registry, effective from the first turn (session.created pre-registration) */
   skipSystemInjection(sessionID: string): boolean {
@@ -141,6 +146,26 @@ export class MatrixManager {
       if (d) out.add(d.matrixKey)
     }
     return [...out].sort()
+  }
+
+  /** [2026-09-06]-[watchdog superset rebuild: replace the superset view after a background provider.list refresh detects
+   * model drift (provider added/dropped models mid-session). shellsByModel/defByName are rebuilt, knownProviders refreshed,
+   * activation recomputed (sameActivation short-circuits no-op rebuilds). cfg.agent is deliberately untouched — that surface
+   * is one-shot (opencode plugin API constraint), so newly added shells stay undispatchable until restart; the config
+   * surfaces (shell-superset.json consumers: /modelRank, /poolConfig, denies, banner) turn consistent immediately]- */
+  updateSuperset(defs: readonly ShellDefinition[], knownProviders: ReadonlySet<string>): ActivationState {
+    this.opts.superset = defs
+    this.opts.knownProviders = knownProviders
+    this.shellsByModel.clear()
+    this.defByName.clear()
+    for (const d of defs) {
+      const mk = `${d.provider}/${d.modelId}` as ModelKey
+      const list = this.shellsByModel.get(mk) ?? []
+      list.push(d)
+      this.shellsByModel.set(mk, list)
+      this.defByName.set(d.name, d)
+    }
+    return this.recompute(undefined, "startup")
   }
 
   /** Synchronous recompute: read config surface -> union -> persist; state-equivalence short-circuit (no generation bump/no cache clear)

@@ -21,7 +21,7 @@ import { join, relative, isAbsolute, sep } from "node:path"
 // [2026-09-03]-[/poolConfig //modelRank interactive dialogs: task-pool pick lists and capability ranking read/write the
 //  user override layer (pool-config.json / capability-rank.json) directly, taking effect in sync with the plugin main
 //  process mtime hot reload]
-import { loadPoolConfig, writePoolConfig, resetPoolConfig, loadCapabilityRank, writeCapabilityRank } from "./user-overrides"
+import { loadPoolConfig, writePoolConfig, resetPoolConfig, loadCapabilityRank, writeCapabilityRank, applyRankMove } from "./user-overrides"
 import { allModelRows, rankViewRows } from "./config-cli"
 import { LANE_ORDER, type Lane } from "./types"
 import { runHandover, type HandoverPort } from "./handover-core"
@@ -314,8 +314,11 @@ function ViewInner(props: { api: TuiPluginApi; sessionID: string }) {
                 {(ch, i) => <span style={{ fg: hsvToHex(i() * 28 + tick() * 3, 0.65, 1) }}>{ch}</span>}
               </For>
             </b>
-            {restartRequired().length > 0 && (
-              <span style={{ fg: theme().error }}> [RESTART REQUIRED]</span>
+            {/* [2026-09-06]-[blinking restart tag: ~600ms on/off via the 150ms marquee heartbeat (tick/4 parity), bold
+                red — a pending shell-registration restart used to render as a static tag that was easy to stop seeing;
+                fail-open unchanged: empty restartRequired list renders nothing]-[impacts the sidebar title row only] */}
+            {restartRequired().length > 0 && Math.floor(tick() / 4) % 2 === 0 && (
+              <span style={{ fg: theme().error }}><b> [RESTART NEEDED]</b></span>
             )}
           </text>
           <For each={routes()}>
@@ -456,10 +459,20 @@ function PoolModelsDialog(props: { api: TuiPluginApi; lane: Lane }) {
     setSelected(new Set(rows().map((r) => r.key)))
     props.api.ui.toast({ variant: "success", message: `${props.lane} pool config cleared (system default candidate set restored)` })
   }
+  // [2026-09-06]-[Uncheck-all shortcut: clears the checkbox state in place (no disk write) so a short list can be
+  //  built by checking a few models instead of unchecking the rest one by one; while nothing is checked the previous
+  //  config stays untouched on disk — exiting without any check keeps the pre-clear selection in effect, and the
+  //  first check after the clear materializes the new explicit list]-[impacts PoolModelsDialog only]
+  const uncheckAll = () => {
+    if (selected().size === 0) return
+    setSelected(new Set<string>())
+    props.api.ui.toast({ variant: "info", message: `${props.lane} pool: all unchecked — check the models to keep; exiting with none checked keeps the previous selection` })
+  }
   const nSel = () => selected().size
   const options = createMemo(() => [
     { title: "← Back to pool list", value: "__back", onSelect: () => props.api.ui.dialog.replace(() => <PoolPickerDialog api={props.api} />) },
     { title: "☑ Select all", value: "__all", onSelect: () => bulk() },
+    { title: "☐ Uncheck all (then check the few to keep; exit with none checked keeps the old list)", value: "__uncheckAll", onSelect: uncheckAll },
     { title: "✕ Clear config (system default: all available models participate)", value: "__reset", onSelect: reset },
     ...rows().map((r) => ({
       title: `${selected().has(r.key) ? "[x]" : "[ ]"} ${r.modelId}`,
@@ -481,17 +494,75 @@ function openModelRankDialog(api: TuiPluginApi): void {
   api.ui.dialog.replace(() => <RankPickerDialog api={api} />)
 }
 
+// ---- [2026-09-06]-[/modelRank list hotkeys: ctrl+up / ctrl+down (alt+up / alt+down mirrored for terminals that swallow
+//  ctrl+arrows) move the highlighted model within the manual ranking without opening the per-model action dialog.
+//  The host DialogSelect has no per-dialog key API exposed to plugins, so the binding lives in the global keymap layer
+//  (registered in tui() below; ctrl/alt+arrows are unbound by the host) and the open dialog claims the module-level
+//  context: with no claimant the commands are silent no-ops, so global key real estate stays clean]----
+type RankHotkeyClaim = { move: (delta: -1 | 1) => void }
+let rankHotkeyClaim: RankHotkeyClaim | null = null
+
 function RankPickerDialog(props: { api: TuiPluginApi }) {
-  const rows = createMemo(() => rankViewRows())
+  // rev bumps on every hotkey write so rows() re-reads the rank file and re-sorts the list in place (enter-action
+  // flows keep using dialog.replace instead, which rebuilds the component from scratch)
+  const [rev, setRev] = createSignal(0)
+  const rows = createMemo(() => {
+    rev()
+    return rankViewRows()
+  })
+  // Highlight tracking: onMove covers filter/navigate; before the first onMove the host selects row 0
+  const [highlight, setHighlight] = createSignal<string | null>(null)
+  const highlighted = () => highlight() ?? rows()[0]?.key ?? null
+  const claim: RankHotkeyClaim = {
+    move: (delta) => {
+      const key = highlighted()
+      if (!key) return
+      const row = rows().find((r) => r.key === key)
+      const name = row?.modelId ?? key
+      const cur = [...(loadCapabilityRank()?.models ?? [])]
+      const i = cur.indexOf(key)
+      const res = applyRankMove(cur, key, delta)
+      const skip = (message: string) => props.api.ui.toast({ variant: "info", message })
+      if (!res) {
+        // Boundary no-ops must stay audible, otherwise mashing the key feels broken
+        if (i < 0) skip(`${name} is not in the manual ranking (ctrl+up adds it at the end; enter = per-model actions)`)
+        else skip(`${name} is already at the ${delta === -1 ? "top" : "bottom"} of the manual ranking`)
+        return
+      }
+      try {
+        writeCapabilityRank(res.models)
+      } catch (exc) {
+        props.api.ui.toast({ variant: "error", message: `write failed: ${exc instanceof Error ? exc.message : exc}` })
+        return
+      }
+      props.api.ui.toast({
+        variant: "success",
+        message: i < 0
+          ? `Added ${name} to the ranking (manual rank #${res.index + 1}, effective immediately, sidebar refreshes)`
+          : `Moved ${name} to rank #${res.index + 1} (effective immediately, sidebar refreshes)`,
+      })
+      // Cursor follows the moved model: `current` is the only cursor control the plugin DialogSelect exposes
+      // (side effect: the ● marker stays on the last-moved model until the dialog closes)
+      setHighlight(key)
+      setRev((v) => v + 1)
+    },
+  }
+  rankHotkeyClaim = claim
+  onCleanup(() => {
+    if (rankHotkeyClaim === claim) rankHotkeyClaim = null
+  })
   return (
     <props.api.ui.DialogSelect
-      title="Model capability ranking (#1 strongest; manual hits take precedence over base scores; pick a model to adjust)"
+      title="Model capability ranking (#1 strongest; ctrl+up/ctrl+down move the highlighted model; enter = per-model actions)"
+      placeholder="Search · alt+up/alt+down mirror ctrl+up/ctrl+down (also work)"
       options={rows().map((r, i) => ({
         title: `#${String(i + 1).padStart(2, "0")} ${r.modelId}`,
         value: r.key,
         description: `${r.tier}-tier · ${r.source === "manual" ? "manual rank" : "base capability score"}`,
         onSelect: () => props.api.ui.dialog.replace(() => <RankActionsDialog api={props.api} model={r.modelId} modelKey={r.key} />),
       }))}
+      current={highlighted() ?? undefined}
+      onMove={(opt) => setHighlight(String(opt.value))}
       flat
     />
   )
@@ -500,25 +571,20 @@ function RankPickerDialog(props: { api: TuiPluginApi }) {
 function RankActionsDialog(props: { api: TuiPluginApi; model: string; modelKey: string }) {
   const rank = () => [...(loadCapabilityRank()?.models ?? [])]
   const at = () => rank().indexOf(props.modelKey)
+  // [2026-09-06]-[reorder rules now come from the shared applyRankMove helper (same semantics as the list hotkeys);
+  //  only the boundary feedback is dialog-specific]-
   const apply = (next: string[], message: string) => {
     writeCapabilityRank(next)
     props.api.ui.toast({ variant: "success", message: `${message} (effective immediately, sidebar refreshes)` })
     props.api.ui.dialog.replace(() => <RankPickerDialog api={props.api} />)
   }
   const move = (delta: -1 | 0 | 1) => {
-    // delta 0 = pin to top; ±1 = swap with the neighbor (moving an unranked model up/down = insert at the target
-    // position)
-    const cur = rank()
-    const i = cur.indexOf(props.modelKey)
-    if (delta === 0) {
-      if (i >= 0) cur.splice(i, 1)
-      cur.unshift(props.modelKey)
-    } else {
-      const target = i >= 0 ? Math.min(Math.max(i + delta, 0), cur.length - 1) : cur.length
-      if (i >= 0) cur.splice(i, 1)
-      cur.splice(target, 0, props.modelKey)
+    const res = applyRankMove(rank(), props.modelKey, delta)
+    if (!res) {
+      props.api.ui.toast({ variant: "info", message: `${props.model} is already at the ${delta === 1 ? "bottom" : "top"} of the manual ranking` })
+      return
     }
-    apply(cur, delta === 0 ? `Pinned ${props.model} to top` : `Moved ${props.model} to rank #${cur.indexOf(props.modelKey) + 1}`)
+    apply(res.models, delta === 0 ? `Pinned ${props.model} to top` : `Moved ${props.model} to rank #${res.index + 1}`)
   }
   const ranked = () => at() >= 0
   const options = createMemo(() => {
@@ -658,6 +724,37 @@ const tui: TuiPlugin = async (api) => {
       bindings: [],
     })
   } catch { /* fail-open */ }
+  // [2026-09-06]-[/modelRank list hotkeys: separate fail-open block so a keymap that rejects these bindings cannot take
+  //  down the palette commands above; only active while the ranking dialog is open (claims rankHotkeyClaim), alt
+  //  variants mirror ctrl for terminals that swallow ctrl+arrows; hidden keeps them out of the palettes]-
+  try {
+    api.keymap.registerLayer({
+      commands: [
+        {
+          name: "switchman.rank.move-up",
+          title: "Move the highlighted model up in /modelRank",
+          desc: "In the /modelRank dialog, move the highlighted model up one spot in the manual ranking",
+          category: "switchman",
+          hidden: true,
+          run: () => rankHotkeyClaim?.move(-1),
+        },
+        {
+          name: "switchman.rank.move-down",
+          title: "Move the highlighted model down in /modelRank",
+          desc: "In the /modelRank dialog, move the highlighted model down one spot in the manual ranking",
+          category: "switchman",
+          hidden: true,
+          run: () => rankHotkeyClaim?.move(1),
+        },
+      ],
+      bindings: [
+        { key: "ctrl+up", cmd: "switchman.rank.move-up", desc: "Move the highlighted model up in /modelRank" },
+        { key: "ctrl+down", cmd: "switchman.rank.move-down", desc: "Move the highlighted model down in /modelRank" },
+        { key: "alt+up", cmd: "switchman.rank.move-up", desc: "Move the highlighted model up in /modelRank" },
+        { key: "alt+down", cmd: "switchman.rank.move-down", desc: "Move the highlighted model down in /modelRank" },
+      ],
+    })
+  } catch { /* fail-open: hosts without binding-layer support keep the enter-only flow */ }
 }
 
 const plugin: TuiPluginModule & { id: string } = {

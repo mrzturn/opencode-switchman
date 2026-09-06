@@ -14,6 +14,28 @@ If you hold multiple model subscriptions (GitHub Copilot premium credits, Zhipu 
 
 ## Installation & Usage
 
+### Recommended: let your AI install it for you
+
+In the AI era, we strongly recommend letting an AI perform the installation and configuration for you — it reads your real environment, writes the correct values, and verifies the result itself, which is far less error-prone than manual copy-pasting.
+
+Just copy the prompt below and paste it to the AI you are currently using, and let it install opencode-switchman for you:
+
+```text
+Please install and configure the opencode-switchman plugin for my opencode, strictly following its official instructions.
+
+Official sources (authoritative, do not guess from memory):
+- GitHub repo: https://github.com/mrzturn/opencode-switchman
+- npm package: https://www.npmjs.com/package/opencode-switchman
+Read the repo README's "Installation & Usage" section and follow it exactly.
+
+Steps:
+1. Install the latest version published on npm: run `npx -y opencode-switchman@latest` (or `bunx opencode-switchman@latest`) — it rewrites the `plugin` entry in my opencode config to the exact latest version (it also works in the project-level `opencode.json` if that is what I use).
+2. Complete the functional configuration: all plugin settings live in the standalone `opencode-switchman.jsonc` in my opencode config directory, auto-generated with defaults and inline comments on first start; check it against my providers (e.g. `zhipuai-coding-plan` / `deepseek` / `github-copilot`) and adjust as needed.
+3. Verify correctness so opencode loads, starts, and runs the plugin: run `/switchman-doctor` inside opencode for a local credential-free diagnostic report and fix every error it reports; then restart opencode and confirm the plugin actually loaded — the log should contain `[opencode-switchman] injected N model shells (agents)` and my primary model's system prompt should carry the live `[ROUTES]/[WATERMARK]/[LIMITS]` banner block.
+
+Do not declare success until all three steps pass; report what you changed and show the verification evidence.
+```
+
 ### Prerequisites
 
 - [opencode](https://opencode.ai) — **the CLI/TUI is the strongly recommended interface** (the plugin's operational surface — sidebar status panel, `/poolConfig` / `/modelRank` dialogs, live banners — is richest there): configure everything in the TUI first, then optionally switch to the desktop app for a GUI experience; both share the same config and state
@@ -134,14 +156,14 @@ Two manual commands let your configuration beat system defaults. All state is pe
 
 ### /poolConfig — per-lane model assignment (manual dialog; conversational: /poolConfig-chat)
 
-- **TUI (/poolConfig)**: a native select dialog (same interaction as the model/thinking-level pickers) — pick a task pool (economy / mechanical / main / hard / vision / review), then toggle models up and down the list: select to include, select again to exclude, with a capability tier shown per model. Changes are written through immediately with a toast receipt.
+- **TUI (/poolConfig)**: a native select dialog (same interaction as the model/thinking-level pickers) — pick a task pool (economy / mechanical / main / hard / vision / review), then toggle models up and down the list: select to include, select again to exclude, with a capability tier shown per model. Shortcuts: "Select all" and "Uncheck all" (rebuild mode — check just the few to keep; exiting with none checked keeps the previous selection, the first check after a clear writes the new list). Changes are written through immediately with a toast receipt.
 - **Non-TUI / in-session (/poolConfig-chat)**: a conversational flow — it injects a per-pool assignment overview (use a pool name to get the full `[x]/[ ]` list); reply "main: keep only 3 5" or "economy: add 1, drop 2" and the agent calls the bundled `switchman-config.js` CLI to persist.
 - **Semantics**: assignment = making each task pool's candidate models **deliberately different** (e.g. lightweight models only for economy, heavy thinkers only for hard) — a pool's manual list **overrides the system default candidate set**, and models inside it are still recommended by capability level; **the same model may join multiple pools**; pools without a configured (or with an empty) list keep the system default. "Clear config" restores the system default for that pool.
 - **Config file**: `~/.config/opencode/opencode-switchman/pool-config.json` (key = task pool name, value = array of participating modelIds).
 
 ![/poolConfig step 1 — pick a task pool, each lane showing how many models participate](docs/assets/tui-pool-config-pools.png)
 
-![/poolConfig step 2 — toggle models per pool with capability tiers and select-all / clear shortcuts](docs/assets/tui-pool-config-models.png)
+![/poolConfig step 2 — toggle models per pool with capability tiers and select-all / uncheck-all / clear shortcuts](docs/assets/tui-pool-config-models.png)
 
 ### /modelRank — model capability ranking (manual dialog; conversational: /modelRank-chat)
 
@@ -164,12 +186,14 @@ Both commands can also be driven directly via the bundled CLI: `node <pkg>/dist/
 
 ### v1.x — deterministic context governance & richer overrides (post-1.0.0)
 
+- **Shell subagent context hard cap**: every shell subagent session now has a hard context cap (`context.subagentForceTokens`, default 100k tokens) — past the cap every tool call is denied with a wrap-up order, the subagent hands back a detailed progress summary as its task result, and the session can never be resumed via `task_id` (persistent registry); configured via `context.subagentCap` (see [Subagent context hard cap](#subagent-context-hard-cap)).
 - **Always-on per-call read budget (core routing algorithm update)**: the old per-tool one-time nudge (a coupon models rationally burned via retry/probing) is replaced by a deterministic budget gate. Every read is costed against `context.readBudgetTokens` (default 1500, clamped 200..20000) from turn 1 — over-budget reads are auto-bounded (a `limit` is appended in place) or denied with exact bounded-retry params; a per-turn 2× self-read cap (resetting on user turns) stops read chains; un-estimable tool outputs are charged post-hoc. Watermarks keep lifecycle duties only (soft = advice, hard = wrap-up deny, force = auto-handover). Delivery/verification bash (git, test/lint, build) passes at every tier; unbounded archaeology (`git log -p` without `-n`) is denied at every tier with a scoping hint.
 - **Per-project language preference**: a per-turn `[LANG]` iron-rule line pins the conversation / comments & commits / docs languages, captured by a first-use ask (once per session), persisted per project, adjustable via `/switchman-lang`.
 - **Todo discipline**: protocol §0.7 plus a per-turn `[TODO]` status line keeps the main session's todo list real-time current (delegated-shell results included).
 - **/expert expert consultation** and **bundled agent skills**: dispatch requirements to the strongest cross-family expert; opinionated skills sync into the opencode global skills dir at startup (add/overwrite-only, marker-gated cleanup, fail-open).
 - **Review-lane last resort**: with no cross-family read-only shell alive, the chain keeps the best ro shells and same-family review is allowed with a `DOWNGRADED` note instead of an empty chain.
 - **Auto-handover robustness**: numbered `[backup]` sessions (survives restarts, never recycles numbers), compaction routed through the same channel as the manual `/compact`, and a detached compaction leg that can no longer deadlock the session.
+- **tmux pane mirroring**: when the opencode server itself runs inside tmux, every dispatched subagent opens as a live `opencode attach` pane stacked in a right-hand column of the home tmux window — capped visible panes with a FIFO queue, in-place respawn, auto re-evening on completion, and full fail-open safety (see [tmux pane mirroring](#tmux-pane-mirroring-optional)).
 
 ### v1.0.0 — English-first stable release
 
@@ -201,7 +225,8 @@ See the complete, user-facing release notes and migration guide in [CHANGELOG.md
 | `matrix.mode / watch` | `auto / true` | Activation matrix: `auto` by host (desktop = visible models / CLI/TUI = favorites), `app`/`tui` force a mode, `legacy` restores the static matrix; `watch` recomputes and fully refreshes probes on surface changes (mode/watch are startup-level; restart to apply) |
 | `banner.enabled` | `true` | Four-line banner injection |
 | `rules.enabled / delegationFloor` | `true / 3000` | Bundled dispatcher rules (AGENTS.md) injection; `delegationFloor` is the self-do token floor interpolated into the rules (dispatch by default below it is a violation) |
-| `context.gates / softTokens / hardTokens / forceTokens / readBudgetTokens / autoHandover` | `true / 60000 / 80000 / 120000 / 1500 / true` | **Measured session watermark + self-read budget**: the plugin measures each main session's context from message token usage and injects a live `[WATERMARK:SESSION]` line every turn (with per-turn growth and remaining-turns-to-hard estimates). Every self-read is costed against `readBudgetTokens` from turn 1: over-budget reads are auto-bounded (a `limit` is auto-appended) or denied with exact bounded-retry params, and a per-turn 2× cap stops read chains; un-estimable tool outputs are charged post-hoc. Verification/delivery bash (git, test/lint, build) always passes; unbounded history dumps (`git log -p` without `-n`) are always denied with a scoping hint; past `hardTokens` read-class closes (wrap-up mode); past `forceTokens` the banner demands compaction and, with `autoHandover: true` (default), `/handover` fires automatically: full fork backup + compaction, the running task continues on the summarized context. Shell subagent sessions are exempt; all three thresholds are additionally capped at 90% of the current session model's context window when known (models.dev) |
+| `context.gates / softTokens / hardTokens / forceTokens / readBudgetTokens / autoHandover` | `true / 60000 / 80000 / 120000 / 1500 / true` | **Measured session watermark + self-read budget**: the plugin measures each main session's context from message token usage and injects a live `[WATERMARK:SESSION]` line every turn (with per-turn growth and remaining-turns-to-hard estimates). Every self-read is costed against `readBudgetTokens` from turn 1: over-budget reads are auto-bounded (a `limit` is auto-appended) or denied with exact bounded-retry params, and a per-turn 2× cap stops read chains; un-estimable tool outputs are charged post-hoc. Verification/delivery bash (git, test/lint, build) always passes; unbounded history dumps (`git log -p` without `-n`) are always denied with a scoping hint; past `hardTokens` read-class closes (wrap-up mode); past `forceTokens` the banner demands compaction and, with `autoHandover: true` (default), `/handover` fires automatically: full fork backup + compaction, the running task continues on the summarized context. Shell subagent sessions are exempt from this watermark and get their own single hard cap instead (see `context.subagentForceTokens` / `context.subagentCap` below); all three thresholds are additionally capped at 90% of the current session model's context window when known (models.dev) |
+| `context.subagentForceTokens / subagentCap` | `100000 / true` | **Subagent context hard cap**: shell subagent sessions get a single hard cap (measured = input + output + reasoning + cache.read of the latest assistant message, same estimator as the session watermark), clamped 20k..1M and additionally capped at 90% of the shell model's context window. On crossing, every further tool call in that subagent session is denied with a wrap-up order; the subagent's next text-only answer (a detailed work-progress summary) becomes the task result returned to the delegating session and the session is permanently terminated. Later `task` calls resuming it via `task_id` are denied permanently (persistent registry `~/.config/opencode/opencode-switchman/subagent-cap.json`); fresh dispatches without `task_id` are unaffected; `subagentCap: false` prevents new terminations only — already-terminated sessions stay dead |
 | `builtinAgents.mode` | `deny` | Built-in `explore`/`general` subagents compete with shell routing and were previously fail-open; `deny` blocks them with an economy/main re-dispatch hint (the task-tool description from opencode core actively advertises them), `allow` restores the old pass-through |
 | `injection.mode` | `chain` | Shell injection face: `chain` = six lane chains ∪ favorites/visible models (saves ~6-10k tokens of task-tool description per session; naming an off-chain model gets a `denyUninjected` hint to enable it in model management), `all` = every usable model (old behavior). Startup-level: restart to apply |
 | `dispatch.autoRedirect` | `true` | On a dispatch deny, rewrite `subagent_type` in-flight to the chain-head candidate the deny message already names (single hop, same-snapshot guard re-check) — the first dispatch lands on the best available shell instead of burning deny-and-retry rounds; `false` restores deny-and-retry |
@@ -209,6 +234,7 @@ See the complete, user-facing release notes and migration guide in [CHANGELOG.md
 | `lang.enabled / ask / candidates` | `true / true / factory list` | Per-project language preference: per-turn `[LANG]` iron-rule line (conversation / comments & commits / docs), first-use ask once per session, persisted to `.switchman/settings.json` (AGENTS.md marker as read-only fallback), `/switchman-lang` re-asks |
 | `lanes` | built-in chains | Custom per-lane shell chains (override built-in preference order); keys = economy/mechanical/main/hard/vision/review |
 | `workspace.enabled / dirname` | `true / ".switchman"` | Artifact workspace: per main session, a `<project-root>/.switchman/<yyyy-mm-dd>/<sessionId>-<title>/` folder whose path is injected into the dispatcher protocol every turn; holds `SESSION.md` / `dispatches.jsonl` / `media/`. Disabled = no folders created and the protocol section is neutralized |
+| `tmux.enabled / rightPct / maxPanes / mini` | `true / 60 / 3 / false` | tmux pane mirroring (effective only when the opencode server itself runs inside tmux): every dispatched subagent opens as a live `opencode attach` pane in a right-hand column of the home tmux window; `rightPct` = right column width percent (10..90, main pane keeps the rest), `maxPanes` = max visible subagent panes (1..4; extra dispatches wait in a FIFO queue), `mini` = minimal attach interface instead of the full TUI |
 
 > **Migrating legacy tuple options**: `quota.*.enabled` → `providers.<id>.observe` (SWM042), `billingWindow.*` → `providers.<id>.peak` (SWM043), and the remaining behavior sections (`quota` thresholds / `cost` / `capability` / `matrix` / `banner` / `rules` / `lanes`) → same-named jsonc sections (SWM044); `providers.glm/deepseek` (credential-collection lists) never took effect and have been removed. Explicit tuple values stay honored for one compatibility release, then will be dropped.
 
@@ -240,6 +266,29 @@ For every main session the plugin auto-creates a per-project folder `<project-ro
 - `media/` — images relayed for vision delegation (moved here from the old global state directory, fail-open fallback)
 
 Configured by `workspace.enabled` / `workspace.dirname` in `opencode-switchman.jsonc` (defaults `true` / `".switchman"`); when disabled, no folders are created and the protocol section is neutralized.
+
+## tmux pane mirroring (optional)
+
+When the opencode server itself runs inside tmux, every dispatched subagent session opens as a live `opencode attach <server> -s <session>` pane, stacked in a right-hand column of the home tmux window (main pane keeps the left share — default 40% — the subagent column takes the right 60%). The window is only ever split at the home pane (the pane the server was launched in, `TMUX_PANE` at startup): your own sidebar panes and the tmux status line are never touched, and TUI clients attached from other panes still see the subagent panes there.
+
+![tmux pane mirroring: main session left, live subagent panes stacked on the right](docs/assets/tmux-pane-mirroring.png)
+
+> Works out of the box — no configuration needed. The only requirement: run opencode inside a tmux session; outside tmux the feature stays completely inert.
+
+- **Visibility cap + FIFO**: at most 3 subagent panes are visible (`tmux.maxPanes`, 1..4); extra concurrent dispatches wait in a FIFO queue, and when a visible subagent finishes, a queued one takes over its pane in place (in-place respawn, pane count unchanged). Each completion shrinks the column again and re-evens the layout: 3→2 even halves → 1 full right pane → 0 = main pane alone (full width restored).
+- **Hygiene**: panes are labeled `swm:<agent-name>` via pane title; leftover panes from a crashed previous run are swept (killed) at plugin startup (matched by title prefix or the attach start command). The window's active pane is restored after every layout op (focus preservation).
+- **Safe by construction**: inert outside tmux and when `tmux.enabled=false`; all tmux failures are fail-open — status log only, never blocks dispatch.
+- **Viewer etiquette**: the pane is a real interactive TUI attached to the subagent session — don't type into it (keystrokes go to the subagent session). Quitting a viewer pane just removes the display; the subagent keeps running.
+
+Configured by the optional `tmux` section in `opencode-switchman.jsonc` (`enabled` / `rightPct` / `maxPanes` / `mini`, defaults `true` / `60` / `3` / `false`).
+
+## Subagent context hard cap
+
+Main sessions get the three-tier watermark (soft / hard / force) plus auto-handover; dispatched shell subagent sessions previously had no context control at all and could run past 180k tokens. Now every shell subagent session gets a single hard cap (`context.subagentForceTokens`, default 100,000 tokens, clamped 20k..1M and additionally capped at 90% of the shell model's context window), measured with the same estimator as the session watermark: input + output + reasoning + cache.read of the latest assistant message. On crossing, the plugin denies every further tool call in that subagent session with a wrap-up order; the subagent's next text-only answer — a detailed work-progress summary (completed / key findings with file:line evidence / remaining work / next steps) — becomes the task result returned to the delegating session, and the session is permanently terminated (terminations are recorded in the status log). Compliance is pre-armed on both sides: shell rule 6 of the subagent system prompt (stop at the first cap deny, hand back the summary), and bundled dispatcher protocol section 2 on the orchestrator side (never retry a terminated session; start a fresh dispatch re-seeding only needed context).
+
+Termination is permanent by design: any later `task` call resuming that session via `task_id` is denied permanently (persistent registry `~/.config/opencode/opencode-switchman/subagent-cap.json`, survives restarts), while fresh dispatches without `task_id` are unaffected. Rationale: a subagent is a reproducible worker (its spec lives in the delegation prompt), so terminate-and-hand-back beats compaction-continuation. `context.subagentCap: false` prevents new terminations only — already-terminated sessions stay dead.
+
+Configured by `context.subagentForceTokens` (default `100000`) / `context.subagentCap` (default `true`) in `opencode-switchman.jsonc` (see the Options table).
 
 ## Core Ideas
 
