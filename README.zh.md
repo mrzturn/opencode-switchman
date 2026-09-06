@@ -170,6 +170,7 @@ TUI 插件没有目录自动发现机制，需要在 **`tui.jsonc`/`tui.json`** 
 - **/expert 专家咨询与随包 agent skills**：需求一键派给当前最强跨家族专家；开箱技能启动时同步进 opencode 全局技能目录（只增改不删、标记门控清理、fail-open）。
 - **review 档兜底**：跨家族只读壳全灭时保留最优 ro 壳、允许同族评审并标注 `DOWNGRADED`，不再出现空链。
 - **自动交接健壮性**：`[backup]` 备份自行编号（重启不乱、编号不回收）、压缩走与手动 `/compact` 相同通道、压缩腿异步化不再死锁会话。
+- **tmux 窗格镜像**：opencode 服务器自身跑在 tmux 里时，每条被委派的子代理都会在主 tmux 窗口右侧列以实时 `opencode attach` 窗格打开——可见窗格封顶＋FIFO 队列、原地接管、完成即重新均分布局，全程 fail-open（详见 [tmux 窗格镜像](#tmux-窗格镜像可选)）。
 
 ### v1.0.0——英文优先的稳定版
 
@@ -209,6 +210,7 @@ v0.2.0 将 switchman 从固定多供应商调度器升级为实时、能力感�
 | `injection.mode` | `chain` | 壳注入面：`chain`＝六档链精选∪favorites/可见集（task 工具描述每会话省约 6-10k token，链外模型点名走 denyUninjected 提示）；`all`＝可用全集（旧行为）。启动级，重启生效 |
 | `lanes` | 内置六档链 | 自定义各档壳链（覆盖内置偏好序）；键=economy/mechanical/main/hard/vision/review |
 | `workspace.enabled / dirname` | `true / ".switchman"` | 工件工作区：每个主会话自动创建 `<project-root>/.switchman/<yyyy-mm-dd>/<sessionId>-<title>/` 目录，路径每轮注入调度员规程；目录内含 `SESSION.md` / `dispatches.jsonl` / `media/`。关闭后不再创建目录，规程段落同步失效 |
+| `tmux.enabled / rightPct / maxPanes / mini` | `true / 60 / 3 / false` | tmux 窗格镜像（仅当 opencode 服务器自身运行在 tmux 中时生效）：每条被委派的子代理在主 tmux 窗口右侧列实时打开一个 `opencode attach` 窗格；`rightPct`＝右列宽度百分比（10..90，主窗格占其余），`maxPanes`＝可见子代理窗格上限（1..4；超出的派发在 FIFO 队列等待），`mini`＝用极简 attach 界面取代完整 TUI |
 
 > **旧元组 options 迁移**：`quota.*.enabled`→`providers.<id>.observe`（SWM042）、`billingWindow.*`→`providers.<id>.peak`（SWM043）、其余行为段（`quota` 阈值/`cost`/`capability`/`matrix`/`banner`/`rules`/`lanes`）→同名 jsonc 段（SWM044）；`providers.glm/deepseek`（凭证收集清单）从未实际生效，已删除。元组显式配置兼容一代（值仍优先），下个大版本移除。
 
@@ -240,6 +242,21 @@ v0.2.0 将 switchman 从固定多供应商调度器升级为实时、能力感�
 - `media/` — 视觉委派中转的图片（已从旧全局状态目录迁来，fail-open 兜底）
 
 由 `opencode-switchman.jsonc` 的 `workspace.enabled` / `workspace.dirname` 配置（默认 `true` / `".switchman"`）；关闭后不再创建任何目录，规程中的对应段落同步失效。
+
+## tmux 窗格镜像（可选）
+
+opencode 服务器自身运行在 tmux 中时，每条被委派的子代理会话都会以 `opencode attach <server> -s <session>` 实时窗格打开，在主 tmux 窗口右侧纵向堆叠（主窗格保持左侧份额——默认 40%，子代理列占右侧 60%）。窗口只会在主窗格（服务器启动时所在窗格，即启动时的 `TMUX_PANE`）上切分：你自己的侧边窗格与 tmux 状态栏绝不会被触碰；从其他窗格接入的 TUI 客户端同样能在那里看到这些子代理窗格。
+
+![tmux 分屏镜像：主会话居左，子代理实时 pane 竖排居右](docs/assets/tmux-pane-mirroring.png)
+
+> 开箱即用，无需任何配置。唯一前提：在 tmux 会话中运行 opencode；tmux 之外该功能完全惰性、零副作用。
+
+- **可见上限＋FIFO**：子代理窗格最多同时可见 3 个（`tmux.maxPanes`，1..4）；超出的并发派发在 FIFO 队列中等待，某个可见子代理结束后，排队者原地接管其窗格（原地重生，窗格数不变）。每次完成都会收缩右列并重新均分布局：3→2 均分 → 1 独占右列 → 0 = 只剩主窗格（全宽恢复）。
+- **卫生**：窗格通过 pane 标题标记为 `swm:<agent-name>`；上次崩溃残留的窗格会在插件启动时清扫（kill，按标题前缀或 attach 启动命令匹配）。每次布局操作后都会恢复窗口的活动窗格（焦点保持）。
+- **天生安全**：不在 tmux 中或 `tmux.enabled=false` 时完全惰性；所有 tmux 失败一律 fail-open——只写状态日志，绝不阻塞派发。
+- **观看须知**：该窗格是附加到子代理会话的真实交互式 TUI——不要在里面打字（按键会进入子代理会话）。退出观看窗格只是移除显示，子代理继续运行。
+
+由 `opencode-switchman.jsonc` 的可选 `tmux` 段配置（`enabled` / `rightPct` / `maxPanes` / `mini`，默认 `true` / `60` / `3` / `false`）。
 
 ## 核心思想
 

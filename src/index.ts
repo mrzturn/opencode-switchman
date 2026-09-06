@@ -56,6 +56,7 @@ import { classifyFailure } from "./failclass"
 import { LANE_ORDER, DEFAULT_LANG_CANDIDATES } from "./types"
 import type { SwitchmanOptions, Lane, LaneResult, Pool, ShellRegEntry, ModelKey } from "./types"
 import { WorkspaceTracker, DEFAULT_WORKSPACE_DIRNAME, type EnsuredWorkspace } from "./workspace"
+import { TmuxPaneManager, serverOriginOf } from "./tmux"
 import { loadLangConfig, renderLangLine, renderAskDirective, saveLangFromQuestion } from "./lang-config"
 import { detectMode, readConfigured, normalizeProviderListResponse } from "./activation"
 import type { MatrixModeOption } from "./activation"
@@ -180,6 +181,18 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   // [2026-09-05]-[project language preference: per-session first-ask latch (released on capture/session delete);
   //  the config itself is re-read from disk EVERY turn, so "configured = never ask again" holds across restarts]
   const langAsked = new Set<string>()
+  // [2026-09-06]-[tmux pane mirroring: dispatched subagent sessions open as live `opencode attach` panes in the home
+  //  tmux window — main pane left / subagent column right (max 3 visible, FIFO replacement on completion); inert
+  //  outside tmux, fail-open everywhere. pendingTask = dispatch intents recorded per main session, consumed by the
+  //  matching child session.created (parentID + agent name) so internal sessions (title/summary) never open panes]
+  const tmuxPanes = new TmuxPaneManager({
+    options: () => options.tmux,
+    serverOrigin: serverOriginOf((input as any).serverUrl, process.env.OPENCODE_PORT) ?? "",
+    dir: pluginDirectory,
+    log: (m) => appendStatusLog(m),
+  })
+  void tmuxPanes.init()
+  const pendingTask = new Map<string, Array<{ agent: string; at: number }>>()
 
   function isShellOrInternalSession(sessionID: string | undefined): boolean {
     if (!sessionID) return false
@@ -349,6 +362,13 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   function traceDispatch(sessionID: string | undefined, shellName: string, prompt: unknown, redirected: boolean): void {
     try {
       if (!sessionID || isShellOrInternalSession(sessionID)) return
+      // [2026-09-06]-[tmux pane mirroring: record the dispatch intent; the matching child session.created consumes it]
+      {
+        const q = (pendingTask.get(sessionID) ?? []).filter((e) => Date.now() - e.at < 10 * 60_000)
+        q.push({ agent: shellName, at: Date.now() })
+        if (q.length > 8) q.splice(0, q.length - 8)
+        pendingTask.set(sessionID, q)
+      }
       const [meta] = parseRouteMeta(prompt)
       workspace.traceDispatch(sessionID, {
         ts: nowIso(), session: sessionID, shell: shellName,
@@ -1544,7 +1564,25 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             else sessionAgent.set(info.id, info.agent)
             // [2026-09-05]-[artifact workspace: registered AFTER the agent classification above (shell/internal sessions excluded)]
             noteWorkspaceSession((event as any).properties?.info)
+            // [2026-09-06]-[tmux pane mirroring: a child session (parentID set) whose agent matches a recorded dispatch
+            //  intent opens as a live attach pane; internal sessions (title/summary/compaction) never match and are ignored]
+            const childParent = (event as any).properties?.info?.parentID
+            if (typeof childParent === "string" && childParent) {
+              const q = pendingTask.get(childParent)
+              const idx = q ? q.findIndex((e) => e.agent === info.agent) : -1
+              if (q && idx >= 0) {
+                q.splice(idx, 1)
+                if (!q.length) pendingTask.delete(childParent)
+                void tmuxPanes.noteChild(childParent, info.id, info.agent)
+              }
+            }
           }
+          return
+        }
+        // [2026-09-06]-[tmux pane mirroring: child session loop finished → promote a queued child or shrink the column]
+        if (event.type === "session.idle") {
+          const sid = (event as any).properties?.sessionID
+          if (typeof sid === "string" && tmuxPanes.tracking(sid)) void tmuxPanes.noteChildEnd(sid)
           return
         }
         // [2026-09-05]-[artifact workspace: session.updated carries the generated/edited title → record + ensure
@@ -1601,6 +1639,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             sessionTodos.delete(sid)
             workspace.forget(sid)
             langAsked.delete(sid)
+            // [2026-09-06]-[tmux pane mirroring: deleted child frees its pane; deleted main drops its dispatch intents]
+            if (tmuxPanes.tracking(sid)) void tmuxPanes.noteChildEnd(sid)
+            pendingTask.delete(sid)
             if (dynamic && manager?.noteSessionDeleted(sid)) manager.scheduleRecompute(50, "session")
           }
           return

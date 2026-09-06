@@ -2,6 +2,13 @@
 
 This project follows [Semantic Versioning](https://semver.org/). Release notes describe user-visible behavior; implementation details remain in the technical specification and commit history.
 
+## [Unreleased]
+
+### Added
+
+- **tmux pane mirroring (`tmux.*`)** — when the opencode server itself runs inside tmux, every dispatched subagent session now opens as a live `opencode attach <server> -s <session>` pane, stacked in a right-hand column of the home tmux window (default split: main pane 40% / subagent column 60%). At most 3 subagent panes are visible (`tmux.maxPanes`, 1..4); extra concurrent dispatches wait in a FIFO queue and take over a finished pane in place; each completion shrinks the column and re-evens the layout back down to the main pane at full width. Panes are labeled `swm:<agent-name>` via pane title, leftovers from a crashed previous run are swept (killed) at plugin startup, the window's active pane is preserved across layout ops, and `tmux.mini` swaps the full TUI for a minimal attach interface.
+- The mirroring only ever splits the pane the server was launched in (`TMUX_PANE` at startup) — user sidebar panes and the tmux status line are never touched — and is fully fail-open: inert outside tmux or when `tmux.enabled=false`, with tmux failures written to the status log only and never blocking dispatch. Note: the pane is a real interactive TUI attached to the subagent session — don't type into it (keystrokes go to the subagent session); quitting a viewer pane just removes the display, the subagent keeps running.
+
 ## [1.0.0] - 2026-09-05
 
 First stable release: the feature surface is complete and the English-first global surface (code, comments, bundled assets, docs, and UI copy) is done — ready for publication beyond the Chinese-language user base.

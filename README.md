@@ -170,6 +170,7 @@ Both commands can also be driven directly via the bundled CLI: `node <pkg>/dist/
 - **/expert expert consultation** and **bundled agent skills**: dispatch requirements to the strongest cross-family expert; opinionated skills sync into the opencode global skills dir at startup (add/overwrite-only, marker-gated cleanup, fail-open).
 - **Review-lane last resort**: with no cross-family read-only shell alive, the chain keeps the best ro shells and same-family review is allowed with a `DOWNGRADED` note instead of an empty chain.
 - **Auto-handover robustness**: numbered `[backup]` sessions (survives restarts, never recycles numbers), compaction routed through the same channel as the manual `/compact`, and a detached compaction leg that can no longer deadlock the session.
+- **tmux pane mirroring**: when the opencode server itself runs inside tmux, every dispatched subagent opens as a live `opencode attach` pane stacked in a right-hand column of the home tmux window — capped visible panes with a FIFO queue, in-place respawn, auto re-evening on completion, and full fail-open safety (see [tmux pane mirroring](#tmux-pane-mirroring-optional)).
 
 ### v1.0.0 — English-first stable release
 
@@ -209,6 +210,7 @@ See the complete, user-facing release notes and migration guide in [CHANGELOG.md
 | `lang.enabled / ask / candidates` | `true / true / factory list` | Per-project language preference: per-turn `[LANG]` iron-rule line (conversation / comments & commits / docs), first-use ask once per session, persisted to `.switchman/settings.json` (AGENTS.md marker as read-only fallback), `/switchman-lang` re-asks |
 | `lanes` | built-in chains | Custom per-lane shell chains (override built-in preference order); keys = economy/mechanical/main/hard/vision/review |
 | `workspace.enabled / dirname` | `true / ".switchman"` | Artifact workspace: per main session, a `<project-root>/.switchman/<yyyy-mm-dd>/<sessionId>-<title>/` folder whose path is injected into the dispatcher protocol every turn; holds `SESSION.md` / `dispatches.jsonl` / `media/`. Disabled = no folders created and the protocol section is neutralized |
+| `tmux.enabled / rightPct / maxPanes / mini` | `true / 60 / 3 / false` | tmux pane mirroring (effective only when the opencode server itself runs inside tmux): every dispatched subagent opens as a live `opencode attach` pane in a right-hand column of the home tmux window; `rightPct` = right column width percent (10..90, main pane keeps the rest), `maxPanes` = max visible subagent panes (1..4; extra dispatches wait in a FIFO queue), `mini` = minimal attach interface instead of the full TUI |
 
 > **Migrating legacy tuple options**: `quota.*.enabled` → `providers.<id>.observe` (SWM042), `billingWindow.*` → `providers.<id>.peak` (SWM043), and the remaining behavior sections (`quota` thresholds / `cost` / `capability` / `matrix` / `banner` / `rules` / `lanes`) → same-named jsonc sections (SWM044); `providers.glm/deepseek` (credential-collection lists) never took effect and have been removed. Explicit tuple values stay honored for one compatibility release, then will be dropped.
 
@@ -240,6 +242,21 @@ For every main session the plugin auto-creates a per-project folder `<project-ro
 - `media/` — images relayed for vision delegation (moved here from the old global state directory, fail-open fallback)
 
 Configured by `workspace.enabled` / `workspace.dirname` in `opencode-switchman.jsonc` (defaults `true` / `".switchman"`); when disabled, no folders are created and the protocol section is neutralized.
+
+## tmux pane mirroring (optional)
+
+When the opencode server itself runs inside tmux, every dispatched subagent session opens as a live `opencode attach <server> -s <session>` pane, stacked in a right-hand column of the home tmux window (main pane keeps the left share — default 40% — the subagent column takes the right 60%). The window is only ever split at the home pane (the pane the server was launched in, `TMUX_PANE` at startup): your own sidebar panes and the tmux status line are never touched, and TUI clients attached from other panes still see the subagent panes there.
+
+![tmux pane mirroring: main session left, live subagent panes stacked on the right](docs/assets/tmux-pane-mirroring.png)
+
+> Works out of the box — no configuration needed. The only requirement: run opencode inside a tmux session; outside tmux the feature stays completely inert.
+
+- **Visibility cap + FIFO**: at most 3 subagent panes are visible (`tmux.maxPanes`, 1..4); extra concurrent dispatches wait in a FIFO queue, and when a visible subagent finishes, a queued one takes over its pane in place (in-place respawn, pane count unchanged). Each completion shrinks the column again and re-evens the layout: 3→2 even halves → 1 full right pane → 0 = main pane alone (full width restored).
+- **Hygiene**: panes are labeled `swm:<agent-name>` via pane title; leftover panes from a crashed previous run are swept (killed) at plugin startup (matched by title prefix or the attach start command). The window's active pane is restored after every layout op (focus preservation).
+- **Safe by construction**: inert outside tmux and when `tmux.enabled=false`; all tmux failures are fail-open — status log only, never blocks dispatch.
+- **Viewer etiquette**: the pane is a real interactive TUI attached to the subagent session — don't type into it (keystrokes go to the subagent session). Quitting a viewer pane just removes the display; the subagent keeps running.
+
+Configured by the optional `tmux` section in `opencode-switchman.jsonc` (`enabled` / `rightPct` / `maxPanes` / `mini`, defaults `true` / `60` / `3` / `false`).
 
 ## Core Ideas
 
