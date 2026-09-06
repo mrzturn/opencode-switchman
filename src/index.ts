@@ -20,6 +20,7 @@ import {
   writeRouteSnapshot,
   writeQuotaBrief,
   loadProviderCache, saveProviderCache, nowIso,
+  providerCacheStale, providerModelsDelta,
 } from "./state"
 import { checkShell, noteUnknownAgent, shellLikeName, denyUninjected, builtinAgentDeny, BUILTIN_SUBAGENTS } from "./gates"
 import {
@@ -148,6 +149,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   const conflictNames = new Set<string>()
   let supersetDefs: ShellDefinition[] = []
   let degradedModelCount = 0
+  // [2026-09-06]-[model list the current superset was built from: the provider.list watchdog diffs fresh probe results
+  // against it to detect mid-session model drift (provider added/dropped models) and rebuild the superset manifest]
+  let lastSupersetModels: string[] = []
   // [2026-09-04]-[measured session context watermark: message.updated token usage → main-session (non-shell/non-internal) watermark;
   //  past the line, read-class tools get the tiered gate (nudge first, then hard deny) — turns rules self-reporting into mechanism enforcement]
   const sessionWatermark = new Map<string, { tokens: number; at: number }>()
@@ -481,6 +485,69 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     }
   }
 
+  /** [2026-09-06]-[superset face build extracted from the config hook: one shared body for startup and the provider.list
+   * watchdog's model-drift rebuild. Persists shell-superset.json (the /modelRank //poolConfig candidate source) and refreshes
+   * the closure views (supersetDefs / metaIndexRuntime / degradedModelCount / lastSupersetModels). Deliberately does NOT touch
+   * cfg.agent — that surface is one-shot (opencode plugin API constraint); the startup path injects shells right after, while
+   * the watchdog path relies on updateSuperset + a restart hint for dispatch]-[new provider models visible without restart] */
+  async function computeSupersetFace(
+    stateRoot: string,
+    providerModels: { models: string[]; providers: string[] },
+  ): Promise<{
+    defs: ShellDefinition[]
+    supersetModels: string[]
+    knownProviders: Set<string>
+    fullShells: number
+    configured: ReturnType<typeof readConfiguredSafe>
+  }> {
+    // [2026-09-06]-[extracted to plugin level, TS aliased narrowing (dynamic) no longer applies; both call sites are dynamic-path
+    //  only (config hook after the !dynamic early return / watchdog scheduled there), so legacy never reaches here]
+    const configured = readConfiguredSafe(stateRoot, runMode as "desktop" | "cli")
+    const catalog = await loadCatalog().catch(() => ({ index: {}, status: "none" as const, etag: null }))
+    const freeFloor = freeFloorModels(catalog.index)
+    const floorModels = freeFloor.length > 0
+      ? freeFloor
+      : [...new Set(loadManifest().shells.map((s) => `${s.provider}/${s.modelId}`))]
+    if (freeFloor.length > 0) appendStatusLog(`floor = ${freeFloor.length} OpenCode Zen free models (catalog ${catalog.status})`)
+    else appendStatusLog(`floor fell back to the static manifest (catalog ${catalog.status}, 0 free models)`)
+    const realKnownProviders = new Set(providerModels.providers)
+    const invalidFavoriteModels = configured.models.filter((m) => !realKnownProviders.has(m.slice(0, m.indexOf("/"))))
+    if (invalidFavoriteModels.length > 0) {
+      appendStatusLog(`visible set/favorites contain invalid models with unknown provider (provider not connected; ignored, no shells built): ${invalidFavoriteModels.join(", ")}`)
+    }
+    const validConfiguredModels = configured.models.filter((m) => realKnownProviders.has(m.slice(0, m.indexOf("/"))))
+    const supersetModels = [...new Set([...validConfiguredModels, ...providerModels.models, ...floorModels])]
+      .filter((full) => isConversational(full.slice(full.indexOf("/") + 1)))
+      .sort()
+    const metaIndex: Record<string, EffortInfo> = { ...bundledModelIndex(), ...catalog.index }
+    metaIndexRuntime = metaIndex
+    let defs = buildShells(supersetModels, metaIndex, {
+      roAliases: true, degradedFamilyByProvider: true, markDegraded: true,
+    })
+    const fullShells = defs.length
+    defs = selectInjectableDefs(defs, {
+      customLanes: (options.lanes as Record<string, readonly string[]> | null) ?? null,
+      keepModels: options.injection!.mode === "all" ? new Set(supersetModels) : new Set(validConfiguredModels),
+      preferredModels: new Set(validConfiguredModels.map((m) => m.slice(m.indexOf("/") + 1))),
+      capabilityOf: (modelId) => baseScoreDynamic(modelId),
+      billingBoostOf, unknownOf: unknownOfModel,
+      costOf: (modelId) => costOf(modelId),
+    })
+    degradedModelCount = new Set(defs.filter((d) => d.degraded).map((d) => `${d.provider}/${d.modelId}`)).size
+    supersetDefs = defs
+    lastSupersetModels = supersetModels
+    try {
+      writeJsonAtomic(paths().shellSuperset, {
+        generated_at: new Date().toISOString(),
+        counts: { superset_models: supersetModels.length, shells: defs.length, full_shells: fullShells, degraded: degradedModelCount },
+        mode: runMode,
+        shells: defs.map(toManifestEntry),
+      })
+    } catch { /* fail-open */ }
+    const knownProviders = new Set<string>([...supersetModels.map((m) => m.slice(0, m.indexOf("/"))), ...providerModels.providers])
+    return { defs, supersetModels, knownProviders, fullShells, configured }
+  }
+
   /** [2026-09-01]-[P3 startup race fix: single attempt with a short timeout (blocks briefly); failure/not-ready throws for the caller's backoff retry]-
    *  single provider.list probe (no retry logic here; retries belong to collectProviderModels's backoff scheduling) */
   async function attemptProviderList(
@@ -552,6 +619,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   function scheduleProviderListWatchdog(
     input: { client?: { provider?: { list?: () => Promise<unknown> } } },
     knownProviders: ReadonlySet<string>,
+    stateRoot: string,
   ): void {
     const delays = [15_000, 30_000, 60_000] // 3 background rounds, increasing gaps, 105s more in total; process exit ends it naturally, no explicit cancel
     const run = async () => {
@@ -565,6 +633,26 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           if (fresh.length > 0) {
             appendStatusLog(`provider.list background probe: new provider(s) connected (${fresh.join(", ")}) — restart opencode to complete shell registration`)
             clearBannerCache()
+          }
+          // [2026-09-06]-[model-drift heal: when the fresh list differs from the one the current superset was built from
+          // (a provider added/dropped models mid-session — e.g. a new flagship appearing on Copilot), rebuild the superset
+          // manifest and the activation view so /modelRank and /poolConfig list the new models without a restart; dispatch of
+          // the brand-new shells still needs one restart (cfg.agent is one-shot), which the log states explicitly]-[fail-open]
+          const delta = providerModelsDelta(lastSupersetModels, result.models)
+          if (delta.added.length > 0 || delta.removed.length > 0) {
+            try {
+              const face = await computeSupersetFace(stateRoot, { models: result.models, providers: result.providers })
+              manager?.updateSuperset(face.defs, face.knownProviders)
+              clearBannerCache()
+              refreshSidebarState()
+              const drift = [
+                delta.added.length > 0 ? `added: ${delta.added.join(", ")}` : null,
+                delta.removed.length > 0 ? `removed: ${delta.removed.join(", ")}` : null,
+              ].filter(Boolean).join("; ")
+              appendStatusLog(`provider.list background probe: model list drifted (${drift}) — superset manifest rebuilt, /modelRank //poolConfig lists updated${delta.added.length > 0 ? "; new shells dispatch after the next opencode restart" : ""}`)
+            } catch (exc) {
+              appendStatusLog(`provider.list background probe: superset rebuild failed (kept previous manifest): ${exc}`)
+            }
           }
           return
         } catch { /* keep backing off to the next round, fail-open */ }
@@ -1053,7 +1141,6 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         // [2026-08-29]-[superset injection: config once (cfg.agent is immutable at runtime) → runtime activation gating]
         // superset = config surface ∪ all conversational models of credentialed providers ∪ floor models; embedding classes excluded
         const stateRoot = resolveOpencodeStateRoot()
-        const configured = readConfiguredSafe(stateRoot, runMode)
         // [2026-09-01]-[instant startup across restarts: after the first successful provider.list probe, providers/models are cached (written only on
         //  real success, see scheduleProviderListWatchdog/the success branch below); non-first startups build shells straight from the cache,
         //  no longer blocking on the provider.list network race at every restart (the old backoff took up to ~30s) — the cache may lag the
@@ -1062,80 +1149,45 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         const providerCache = loadProviderCache()
         let providerModels: { models: string[]; providers: string[]; fellBack: boolean }
         let usedProviderCache = false
-        if (providerCache) {
+        if (providerCache && !providerCacheStale(providerCache)) {
           providerModels = { models: providerCache.models, providers: providerCache.providers, fellBack: false }
           usedProviderCache = true
           appendStatusLog(`provider.list using cross-restart cache (${providerCache.providers.length} providers, cached at ${providerCache.at}); verifying additions in background`)
+        } else if (providerCache) {
+          // [2026-09-06]-[stale cache no longer trusted blindly: provider model lists grow over time (new flagship models), and
+          // the old "cache first, heal next restart" flow locked brand-new models out of the injected surface until a second
+          // restart. A cache past TTL (or with an unparseable timestamp) now triggers a live probe (full backoff budget) before
+          // the superset build; on probe failure the stale cache is still used (fail-open) and the background watchdog keeps
+          // retrying]-[new provider models surface in the same restart]
+          appendStatusLog(`provider.list cache stale (cached at ${providerCache.at}), probing live before the superset build`)
+          const live = await collectProviderModels(input, cfg)
+          if (!live.fellBack) {
+            providerModels = live
+            saveProviderCache({ at: nowIso(), models: live.models, providers: live.providers })
+          } else {
+            providerModels = { models: providerCache.models, providers: providerCache.providers, fellBack: false }
+            usedProviderCache = true
+          }
         } else {
           providerModels = await collectProviderModels(input, cfg)
           if (!providerModels.fellBack) saveProviderCache({ at: nowIso(), models: providerModels.models, providers: providerModels.providers })
         }
-        const catalog = await loadCatalog().catch(() => ({ index: {}, status: "none" as const, etag: null }))
-        // [2026-09-01]-[floor source change: opencode's bundled free models (OpenCode Zen, models.dev opencode provider
-        //  -free ∪ big-pickle special case, 24h rolling) take priority; catalog unavailable (offline cold start) fail-open falls back to the static manifest]
-        const freeFloor = freeFloorModels(catalog.index)
-        const floorModels = freeFloor.length > 0
-          ? freeFloor
-          : [...new Set(loadManifest().shells.map((s) => `${s.provider}/${s.modelId}`))]
-        if (freeFloor.length > 0) appendStatusLog(`floor = ${freeFloor.length} OpenCode Zen free models (catalog ${catalog.status})`)
-        else appendStatusLog(`floor fell back to the static manifest (catalog ${catalog.status}, 0 free models)`)
-        // [2026-09-01]-[hardening: configured (visible set/favorites) used to be merged into supersetModels blindly; dirty favorites (e.g. accidentally
-        // favoriting "provider/not-a-model" whose provider is not in the real connected set) would be built by buildShells as real,
-        // dispatchable-but-doomed shells, and would pollute knownProviders below, distorting computeActivation's "provider known"
-        // verdict so the dirty data was never detected. Now filter by the real connected provider set first, logging filtered entries
-        // separately instead of passively promoting them into "seemingly legal" shells]
-        const realKnownProviders = new Set(providerModels.providers)
-        const invalidFavoriteModels = configured.models.filter((m) => !realKnownProviders.has(m.slice(0, m.indexOf("/"))))
-        if (invalidFavoriteModels.length > 0) {
-          appendStatusLog(`visible set/favorites contain invalid models with unknown provider (provider not connected; ignored, no shells built): ${invalidFavoriteModels.join(", ")}`)
-        }
-        const validConfiguredModels = configured.models.filter((m) => realKnownProviders.has(m.slice(0, m.indexOf("/"))))
-        const supersetModels = [...new Set([...validConfiguredModels, ...providerModels.models, ...floorModels])]
-          .filter((full) => isConversational(full.slice(full.indexOf("/") + 1)))
-          .sort()
-        const metaIndex: Record<string, EffortInfo> = { ...bundledModelIndex(), ...catalog.index }
-        // [2026-09-04]-[image relay: the same metadata index serves messages.transform runtime vision queries (same source as shell injection)]
-        metaIndexRuntime = metaIndex
-        supersetDefs = buildShells(supersetModels, metaIndex, {
-          roAliases: true, degradedFamilyByProvider: true, markDegraded: true,
-        })
-        // [2026-09-04]-[injection surface mode configurable: chain (default) = six-lane chain curation ∪ favorites/visible set (saves 6-10k
-        //  tokens/session on the task tool description; out-of-chain models called by name go through denyUninjected hinting to enable them
-        //  in model management); all = the full usable set (old behavior, any available model callable). cfg.agent takes effect once;
-        //  changing the config needs a restart]
-        const injectKeepModels = options.injection!.mode === "all"
-          ? new Set(supersetModels)
-          : new Set(validConfiguredModels)
-        const fullSupersetCount = supersetDefs.length
-        supersetDefs = selectInjectableDefs(supersetDefs, {
-          customLanes: (options.lanes as Record<string, readonly string[]> | null) ?? null,
-          keepModels: injectKeepModels,
-          preferredModels: new Set(validConfiguredModels.map((m) => m.slice(m.indexOf("/") + 1))),
-          capabilityOf: (modelId) => baseScoreDynamic(modelId),
-          billingBoostOf, unknownOf: unknownOfModel,
-          costOf: (modelId) => costOf(modelId),
-        })
-        degradedModelCount = new Set(supersetDefs.filter((d) => d.degraded).map((d) => `${d.provider}/${d.modelId}`)).size
-        const { injected, conflicts } = injectShellDefs(cfg, supersetDefs)
+        // [2026-09-06]-[superset build moved into computeSupersetFace (shared with the watchdog's model-drift rebuild);
+        // the hook keeps only the one-shot cfg.agent injection]-[single source of truth for the superset build]
+        const face = await computeSupersetFace(stateRoot, providerModels)
+        const fullSupersetCount = face.fullShells
+        const { injected, conflicts } = injectShellDefs(cfg, face.defs)
         injectedNames.clear()
         for (const n of injected) injectedNames.add(n)
         conflictNames.clear()
         for (const n of conflicts) conflictNames.add(n)
-        try {
-          writeJsonAtomic(paths().shellSuperset, {
-            generated_at: new Date().toISOString(),
-            counts: { superset_models: supersetModels.length, shells: supersetDefs.length, full_shells: fullSupersetCount, degraded: degradedModelCount },
-            mode: runMode,
-            shells: supersetDefs.map(toManifestEntry),
-          })
-        } catch { /* fail-open */ }
-        const knownProviders = new Set<string>([...supersetModels.map((m) => m.slice(0, m.indexOf("/"))), ...providerModels.providers])
-        // [2026-09-01]-[async fallback: when the in-hook backoff still falls back entirely, or this startup used the cross-restart cache (no live probe),
+        const knownProviders = face.knownProviders
+        // [2026-08-29]-[async fallback: when the in-hook backoff still falls back entirely, or this startup used the cross-restart cache (no live probe),
         //  the background keeps probing — a newly seen provider can only be hinted as restart-required (hard cfg.agent one-shot constraint, see
         //  the scheduleProviderListWatchdog comment), but at least "would a restart take effect now" becomes a live, explicit status hint]
-        if (providerModels.fellBack || usedProviderCache) scheduleProviderListWatchdog(input, knownProviders)
+        if (providerModels.fellBack || usedProviderCache) scheduleProviderListWatchdog(input, knownProviders, stateRoot)
         manager = new MatrixManager({
-          stateRoot, mode: runMode, superset: supersetDefs,
+          stateRoot, mode: runMode, superset: face.defs,
           injectedNames, knownProviders,
           watchEnabled: options.matrix!.watch === true,
           onRecompute: (state, newTargets, source) => {
@@ -1160,9 +1212,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             appendStatusLog(`activation matrix recomputed (gen=${state.generation}, active shells ${state.activeShells.length}, probes ${source}×${targets.length})`)
           },
         })
-        manager.recompute(configured)
+        manager.recompute(face.configured)
         manager.start()
-        appendStatusLog(`injected ${injected.size} shells (mode=${runMode}, injection surface=${options.injection!.mode}=${fullSupersetCount}→${supersetDefs.length} after curation, conflicts ${conflicts.size}; activation gating active)`)
+        appendStatusLog(`injected ${injected.size} shells (mode=${runMode}, injection surface=${options.injection!.mode}=${fullSupersetCount}→${face.defs.length} after curation, conflicts ${conflicts.size}; activation gating active)`)
         // [2026-08-29]-[config hook triggers the self-update check]-[async check; failure never blocks startup]
         refreshSelfUpdate().then((state) => { if (state?.outdated) clearBannerCache() }).catch(() => {})
       } catch (exc) {

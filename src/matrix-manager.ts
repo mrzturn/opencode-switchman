@@ -143,6 +143,26 @@ export class MatrixManager {
     return [...out].sort()
   }
 
+  /** [2026-09-06]-[watchdog superset rebuild: replace the superset view after a background provider.list refresh detects
+   * model drift (provider added/dropped models mid-session). shellsByModel/defByName are rebuilt, knownProviders refreshed,
+   * activation recomputed (sameActivation short-circuits no-op rebuilds). cfg.agent is deliberately untouched — that surface
+   * is one-shot (opencode plugin API constraint), so newly added shells stay undispatchable until restart; the config
+   * surfaces (shell-superset.json consumers: /modelRank, /poolConfig, denies, banner) turn consistent immediately]- */
+  updateSuperset(defs: readonly ShellDefinition[], knownProviders: ReadonlySet<string>): ActivationState {
+    this.opts.superset = defs
+    this.opts.knownProviders = knownProviders
+    this.shellsByModel.clear()
+    this.defByName.clear()
+    for (const d of defs) {
+      const mk = `${d.provider}/${d.modelId}` as ModelKey
+      const list = this.shellsByModel.get(mk) ?? []
+      list.push(d)
+      this.shellsByModel.set(mk, list)
+      this.defByName.set(d.name, d)
+    }
+    return this.recompute(undefined, "startup")
+  }
+
   /** Synchronous recompute: read config surface -> union -> persist; state-equivalence short-circuit (no generation bump/no cache clear)
    *  [2026-08-29]-[fix review-P1 write race: this method is fully synchronous (read-compute-write without await) -> naturally
    *  atomic in-process; the model-matrix.json read-modify-write completes synchronously (in-process atomic); async probe writes
