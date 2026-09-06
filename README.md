@@ -14,6 +14,28 @@ If you hold multiple model subscriptions (GitHub Copilot premium credits, Zhipu 
 
 ## Installation & Usage
 
+### Recommended: let your AI install it for you
+
+In the AI era, we strongly recommend letting an AI perform the installation and configuration for you — it reads your real environment, writes the correct values, and verifies the result itself, which is far less error-prone than manual copy-pasting.
+
+Just copy the prompt below and paste it to the AI you are currently using, and let it install opencode-switchman for you:
+
+```text
+Please install and configure the opencode-switchman plugin for my opencode, strictly following its official instructions.
+
+Official sources (authoritative, do not guess from memory):
+- GitHub repo: https://github.com/mrzturn/opencode-switchman
+- npm package: https://www.npmjs.com/package/opencode-switchman
+Read the repo README's "Installation & Usage" section and follow it exactly.
+
+Steps:
+1. Install the latest version published on npm: run `npx -y opencode-switchman@latest` (or `bunx opencode-switchman@latest`) — it rewrites the `plugin` entry in my opencode config to the exact latest version (it also works in the project-level `opencode.json` if that is what I use).
+2. Complete the functional configuration: all plugin settings live in the standalone `opencode-switchman.jsonc` in my opencode config directory, auto-generated with defaults and inline comments on first start; check it against my providers (e.g. `zhipuai-coding-plan` / `deepseek` / `github-copilot`) and adjust as needed.
+3. Verify correctness so opencode loads, starts, and runs the plugin: run `/switchman-doctor` inside opencode for a local credential-free diagnostic report and fix every error it reports; then restart opencode and confirm the plugin actually loaded — the log should contain `[opencode-switchman] injected N model shells (agents)` and my primary model's system prompt should carry the live `[ROUTES]/[WATERMARK]/[LIMITS]` banner block.
+
+Do not declare success until all three steps pass; report what you changed and show the verification evidence.
+```
+
 ### Prerequisites
 
 - [opencode](https://opencode.ai) — **the CLI/TUI is the strongly recommended interface** (the plugin's operational surface — sidebar status panel, `/poolConfig` / `/modelRank` dialogs, live banners — is richest there): configure everything in the TUI first, then optionally switch to the desktop app for a GUI experience; both share the same config and state

@@ -14,6 +14,28 @@ OpenCode 六档壳矩阵编排插件——让主模型成为调度员，把任�
 
 ## 安装与使用
 
+### 推荐方式：让 AI 替你安装
+
+AI 时代强烈推荐由 AI 自主完成安装配置——AI 能读取你的真实环境、写入正确的值，并自行验证结果，比手动复制粘贴更不容易出错。
+
+把下面这段话直接复制给你当前使用的 AI，让它帮你装：
+
+```text
+请严格按照官方说明为我的 opencode 安装并配置 opencode-switchman 插件。
+
+官方来源（以此为准，不要凭记忆猜测）：
+- GitHub 仓库：https://github.com/mrzturn/opencode-switchman
+- npm 包：https://www.npmjs.com/package/opencode-switchman
+请先阅读仓库 README 的「安装与使用」章节，然后严格照做。
+
+步骤：
+1. 安装 npm 上发布的最新版本：运行 `npx -y opencode-switchman@latest`（或 `bunx opencode-switchman@latest`），它会把我的 opencode 配置里的 `plugin` 条目改写为精确最新版本（若我用的是项目级 `opencode.json`，它同样适用）。
+2. 完成功能配置：插件全部配置都在我 opencode 配置目录下独立的 `opencode-switchman.jsonc` 文件中，首次启动自动生成并带注释；请对照我的 provider（如 `zhipuai-coding-plan` / `deepseek` / `github-copilot`）检查并按需调整。
+3. 校验配置正确性、确保 opencode 能正常加载启动运行该插件：在 opencode 内运行 `/switchman-doctor` 出本地脱敏诊断报告并修复所有报错；然后重启 opencode 确认插件确实已加载——日志应出现 `[opencode-switchman] injected N model shells (agents)`（注入 N 只模型空壳），且主模型的系统提示中应带有实时 `[ROUTES]/[WATERMARK]/[LIMITS]` 横幅块。
+
+三个步骤全部通过才算完成；请汇报你做的改动并给出验证证据。
+```
+
 ### 前置条件
 
 - [opencode](https://opencode.ai)——**强烈推荐以 CLI/TUI 为主力界面**（插件的操作面——侧栏状态面板、`/poolConfig` / `/modelRank` 弹窗、实时横幅——在 TUI 里最完整）：建议先用 TUI 完成全部配置，之后可自行选择是否换用桌面端体验；两端共享同一份配置与状态
