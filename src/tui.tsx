@@ -456,10 +456,20 @@ function PoolModelsDialog(props: { api: TuiPluginApi; lane: Lane }) {
     setSelected(new Set(rows().map((r) => r.key)))
     props.api.ui.toast({ variant: "success", message: `${props.lane} pool config cleared (system default candidate set restored)` })
   }
+  // [2026-09-06]-[Uncheck-all shortcut: clears the checkbox state in place (no disk write) so a short list can be
+  //  built by checking a few models instead of unchecking the rest one by one; while nothing is checked the previous
+  //  config stays untouched on disk — exiting without any check keeps the pre-clear selection in effect, and the
+  //  first check after the clear materializes the new explicit list]-[impacts PoolModelsDialog only]
+  const uncheckAll = () => {
+    if (selected().size === 0) return
+    setSelected(new Set<string>())
+    props.api.ui.toast({ variant: "info", message: `${props.lane} pool: all unchecked — check the models to keep; exiting with none checked keeps the previous selection` })
+  }
   const nSel = () => selected().size
   const options = createMemo(() => [
     { title: "← Back to pool list", value: "__back", onSelect: () => props.api.ui.dialog.replace(() => <PoolPickerDialog api={props.api} />) },
     { title: "☑ Select all", value: "__all", onSelect: () => bulk() },
+    { title: "☐ Uncheck all (then check the few to keep; exit with none checked keeps the old list)", value: "__uncheckAll", onSelect: uncheckAll },
     { title: "✕ Clear config (system default: all available models participate)", value: "__reset", onSelect: reset },
     ...rows().map((r) => ({
       title: `${selected().has(r.key) ? "[x]" : "[ ]"} ${r.modelId}`,

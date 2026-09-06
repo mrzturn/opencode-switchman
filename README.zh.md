@@ -134,14 +134,14 @@ TUI 插件没有目录自动发现机制，需要在 **`tui.jsonc`/`tui.json`** 
 
 ### /poolConfig —— 任务池选配（手动弹窗；会话式用 /poolConfig-chat）
 
-- **TUI（/poolConfig）**：弹出选择框（与选模型/思考等级同款交互）——先选任务池（economy / mechanical / main / hard / vision / review），再对全部可用模型上下勾选：选中即参与该池、再选即移出，附能力档标注，改动实时落盘并 toast 回执。
+- **TUI（/poolConfig）**：弹出选择框（与选模型/思考等级同款交互）——先选任务池（economy / mechanical / main / hard / vision / review），再对全部可用模型上下勾选：选中即参与该池、再选即移出，附能力档标注。快捷项：「全选」与「全部取消」（重建模式——只勾选想保留的几个；一个都没勾就退出则保持原选配不变，清空后第一次勾选即写入新清单）。改动实时落盘并 toast 回执。
 - **非 TUI / 会话内（/poolConfig-chat）**：会话式流程——注入各池选配总览（带池名可看 `[x]/[ ]` 完整清单），回复「main 只留 3 5」「economy 勾 1、取消 2」由 agent 调 `switchman-config.js` 落盘。
 - **语义**：选配=让各任务池的候选模型**体现差异化**（如 economy 只配轻量模型、hard 只配重思考模型）——某池的手动清单**优先于系统默认候选集**，清单内模型仍按能力等级排序推荐；**同一模型可重复参与多个池**；未配置/空清单的池走系统默认决策。「清除配置」=恢复该池系统默认。
 - **配置文件**：`~/.config/opencode/opencode-switchman/pool-config.json`（键=任务池名，值=参与该池的 modelId 数组）。
 
 ![/poolConfig 第一步——选择任务池，各池显示已参与模型数](docs/assets/tui-pool-config-pools.png)
 
-![/poolConfig 第二步——按能力档逐个勾选模型，支持全选/清除快捷项](docs/assets/tui-pool-config-models.png)
+![/poolConfig 第二步——按能力档逐个勾选模型，支持全选/全部取消/清除快捷项](docs/assets/tui-pool-config-models.png)
 
 ### /modelRank —— 模型能力排名（手动弹窗；会话式用 /modelRank-chat）
 

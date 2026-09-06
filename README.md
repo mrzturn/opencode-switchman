@@ -134,14 +134,14 @@ Two manual commands let your configuration beat system defaults. All state is pe
 
 ### /poolConfig — per-lane model assignment (manual dialog; conversational: /poolConfig-chat)
 
-- **TUI (/poolConfig)**: a native select dialog (same interaction as the model/thinking-level pickers) — pick a task pool (economy / mechanical / main / hard / vision / review), then toggle models up and down the list: select to include, select again to exclude, with a capability tier shown per model. Changes are written through immediately with a toast receipt.
+- **TUI (/poolConfig)**: a native select dialog (same interaction as the model/thinking-level pickers) — pick a task pool (economy / mechanical / main / hard / vision / review), then toggle models up and down the list: select to include, select again to exclude, with a capability tier shown per model. Shortcuts: "Select all" and "Uncheck all" (rebuild mode — check just the few to keep; exiting with none checked keeps the previous selection, the first check after a clear writes the new list). Changes are written through immediately with a toast receipt.
 - **Non-TUI / in-session (/poolConfig-chat)**: a conversational flow — it injects a per-pool assignment overview (use a pool name to get the full `[x]/[ ]` list); reply "main: keep only 3 5" or "economy: add 1, drop 2" and the agent calls the bundled `switchman-config.js` CLI to persist.
 - **Semantics**: assignment = making each task pool's candidate models **deliberately different** (e.g. lightweight models only for economy, heavy thinkers only for hard) — a pool's manual list **overrides the system default candidate set**, and models inside it are still recommended by capability level; **the same model may join multiple pools**; pools without a configured (or with an empty) list keep the system default. "Clear config" restores the system default for that pool.
 - **Config file**: `~/.config/opencode/opencode-switchman/pool-config.json` (key = task pool name, value = array of participating modelIds).
 
 ![/poolConfig step 1 — pick a task pool, each lane showing how many models participate](docs/assets/tui-pool-config-pools.png)
 
-![/poolConfig step 2 — toggle models per pool with capability tiers and select-all / clear shortcuts](docs/assets/tui-pool-config-models.png)
+![/poolConfig step 2 — toggle models per pool with capability tiers and select-all / uncheck-all / clear shortcuts](docs/assets/tui-pool-config-models.png)
 
 ### /modelRank — model capability ranking (manual dialog; conversational: /modelRank-chat)
 
