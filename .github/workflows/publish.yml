@@ -9,6 +9,8 @@ permissions:
 
 jobs:
   publish:
+    # [2026-09-06]-[only main-branch releases may publish to npm; dev-branch releases are ignored]-[prevents accidental npm publish from dev]
+    if: github.event.release.target_commitish == 'main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
