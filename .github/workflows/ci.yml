@@ -1,0 +1,56 @@
+name: CI
+
+# [2026-09-06]-[PR gate for main: typecheck + unit tests + warning-free build; checks are required by the main-branch ruleset]-[blocks merges that fail typecheck/tests/build or emit build warnings]
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Unit tests
+        run: bun test
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build without errors or warnings
+        run: |
+          set -o pipefail
+          bun run build 2>&1 | tee /tmp/build.log
+          if grep -qiE 'warn(ing)?|error' /tmp/build.log; then
+            echo "::error::build output contains warnings or errors"
+            grep -inE 'warn(ing)?|error' /tmp/build.log
+            exit 1
+          fi
