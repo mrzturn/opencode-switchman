@@ -2,6 +2,12 @@
 
 This project follows [Semantic Versioning](https://semver.org/). Release notes describe user-visible behavior; implementation details remain in the technical specification and commit history.
 
+## [Unreleased]
+
+### Added
+
+- **Version line in the TUI sidebar marquee row** — the rainbow `switchman` title now shows the running version (local builds append the checked commit short SHA) and, when the 24h-cached update check reports a newer release, a green `→ v<latest>` tag (`→ origin/main` for local builds; suppressed by `/switchman-ignore` exactly like the update banner). The blinking bold-red `[RESTART NEEDED]` tag — previously keyed only on pending shell registration (`active-matrix.json.restartRequired`) — now also covers installed-but-not-loaded upgrades: it lights up when `/switchman-update` touched `upgraded.flag` this session or the on-disk package version differs from the running one (out-of-band upgrades), merging with the shell-registration case into one indicator; both clear naturally after a restart. All sources are fail-open: missing state renders just the bare running version.
+
 ## [1.0.1] - 2026-09-07
 
 ### Added

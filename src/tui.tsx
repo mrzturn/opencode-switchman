@@ -17,11 +17,15 @@ import type { TuiPlugin, TuiPluginModule, TuiPluginApi } from "@opencode-ai/plug
 import { createSignal, createMemo, onCleanup, For } from "solid-js"
 import { readFileSync, statSync } from "node:fs"
 import { homedir } from "node:os"
-import { join, relative, isAbsolute, sep } from "node:path"
+import { join, relative, isAbsolute, sep, dirname } from "node:path"
 // [2026-09-03]-[/poolConfig //modelRank interactive dialogs: task-pool pick lists and capability ranking read/write the
 //  user override layer (pool-config.json / capability-rank.json) directly, taking effect in sync with the plugin main
 //  process mtime hot reload]
 import { loadPoolConfig, writePoolConfig, resetPoolConfig, loadCapabilityRank, writeCapabilityRank, applyRankMove } from "./user-overrides"
+// [2026-09-07]-[version line next to the marquee: reuse the selfupdate state/flag readers so the sidebar shares the
+//  exact same sources and TTL semantics as the update banner]
+import { readSelfUpdateState, flagSemantics, installedPluginVersion, versionBrief } from "./selfupdate"
+import { PLUGIN_VERSION } from "./version"
 import { allModelRows, rankViewRows } from "./config-cli"
 import { LANE_ORDER, type Lane } from "./types"
 import { runHandover, type HandoverPort } from "./handover-core"
@@ -85,6 +89,9 @@ const SHOW_LAST = 1
 const RESTART_HINT_RE = /restart opencode[^;]*/gi
 const MARQUEE_MS = 150
 const TITLE = "switchman"
+// [2026-09-07]-[version/restart flags are session-scoped: mtime later than this process's start = active, matching
+//  the main process PLUGIN_START semantics in selfupdate.ts; naturally clears after a restart]
+const PROCESS_START = Date.now()
 // [2026-09-02]-[Fixed palette for lanes/recommended models: orange = lane type, green = recommended model name; echoes
 //  the watermark greens but keeps independent semantics]
 // [2026-09-04]-[Brightened to the 400-level palette to match the new waterColor stops; the notice header drops its
@@ -220,6 +227,11 @@ function ViewInner(props: { api: TuiPluginApi; sessionID: string }) {
   const [routes, setRoutes] = createSignal<RouteSnapshotEntry[]>(readRouteSnapshot())
   const [quotaBrief, setQuotaBrief] = createSignal<QuotaBriefEntry[]>(readQuotaBrief())
   const [restartRequired, setRestartRequired] = createSignal<string[]>(readRestartRequired())
+  // [2026-09-07]-[version line: selfupdate.json (24h TTL-validated), upgrade/ignore flag mtimes vs process start,
+  //  and the on-disk package.json version (prod restart-needed detection); all fail-open like the other readers]
+  const [selfUpdate, setSelfUpdate] = createSignal(readSelfUpdateState())
+  const [updateFlags, setUpdateFlags] = createSignal(flagSemantics(statusLogPath(), PROCESS_START))
+  const [installedVersion, setInstalledVersion] = createSignal<string | null>(installedPluginVersion())
   const [tick, setTick] = createSignal(0)
   // [2026-09-02]-[Branch signal: re-read .git/HEAD every poll cycle (session directory first, TUI directory as
   //  fallback); also subscribes to vcs.branch.updated for instant refresh when the event chain works, with polling as
@@ -235,6 +247,9 @@ function ViewInner(props: { api: TuiPluginApi; sessionID: string }) {
     setRoutes(readRouteSnapshot())
     setQuotaBrief(readQuotaBrief())
     setRestartRequired(readRestartRequired())
+    setSelfUpdate(readSelfUpdateState())
+    setUpdateFlags(flagSemantics(statusLogPath(), PROCESS_START))
+    setInstalledVersion(installedPluginVersion())
     refreshBranch()
   }, POLL_MS)
   // [2026-09-02]-[The title rainbow marquee needs its own heartbeat far faster than data polling; separate duties and
@@ -260,6 +275,15 @@ function ViewInner(props: { api: TuiPluginApi; sessionID: string }) {
     const list = out.split("/")
     return { parent: list.slice(0, -1).join("/"), name: list.at(-1) ?? "", branch }
   })
+  // [2026-09-07]-[version line derivation: running label (local adds the checked commit short SHA), update tag
+  //  (suppressed by /switchman-ignore like the banner), and upgrade-pending restart detection]
+  const version = createMemo(() => versionBrief({
+    state: selfUpdate(),
+    flags: updateFlags(),
+    running: PLUGIN_VERSION,
+    installed: installedVersion(),
+  }))
+  const restartPending = () => restartRequired().length > 0 || version().restartPending
 
   return (
     <box flexDirection="column" gap={0}>
@@ -314,10 +338,16 @@ function ViewInner(props: { api: TuiPluginApi; sessionID: string }) {
                 {(ch, i) => <span style={{ fg: hsvToHex(i() * 28 + tick() * 3, 0.65, 1) }}>{ch}</span>}
               </For>
             </b>
+            {/* [2026-09-07]-[version line next to the marquee: muted running version (local mode appends the checked
+                commit short SHA), green "→ latest" when outdated, and the blinking restart tag now merges the
+                shell-registration restartRequired with upgrade-pending (upgraded.flag / prod disk-version mismatch);
+                fail-open unchanged: missing state renders just the bare running version]-[impacts the sidebar title row only] */}
+            <span style={{ fg: theme().textMuted }}> {version().running}</span>
+            {version().update !== null && <span style={{ fg: MODEL_COLOR }}> → {version().update}</span>}
             {/* [2026-09-06]-[blinking restart tag: ~600ms on/off via the 150ms marquee heartbeat (tick/4 parity), bold
                 red — a pending shell-registration restart used to render as a static tag that was easy to stop seeing;
                 fail-open unchanged: empty restartRequired list renders nothing]-[impacts the sidebar title row only] */}
-            {restartRequired().length > 0 && Math.floor(tick() / 4) % 2 === 0 && (
+            {restartPending() && Math.floor(tick() / 4) % 2 === 0 && (
               <span style={{ fg: theme().error }}><b> [RESTART NEEDED]</b></span>
             )}
           </text>

@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { bannerTextOf, compareSemver, ensureUpdateCommands, flagSemantics, modeOfDistPath } from "../src/selfupdate"
+import { bannerTextOf, compareSemver, ensureUpdateCommands, flagSemantics, modeOfDistPath, installedPluginVersion, versionBrief } from "../src/selfupdate"
 import { readFileSync, existsSync, writeFileSync, rmSync, utimesSync } from "node:fs"
 import type { SelfUpdateState } from "../src/selfupdate"
 
@@ -86,5 +86,47 @@ describe("One-click upgrade command assets", () => {
   test("upgradeCommandMd: local-mode copy has no one-click upgrade entry", () => {
     expect(bannerTextOf({ checked_at: "", mode: "local", current: "0.0.1", latest: "", outdated: true })).not.toContain("/switchman-update")
     expect(bannerTextOf({ checked_at: "", mode: "prod", current: "0.0.1", latest: "9.9.9", outdated: true })).toContain("/switchman-update")
+  })
+})
+
+describe("Sidebar version line derivation (versionBrief)", () => {
+  const flagsNone = { upgraded: false, ignored: false }
+  const prodCurrent = { checked_at: "", mode: "prod" as const, current: "1.0.1", latest: "1.0.1", outdated: false }
+
+  test("up-to-date prod: running version only, no update tag, no restart", () => {
+    expect(versionBrief({ state: prodCurrent, flags: flagsNone, running: "1.0.1", installed: "1.0.1" }))
+      .toEqual({ running: "v1.0.1", update: null, restartPending: false })
+  })
+
+  test("prod outdated: update tag carries the latest version; /switchman-ignore suppresses it", () => {
+    const st = { ...prodCurrent, latest: "1.2.0", outdated: true }
+    expect(versionBrief({ state: st, flags: flagsNone, running: "1.0.1", installed: "1.0.1" }).update).toBe("v1.2.0")
+    expect(versionBrief({ state: st, flags: { upgraded: false, ignored: true }, running: "1.0.1", installed: "1.0.1" }).update).toBeNull()
+  })
+
+  test("local mode: update tag reads origin/main, running label carries the checked commit short SHA", () => {
+    const st = { checked_at: "", mode: "local" as const, current: "a".repeat(40), latest: "origin/main has new commits", outdated: true }
+    const b = versionBrief({ state: st, flags: flagsNone, running: "1.0.1", installed: null })
+    expect(b.running).toBe("v1.0.1@aaaaaaa")
+    expect(b.update).toBe("origin/main")
+    expect(b.restartPending).toBe(false)
+  })
+
+  test("restart pending: upgraded.flag wins; prod disk-version mismatch counts; local mismatch does not", () => {
+    expect(versionBrief({ state: prodCurrent, flags: { upgraded: true, ignored: false }, running: "1.0.1", installed: "1.0.1" }).restartPending).toBe(true)
+    expect(versionBrief({ state: prodCurrent, flags: flagsNone, running: "1.0.1", installed: "1.2.0" }).restartPending).toBe(true)
+    const localSt = { checked_at: "", mode: "local" as const, current: "deadbeef".repeat(5), latest: "", outdated: false }
+    expect(versionBrief({ state: localSt, flags: flagsNone, running: "1.0.1", installed: "1.2.0" }).restartPending).toBe(false)
+  })
+
+  test("missing state: labels degrade to the bare running version, flags still drive the restart tag", () => {
+    expect(versionBrief({ state: null, flags: { upgraded: false, ignored: true }, running: "1.0.1", installed: null }))
+      .toEqual({ running: "v1.0.1", update: null, restartPending: false })
+    expect(versionBrief({ state: null, flags: { upgraded: true, ignored: true }, running: "1.0.1", installed: null }).restartPending).toBe(true)
+  })
+
+  test("installedPluginVersion reads package.json next to the loaded module (repo root under test)", () => {
+    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string }
+    expect(installedPluginVersion()).toBe(pkg.version)
   })
 })
