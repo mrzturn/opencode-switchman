@@ -2,6 +2,16 @@
 
 This project follows [Semantic Versioning](https://semver.org/). Release notes describe user-visible behavior; implementation details remain in the technical specification and commit history.
 
+## [1.0.2] - 2026-09-07
+
+### Added
+
+- **Version line in the TUI sidebar marquee row** — the rainbow `switchman` title now shows the running version (local builds append the checked commit short SHA) and, when the 24h-cached update check reports a newer release, a green `→ v<latest>` tag (`→ origin/main` for local builds; suppressed by `/switchman-ignore` exactly like the update banner). The blinking bold-red `[RESTART NEEDED]` tag — previously keyed only on pending shell registration (`active-matrix.json.restartRequired`) — now also covers installed-but-not-loaded upgrades: it lights up when `/switchman-update` touched `upgraded.flag` this session or the on-disk package version differs from the running one (out-of-band upgrades), merging with the shell-registration case into one indicator; both clear naturally after a restart. All sources are fail-open: missing state renders just the bare running version.
+
+### Fixed
+
+- **Language-preference ask no longer lost after a skipped first turn** — the ask directive was injected only on a session's first turn (one-shot in-memory latch), and main models routinely skipped the question and dove into the task, so unconfigured projects were never prompted again. Two layers fix it: the latch resets on every new user message (the ask re-surfaces at the start of each user turn until the config is persisted to `.switchman/settings.json`), and a hard gate denies write/edit/bash/task calls with an ask-first error while the project is unconfigured — the question no longer depends on the model's goodwill. A completed question call the user declines waives the gate and the ask for that session; `lang.ask: false` silences both. The directive is also pushed as the first injected system part and is never injected into shell/internal sessions.
+
 ## [1.0.1] - 2026-09-07
 
 ### Added

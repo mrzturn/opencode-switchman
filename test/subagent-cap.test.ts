@@ -3,7 +3,7 @@
 //  (persistent registry, survives plugin re-instantiation), internal sessions and sub-cap sessions are untouched, and
 //  fresh dispatches without task_id are unaffected]
 import { describe, expect, test } from "bun:test"
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -13,6 +13,10 @@ process.env.OPENCODE_CONFIG_DIR = configDir
 process.env.SWITCHMAN_STATE = stateDir
 // [2026-09-06]-[model catalog stub: message.updated model-key recording consults the runtime index for the window cap]
 writeFileSync(join(stateDir, "model-catalog.json"), JSON.stringify({ fetched_at: Date.now(), etag: null, index: {} }))
+// [2026-09-07]-[lang hard gate fixture: sandbox project counts as lang-configured]
+const projectDir = mkdtempSync(join(tmpdir(), "switchman-lang-fix-"))
+mkdirSync(join(projectDir, ".switchman"), { recursive: true })
+writeFileSync(join(projectDir, ".switchman", "settings.json"), JSON.stringify({ v: 1, configuredAt: "x", lang: { conversation: "en", comments: "en", docs: "en" } }))
 
 import { SwitchmanPlugin } from "../src/index"
 import {
@@ -41,7 +45,7 @@ async function bootPlugin(): Promise<Hooks> {
   }
   // [2026-09-06]-[legacy mode forced (same pattern as todo-nudge/pane-resume tests): the classification under test is
   //  sessionAgent-based; dynamic mode would need a probed superset for isShellSession]
-  return SwitchmanPlugin({ client: fakeClient, directory: "/w" } as any, { matrix: { mode: "legacy" } } as any)
+  return SwitchmanPlugin({ client: fakeClient, directory: projectDir } as any, { matrix: { mode: "legacy" } } as any)
 }
 
 async function mark(hooks: Hooks, sessionId: string, input: number): Promise<void> {

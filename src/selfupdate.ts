@@ -1,7 +1,7 @@
 // [2026-09-04]-[English localization: translate CLI messages and comments; no logic change]
 // Plugin self-update check: state cache and all external calls are fail-open, never affecting OpenCode startup.
 import { execFileSync } from "node:child_process"
-import { mkdirSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { homedir } from "node:os"
@@ -34,6 +34,17 @@ function moduleDir(): string {
     } catch { /* fallthrough */ }
   }
   return dirname(decodeURIComponent(url).replace(/^file:\/\//, ""))
+}
+
+// [2026-09-07]-[TUI sidebar version line: read the on-disk package.json version next to the loaded dist; null when
+//  unreadable (fail-open). Disk version differing from the running one means an out-of-band upgrade awaits a restart]-
+export function installedPluginVersion(): string | null {
+  try {
+    const raw = JSON.parse(readFileSync(join(dirname(moduleDir()), "package.json"), "utf8")) as { version?: unknown }
+    return typeof raw.version === "string" && raw.version.trim() ? raw.version : null
+  } catch {
+    return null
+  }
 }
 
 export function modeOfDistPath(dir: string): LoadMode {
@@ -143,6 +154,36 @@ export function flagSemantics(baseDir = join(homedir(), ".config", "opencode", "
   }
   void now
   return { upgraded: active("upgraded.flag"), ignored: active("update-ignore.flag") }
+}
+
+// ---- [2026-09-07]-[TUI sidebar version line (next to the marquee title): current/latest/restart-pending derivation]----
+
+export interface VersionBrief {
+  /** Running version label, e.g. "v1.0.1"; local mode appends the checked commit short SHA when available */
+  running: string
+  /** Update-available tag, e.g. "v1.2.0" (prod) or "origin/main" (local); null when up to date / ignored / unknown */
+  update: string | null
+  /** True when a restart is required for the running code to match the installed plugin */
+  restartPending: boolean
+}
+
+/** Pure derivation shared by the TUI sidebar; all inputs come from fail-open readers and may be null/unknown. */
+export function versionBrief(opts: {
+  state: SelfUpdateState | null
+  flags: { upgraded: boolean; ignored: boolean }
+  running: string
+  installed: string | null
+}): VersionBrief {
+  const state = opts.state
+  const sha = state?.mode === "local" && /^[0-9a-f]{40}$/.test(state.current) ? `@${state.current.slice(0, 7)}` : ""
+  const update = state?.outdated && !opts.flags.ignored
+    ? (state.mode === "prod" ? `v${state.latest}` : "origin/main")
+    : null
+  // upgraded.flag (in-session /switchman-update) or a prod disk-version mismatch (out-of-band upgrade) both mean
+  // the running process predates the installed code; local-mode mismatch is ignored (a stale dist is rebuilt, not restarted)
+  const restartPending = opts.flags.upgraded
+    || (state?.mode === "prod" && opts.installed !== null && opts.installed !== opts.running)
+  return { running: `v${opts.running}${sha}`, update, restartPending }
 }
 
 /** Bundled updater path (same directory as the main build output; copied to dist/update-cli.js by scripts/update-cli.mjs at build time) */

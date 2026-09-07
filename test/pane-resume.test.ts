@@ -13,6 +13,10 @@ const prevConfigDir = process.env.OPENCODE_CONFIG_DIR
 process.env.SWITCHMAN_STATE = mkdtempSync(join(tmpdir(), "switchman-pane-resume-state-"))
 process.env.OPENCODE_CONFIG_DIR = mkdtempSync(join(tmpdir(), "switchman-pane-resume-cfg-"))
 mkdirSync(process.env.SWITCHMAN_STATE, { recursive: true })
+// [2026-09-07]-[lang hard gate fixture: sandbox project counts as lang-configured]
+const projectDir = mkdtempSync(join(tmpdir(), "switchman-lang-fix-"))
+mkdirSync(join(projectDir, ".switchman"), { recursive: true })
+writeFileSync(join(projectDir, ".switchman", "settings.json"), JSON.stringify({ v: 1, configuredAt: "x", lang: { conversation: "en", comments: "en", docs: "en" } }))
 // hermetic state (same trick as routing.test.ts / auto-redirect.test.ts): pre-seed every TTL cache so the six gates
 // never hit the network; the empty catalog pins the curated table
 writeFileSync(
@@ -62,6 +66,7 @@ function pluginInput(behavior: GetBehavior, seen: string[]): any {
           },
         },
     },
+    directory: projectDir,
   }
 }
 
