@@ -102,9 +102,11 @@ export function renderAskDirective(candidates: readonly string[]): string {
     `2. question "${askTag(2)}: Language for code comments and commit messages?", single-choice, options: ${opts}`,
     `3. question "${askTag(3)}: Language for generated documents (plans, PRD, design docs, reports)?", single-choice, options: ${opts}`,
     `The user may also type any other language (custom answer) — relay it verbatim as the option text.`,
-    `After the tool returns: confirm the saved preferences in one line, then continue the user's task in the chosen`,
-    `conversation language. If the question tool is unavailable or the user declines, skip silently and proceed with`,
-    `English defaults; do not ask again in this session.`,
+    `HARD GATE: the plugin denies every write / edit / bash / task call in this project until the answers are captured`,
+    `and the config is saved — asking first is not optional. After the tool returns: confirm the saved preferences in`,
+    `one line, then continue the user's task in the chosen conversation language. If the user declines or the question`,
+    `tool is unavailable, skip silently and proceed with English defaults (the plugin waives the gate and this ask for`,
+    `the session); otherwise the ask re-surfaces on the next user turn until the config is saved.`,
   ].join("\n")
 }
 
@@ -128,11 +130,41 @@ export function parseQuestionAnswers(output: string): [string, string, string] |
   return [pairs[0]![1], pairs[1]![1], pairs[2]![1]]
 }
 
+// [2026-09-07]-[lang hard gate: prompt-only enforcement proved unreliable — models routinely skipped the turn-1 (and
+//  per-turn) ask directive and dove into the task. These pure helpers power a tool.execute.before gate in index.ts:
+//  write/edit/bash/task calls are denied with an ask-first error while the config is missing; reads stay open so the
+//  model can still explore; a completed-but-unsaved marker question call (user declined / unparsable) waives the gate
+//  for that session — impact: unconfigured projects get asked structurally, not on the model's goodwill]
+
+/** Tools blocked by the lang gate while the project is unconfigured (mutation + delegation; reads stay allowed) */
+export const LANG_GATE_TOOLS: ReadonlySet<string> = new Set(["bash", "edit", "write", "task"])
+
+export interface LangGateInput { tool: string; configured: boolean; askEnabled: boolean; waived: boolean }
+
+/** Pure gate decision: null = allow, string = the denial message shown to the model */
+export function langGateDecision(input: LangGateInput): string | null {
+  if (!input.askEnabled || input.configured || input.waived) return null
+  if (!LANG_GATE_TOOLS.has(input.tool)) return null
+  return [
+    `[opencode-switchman] BLOCKED: this project's language preference is not configured yet. Ask the user ONCE via the`,
+    `question tool with exactly the three "switchman-lang n/3" questions (see the ask directive in your system prompt)`,
+    `and wait for the answers — the plugin persists them and unblocks this call automatically, then retry. Reads stay`,
+    `allowed. If the user declines, the gate is waived for this session.`,
+  ].join(" ")
+}
+
+/** True when the question-tool args carry our marker questions (the lang ask relayed by the model) */
+export function hasLangMarkerQuestions(args: unknown): boolean {
+  try {
+    const questions = (args as any)?.questions
+    return Array.isArray(questions) && questions.some((q) => typeof q?.question === "string" && q.question.includes(LANG_ASK_MARKER))
+  } catch { return false }
+}
+
 /** tool.execute.after capture: marker-carrying question args + textual result → persisted config (fail-open null) */
 export function saveLangFromQuestion(args: unknown, toolOutput: unknown, projectDir: string, workspaceDirname: string): { rel: string; cfg: LangConfig } | null {
   try {
-    const questions = (args as any)?.questions
-    if (!Array.isArray(questions) || !questions.some((q) => typeof q?.question === "string" && q.question.includes(LANG_ASK_MARKER))) return null
+    if (!hasLangMarkerQuestions(args)) return null
     if (typeof toolOutput !== "string") return null
     const answers = parseQuestionAnswers(toolOutput)
     if (!answers) return null

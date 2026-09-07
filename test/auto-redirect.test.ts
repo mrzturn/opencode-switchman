@@ -11,6 +11,10 @@ const prevConfigDir = process.env.OPENCODE_CONFIG_DIR
 process.env.SWITCHMAN_STATE = mkdtempSync(join(tmpdir(), "switchman-autoredir-state-"))
 process.env.OPENCODE_CONFIG_DIR = mkdtempSync(join(tmpdir(), "switchman-autoredir-cfg-"))
 mkdirSync(process.env.SWITCHMAN_STATE, { recursive: true })
+// [2026-09-07]-[lang hard gate fixture: sandbox project counts as lang-configured]
+const projectDir = mkdtempSync(join(tmpdir(), "switchman-lang-fix-"))
+mkdirSync(join(projectDir, ".switchman"), { recursive: true })
+writeFileSync(join(projectDir, ".switchman", "settings.json"), JSON.stringify({ v: 1, configuredAt: "x", lang: { conversation: "en", comments: "en", docs: "en" } }))
 // capability data decoupled (same trick as routing.test.ts): empty capability.json pins the curated table; empty catalog takes the static-manifest floor
 writeFileSync(
   join(process.env.SWITCHMAN_STATE, "capability.json"),
@@ -48,7 +52,7 @@ import { loadManifest, stateDir } from "../src/state"
 
 
 type Hooks = Awaited<ReturnType<typeof SwitchmanPlugin>>
-const pluginInput = { client: { provider: { list: async () => [] } } } as any
+const pluginInput = { client: { provider: { list: async () => [] } }, directory: projectDir } as any
 
 async function makeHooks(rawOptions: unknown): Promise<Hooks> {
   const hooks = await SwitchmanPlugin(pluginInput, rawOptions as any)
@@ -176,7 +180,11 @@ describe("autoRedirect: dynamic hooks (denyUninjected redirect)", () => {
 describe("image relay: messages.transform hook (legacy)", () => {
   let hooks: Hooks
   test("plugin construction", async () => {
-    hooks = await makeHooks({ matrix: { mode: "legacy" } })
+    // [2026-09-07]-[workspace disabled for this group: the relay assertions target the global state-dir fallback media
+    //  path (stateDir()/media/<sid>); with the real pluginInput.directory (lang fixture above) the workspace-first
+    //  writeDir (index.ts: ws ? <ws>/media : stateDir()/media/<sid>) would create <projectDir>/.switchman/<day>/<sid>/
+    //  and persist media there instead — production behavior, wrong path under test here]-
+    hooks = await makeHooks({ matrix: { mode: "legacy" }, workspace: { enabled: false } })
   }, 20_000)
 
   test("no-vision main model + data URL image → persisted and replaced by a reading-guidance text part", async () => {

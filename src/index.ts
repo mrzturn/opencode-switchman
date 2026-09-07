@@ -60,7 +60,7 @@ import { LANE_ORDER, DEFAULT_LANG_CANDIDATES } from "./types"
 import type { SwitchmanOptions, Lane, LaneResult, Pool, ShellRegEntry, ModelKey } from "./types"
 import { WorkspaceTracker, DEFAULT_WORKSPACE_DIRNAME, type EnsuredWorkspace } from "./workspace"
 import { TmuxPaneManager, serverOriginOf } from "./tmux"
-import { loadLangConfig, renderLangLine, renderAskDirective, saveLangFromQuestion } from "./lang-config"
+import { loadLangConfig, renderLangLine, renderAskDirective, saveLangFromQuestion, langGateDecision, LANG_GATE_TOOLS, hasLangMarkerQuestions } from "./lang-config"
 import { detectMode, readConfigured, normalizeProviderListResponse } from "./activation"
 import type { MatrixModeOption } from "./activation"
 // [2026-08-29]-[event/parameter shape-extraction pure functions moved to helpers.ts: the entry must not export non-plugin functions, otherwise
@@ -193,6 +193,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   // [2026-09-05]-[project language preference: per-session first-ask latch (released on capture/session delete);
   //  the config itself is re-read from disk EVERY turn, so "configured = never ask again" holds across restarts]
   const langAsked = new Set<string>()
+  // [2026-09-07]-[lang hard gate: per-session waiver set — a completed marker question call that did NOT persist a
+  //  config (user declined / unparsable output) opens the gate for this session so a decline never deadlocks writes]
+  const langGateWaived = new Set<string>()
   // [2026-09-06]-[tmux pane mirroring: dispatched subagent sessions open as live `opencode attach` panes in the home
   //  tmux window — main pane left / subagent column right (max 3 visible, FIFO replacement on completion); inert
   //  outside tmux, fail-open everywhere. pendingTask = dispatch intents recorded per main session, consumed by the
@@ -1378,6 +1381,23 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             if (/-mx-/.test(agent) || agent === "title" || agent === "compaction" || agent === "summary") return
           }
         }
+        // [2026-09-05]-[project language preference: per-turn [LANG] iron-rule line (settings.json → AGENTS.md marker,
+        //  disk re-read every turn = mechanism-enforced stickiness); unconfigured → ask directive re-injected at the
+        //  start of every user turn (latch resets per user message, see the message.updated handler; the question-tool
+        //  answers are captured and persisted plugin-side, never by the model)]
+        //  [2026-09-07]-[pushed FIRST among the injected parts + backed by the tool gate: the directive sat at the tail
+        //  of a multi-k-token block and models skipped it in favor of starting the task — attention follows position]-
+        //  [2026-09-07]-[moved BELOW the shell/internal early-return: main-session-only injection (shell subagents and
+        //  title/compaction sessions must not receive the [LANG] line or the ask directive); for main sessions it is
+        //  still the first injected part of the turn]-
+        if (options.lang!.enabled) {
+          const loaded = loadLangConfig(pluginDirectory, options.workspace?.dirname || DEFAULT_WORKSPACE_DIRNAME)
+          if (loaded) output.system.push(renderLangLine(loaded.cfg, loaded.source))
+          else if (options.lang!.ask !== false && input.sessionID && !langAsked.has(input.sessionID) && !langGateWaived.has(input.sessionID)) {
+            langAsked.add(input.sessionID)
+            output.system.push(renderAskDirective(options.lang!.candidates ?? DEFAULT_LANG_CANDIDATES))
+          }
+        }
         // [2026-08-29]-[fail-open visibility: explicit warning when injection crashes — don't dispatch; do it yourself or tell the user]-
         if (configFailed) {
           output.system.push("[opencode-switchman] ⚠ plugin injection failed (shells/dispatch gates unavailable) — task delegation forbidden this turn; do it yourself or explain to the user, then proceed yourself")
@@ -1421,17 +1441,6 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           // [2026-09-05]-[todo nudge line: same gate as the watermark line — re-surfaces the unfinished todo list every turn]
           const todoLine = sessionTodoLine(input.sessionID)
           if (todoLine) output.system.push(todoLine)
-        }
-        // [2026-09-05]-[project language preference: per-turn [LANG] iron-rule line (settings.json → AGENTS.md marker,
-        //  disk re-read every turn = mechanism-enforced stickiness); unconfigured → first-turn-only ask directive
-        //  (latched per session; the question-tool answers are captured and persisted plugin-side, never by the model)]
-        if (options.lang!.enabled) {
-          const loaded = loadLangConfig(pluginDirectory, options.workspace?.dirname || DEFAULT_WORKSPACE_DIRNAME)
-          if (loaded) output.system.push(renderLangLine(loaded.cfg, loaded.source))
-          else if (options.lang!.ask !== false && input.sessionID && !langAsked.has(input.sessionID)) {
-            langAsked.add(input.sessionID)
-            output.system.push(renderAskDirective(options.lang!.candidates ?? DEFAULT_LANG_CANDIDATES))
-          }
         }
       } catch (exc) {
         appendStatusLog(`rules/banner fail-open: ${exc}`)
@@ -1515,6 +1524,32 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             denySkip.add(input.callID)
             appendStatusLog(`subagent context cap: resume of terminated session ses_${tid.slice(-6)} denied (permanent)`)
             throw new Error(subagentResumeDenyMessage(tid))
+          }
+        }
+      } catch (e) {
+        if (denySkip.has(input.callID)) throw e
+        // internal error on our side (never one of our own denies) → fail-open, do not break the tool path
+      }
+      // [2026-09-07]-[lang hard gate: while the project language preference is unconfigured (and ask is on, not waived),
+      //  deny write/edit/bash/task with an ask-first error — structural enforcement of the questionnaire; reads stay
+      //  open so the model can explore; capture/persist happens plugin-side in tool.execute.after. Disk check per gated
+      //  call only (cheap existsSync/read), so a config that appears by any means opens the gate immediately; fail-open
+      //  on internal errors. Excludes shell/internal sessions — dispatched executors and title/compaction are unaffected]
+      try {
+        const lgSid = (input as any).sessionID as string | undefined
+        const langAskOn = options.lang!.ask !== false
+        if (lgSid && LANG_GATE_TOOLS.has(input.tool) && !isShellOrInternalSession(lgSid)
+          && langAskOn && !langGateWaived.has(lgSid)) {
+          const reason = langGateDecision({
+            tool: input.tool,
+            configured: !!loadLangConfig(pluginDirectory, options.workspace?.dirname || DEFAULT_WORKSPACE_DIRNAME),
+            askEnabled: langAskOn,
+            waived: false,
+          })
+          if (reason) {
+            denySkip.add(input.callID)
+            appendStatusLog(`lang gate: tool '${input.tool}' denied in unconfigured project session ${lgSid}`)
+            throw new Error(reason)
           }
         }
       } catch (e) {
@@ -1689,12 +1724,17 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     "tool.execute.after": async (hookInput, hookOutput) => {
       // [2026-09-05]-[project language preference capture: our marker question answered → the plugin persists the config
       //  itself (the model never writes the settings file); unrelated tools fall through, fail-open everywhere]
+      //  [2026-09-07]-[completed marker question call that did NOT persist (user declined / unparsable output) waives
+      //  the hard gate + the ask directive for this session — a decline must never deadlock writes on a new project]
       if (hookInput.tool === "question") {
         try {
           const saved = saveLangFromQuestion(hookInput.args, (hookOutput as any)?.output, pluginDirectory, options.workspace?.dirname || DEFAULT_WORKSPACE_DIRNAME)
           if (saved) {
             langAsked.delete(hookInput.sessionID)
             appendStatusLog(`project language preference saved (${saved.rel}): conversation=${saved.cfg.conversation} comments=${saved.cfg.comments} docs=${saved.cfg.docs}`)
+          } else if (hasLangMarkerQuestions(hookInput.args)) {
+            langGateWaived.add(hookInput.sessionID)
+            appendStatusLog(`lang gate: marker question completed without a saved config — gate waived for session ${hookInput.sessionID}`)
           }
         } catch { /* fail-open */ }
       }
@@ -1812,6 +1852,11 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             if (info?.role === "user") {
               lastUserMsg.set(sid, info.id)
               turnReadUsage.delete(sid)
+              // [2026-09-07]-[lang ask was one-shot per session and the model routinely skipped the turn-1 directive
+              //  (buried under the injected protocol) — reset the latch on every new user message so the ask directive
+              //  re-surfaces each user turn until the config is persisted; impact: unconfigured projects get asked
+              //  every turn instead of silently never (decline still re-asks; escape hatch = lang.ask:false)]
+              langAsked.delete(sid)
             } else if (info?.role === "assistant") {
               // [2026-09-05]-[window cap: track the current model (AssistantMessage modelID+providerID, sdk types.gen.ts:108-109)
               //  as the registry key for the context-window threshold cap]
@@ -1871,6 +1916,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             sessionTodos.delete(sid)
             workspace.forget(sid)
             langAsked.delete(sid)
+            langGateWaived.delete(sid)
             // [2026-09-06]-[tmux pane mirroring: deleted child frees its pane; deleted main drops its dispatch intents]
             if (tmuxPanes.tracking(sid)) void tmuxPanes.noteChildEnd(sid)
             pendingTask.delete(sid)

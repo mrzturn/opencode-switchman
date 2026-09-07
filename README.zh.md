@@ -188,7 +188,7 @@ TUI 插件没有目录自动发现机制，需要在 **`tui.jsonc`/`tui.json`** 
 
 - **壳子代理上下文硬顶**：每条壳子代理会话现在都有硬性上下文上限（`context.subagentForceTokens`，默认 100k token）——越过上限后每次工具调用都会被拒绝并附收尾指令，子代理以一份详细的进度总结作为任务结果交回主会话，且该会话永远无法再经 `task_id` 续接（持久化注册表）；经 `context.subagentCap` 配置（详见 [子代理上下文硬顶](#子代理上下文硬顶)）。
 - **常开逐次调用读预算（核心算法更新）**：用确定性预算闸取代旧的「每工具一次性提醒」（那种优惠券式提醒会被模型用重试/试探理性烧掉）。自第 1 轮起，每次读取都按 `context.readBudgetTokens`（默认 1500，钳制 200..20000）计费——预估超限的读取就地追加 `limit` 有界放行，或以精确的有界重试参数拒绝；每轮 2× 自读上限（用户发言即重置）阻断连续读取链；无法预估的工具输出事后记账。水位只保留生命周期职责（软=建议、硬=收尾拒绝、压=自动交接）。交付/验证类 bash（git、测试/lint、构建）任何水位放行；无界翻史（不带 `-n` 的 `git log -p`）任何水位拦截并附收窄提示。
-- **项目级语言偏好**：每轮注入 `[LANG]` 铁律行（会话 / 注释与提交 / 文档三种语言），首次使用每会话询问一次并按项目落盘，`/switchman-lang` 可随时修改。
+- **项目级语言偏好**：每轮注入 `[LANG]` 铁律行（会话 / 注释与提交 / 文档三种语言），首次使用时询问并按项目落盘（未配置则每轮用户输入都会重新询问，且写入/编辑/bash/派发调用会被硬闸门拒绝并指回问卷；用户明确拒绝则本会话豁免），`/switchman-lang` 可随时修改。
 - **待办纪律**：规程 §0.7 + 每轮 `[TODO]` 状态行，主会话待办实时更新（含委派壳的结果）。
 - **/expert 专家咨询与随包 agent skills**：需求一键派给当前最强跨家族专家；开箱技能启动时同步进 opencode 全局技能目录（只增改不删、标记门控清理、fail-open）。
 - **review 档兜底**：跨家族只读壳全灭时保留最优 ro 壳、允许同族评审并标注 `DOWNGRADED`，不再出现空链。
@@ -229,7 +229,7 @@ v0.2.0 将 switchman 从固定多供应商调度器升级为实时、能力感�
 | `context.subagentForceTokens / subagentCap` | `100000 / true` | **子代理上下文硬顶**：壳子代理会话只有一道硬顶（实测＝最新 assistant 消息的 input + output + reasoning + cache.read，与会话水位同口径），钳制 20k..1M 并额外以壳模型上下文窗口的 90% 封顶。触顶即拒绝该会话所有后续工具调用并下达收尾指令，子代理的下一份纯文本答复（详细的工作进度总结）直接作为任务结果返回委派方，会话永久终止；此后带 `task_id` 恢复该会话的 `task` 调用一律永久拒绝（持久登记 `~/.config/opencode/opencode-switchman/subagent-cap.json`，重启不失效），不带 `task_id` 的全新派发不受影响；`subagentCap: false` 只阻止新的终止——已终止的会话不复活 |
 | `dispatch.autoRedirect` | `true` | 派发被拒时在途改写 `subagent_type` 到拒绝消息已点名的链首候选（单跳、同快照守卫复检）——首次派发直接落在最优可用壳上，不再烧「拒绝-重试」轮次；`false` 恢复拒绝-重试 |
 | `relay.image` | `true` | 无视觉主模型：用户附带图片自动落盘并替换为路径文本＋阅读指引（委托 vision 壳或交给 MCP 视觉工具）；本地路径 / http URL 原样透传；全程 fail-open |
-| `lang.enabled / ask / candidates` | `true / true / 出厂清单` | 项目级语言偏好：每轮 `[LANG]` 铁律行（会话 / 注释与提交 / 文档），首次使用每会话询问一次，落盘 `.switchman/settings.json`（AGENTS.md 标记为只读回退），`/switchman-lang` 重新询问 |
+| `lang.enabled / ask / candidates` | `true / true / 出厂清单` | 项目级语言偏好：每轮 `[LANG]` 铁律行（会话 / 注释与提交 / 文档），首次询问未完成配置则每轮用户输入重新询问，未配置期间写入/编辑/bash/派发被硬闸门拒绝（拒绝问卷则本会话豁免），落盘 `.switchman/settings.json`（AGENTS.md 标记为只读回退），`/switchman-lang` 重新询问 |
 | `builtinAgents.mode` | `deny` | 内置 explore/general 与壳路由抢任务且此前放行；`deny`＝拦截附 economy/main 改派建议，`allow`＝恢复放行 |
 | `injection.mode` | `chain` | 壳注入面：`chain`＝六档链精选∪favorites/可见集（task 工具描述每会话省约 6-10k token，链外模型点名走 denyUninjected 提示）；`all`＝可用全集（旧行为）。启动级，重启生效 |
 | `lanes` | 内置六档链 | 自定义各档壳链（覆盖内置偏好序）；键=economy/mechanical/main/hard/vision/review |

@@ -7,7 +7,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   normalizeLangValue, parseLangSettings, parseAgentsMdLangMarker, loadLangConfig, saveLangConfig,
-  renderAskDirective, renderLangLine, parseQuestionAnswers, saveLangFromQuestion, LANG_SETTINGS_FILE,
+  renderAskDirective, renderLangLine, parseQuestionAnswers, saveLangFromQuestion, langGateDecision,
+  hasLangMarkerQuestions, LANG_SETTINGS_FILE,
 } from "../src/lang-config"
 import { validateUserConfig, resolveEffectiveOptions } from "../src/config"
 import { DEFAULT_LANG_CANDIDATES } from "../src/types"
@@ -59,6 +60,8 @@ describe("lang-config: render functions", () => {
     expect(d).toContain("switchman-lang 3/3")
     for (const c of DEFAULT_LANG_CANDIDATES) expect(d).toContain(c)
     expect(d).toContain("never write the settings file yourself")
+    expect(d).toContain("the ask re-surfaces on the next user turn")
+    expect(d).toContain("HARD GATE")
   })
   test("[LANG] line carries three keys, iron rule and single-turn exception semantics", () => {
     const line = renderLangLine({ conversation: "zh-CN", comments: "zh-CN", docs: "en" }, "settings")
@@ -68,6 +71,34 @@ describe("lang-config: render functions", () => {
     expect(line).toContain("IRON RULE")
     expect(line).toContain("single-turn exceptions")
     expect(renderLangLine({ conversation: "en", comments: "en", docs: "en" }, "agents-md")).toContain("AGENTS.md marker")
+  })
+})
+
+// [2026-09-07]-[lang hard gate fixtures: deny write/edit/bash/task while unconfigured with an ask-first message,
+//  reads stay allowed, configured/ask-off/waived allow, marker-question arg detection for the waiver path]
+describe("lang-config: langGateDecision / hasLangMarkerQuestions", () => {
+  test("gate denies write/edit/bash/task while unconfigured, with an ask-first message", () => {
+    for (const tool of ["bash", "edit", "write", "task"]) {
+      const d = langGateDecision({ tool, configured: false, askEnabled: true, waived: false })
+      expect(d).toContain("BLOCKED")
+      expect(d).toContain("switchman-lang")
+    }
+  })
+  test("reads and misc tools stay allowed", () => {
+    for (const tool of ["read", "grep", "glob", "list", "question", "todowrite", "webfetch"]) {
+      expect(langGateDecision({ tool, configured: false, askEnabled: true, waived: false })).toBeNull()
+    }
+  })
+  test("configured / ask disabled / waived → allow", () => {
+    expect(langGateDecision({ tool: "bash", configured: true, askEnabled: true, waived: false })).toBeNull()
+    expect(langGateDecision({ tool: "edit", configured: false, askEnabled: false, waived: false })).toBeNull()
+    expect(langGateDecision({ tool: "task", configured: false, askEnabled: true, waived: true })).toBeNull()
+  })
+  test("hasLangMarkerQuestions: marker-carrying args true, everything else false", () => {
+    expect(hasLangMarkerQuestions({ questions: [{ question: "switchman-lang 1/3: lang?" }] })).toBe(true)
+    expect(hasLangMarkerQuestions({ questions: [{ question: "plain question?" }] })).toBe(false)
+    expect(hasLangMarkerQuestions({})).toBe(false)
+    expect(hasLangMarkerQuestions(null)).toBe(false)
   })
 })
 
