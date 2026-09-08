@@ -6,11 +6,15 @@ on:
 
 permissions:
   contents: read
+  # [2026-09-07]-[npm OIDC trusted publishing: no long-lived NPM_TOKEN; requires the package's Trusted Publisher on npmjs.com to match repo/workflow/environment]-[publish authenticates via short-lived OIDC tokens; provenance is generated automatically]
+  id-token: write
 
 jobs:
   publish:
     # [2026-09-06]-[only main-branch releases may publish to npm; dev-branch releases are ignored]-[prevents accidental npm publish from dev]
     if: github.event.release.target_commitish == 'main'
+    # [2026-09-07]-[route the publish through the release-publish environment: required-reviewer approval gate + branch/tag policy (environment needs a v* tag rule since release runs carry refs/tags/*)]-[each release waits for manual approval before npm publish]
+    environment: release-publish
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -19,7 +23,8 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          # [2026-09-07]-[trusted publishing needs npm >= 11.5.1; node 22's bundled npm is too old]-[node 24 ships a compatible npm]
+          node-version: 24
           registry-url: https://registry.npmjs.org/
 
       - name: Verify tag matches package version
@@ -43,7 +48,6 @@ jobs:
       - name: Build
         run: bun run build
 
+      # [2026-09-07]-[OIDC trusted publishing: npm exchanges the workflow's OIDC token for a short-lived publish token; no NODE_AUTH_TOKEN]-[long-lived NPM_TOKEN secret is no longer used by this workflow]
       - name: Publish
         run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
