@@ -150,6 +150,16 @@ Since TUI plugins have no directory auto-discovery, add the same package spec to
 }
 ```
 
+## Quick Start — five steps to a working matrix
+
+Installed? Five steps and you're done (full walkthrough with screenshots and exact scope/conditions: **[docs/quick-start.md](./docs/quick-start.md)** / 中文 **[docs/quick-start.zh.md](./docs/quick-start.zh.md)**):
+
+1. **Connect providers** — run `/connect` in the TUI: sign in to GitHub Copilot (OAuth), paste your DeepSeek API key; for the GLM Coding Plan add the `zhipuai-coding-plan` custom provider (baseURL + apiKey) to `opencode.json`. Any opencode provider works; these three additionally get quota-aware routing.
+2. **Pick the models that join orchestration** — TUI: `/models` then `ctrl+f` to favorite; desktop app: "Manage models" toggles. Favorites/visible models form the activation surface and sync bidirectionally (nothing picked → active session models fill in).
+3. **(Optional) `/modelRank`** — pin your own capability ranking (TUI dialog, or conversational `/modelRank-chat`); a manual rank overrides base capability scores everywhere.
+4. **(Optional) `/poolConfig`** — curate per-pool candidate lists for the six task pools (TUI dialog, or `/poolConfig-chat`); a pool's manual list replaces the system default candidates.
+5. **Restart, verify, watch** — restart opencode, confirm the `[ROUTES]`/`[LIMITS]` banner and the sidebar `switchman` panel, run `/switchman-doctor` if anything looks off, then just use opencode normally.
+
 ## Manual overrides: /poolConfig and /modelRank (new in v0.2.5)
 
 Two manual commands let your configuration beat system defaults. All state is persisted to editable files with mtime hot-reload and instant effect — edits trigger an immediate banner/sidebar refresh via a directory watcher. The conversational (AI-driven) variants are the same names with a `-chat` suffix:

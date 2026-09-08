@@ -150,6 +150,16 @@ TUI 插件没有目录自动发现机制，需要在 **`tui.jsonc`/`tui.json`** 
 }
 ```
 
+## 快速上手 — 五步跑通矩阵
+
+装好了？五步即可（完整图文版，含截图与确切生效范围：**[docs/quick-start.zh.md](./docs/quick-start.zh.md)** / English **[docs/quick-start.md](./docs/quick-start.md)**）：
+
+1. **连接 provider** —— 在 TUI 运行 `/connect`：GitHub Copilot 走 OAuth 登录、DeepSeek 粘贴 API key；GLM Coding Plan 在 `opencode.json` 里加 `zhipuai-coding-plan` 自定义 provider（baseURL + apiKey）。任意 opencode provider 均可；这三家额外获得配额感知路由。
+2. **挑选参与编排的模型** —— TUI：`/models` 后按 `ctrl+f` 收藏；桌面 app：「管理模型」开关。收藏/可见模型构成启用面且双向同步（都不选 → 回落活跃会话模型）。
+3. **（可选）`/modelRank`** —— 固定你自己的能力排名（TUI 弹窗，或会话式 `/modelRank-chat`）；手动排名在所有决策面压过基础能力分。
+4. **（可选）`/poolConfig`** —— 为六个任务池定制候选清单（TUI 弹窗，或 `/poolConfig-chat`）；某池的手动清单替换系统默认候选。
+5. **重启、验证、观察** —— 重启 opencode，确认 `[ROUTES]`/`[LIMITS]` 横幅与侧栏 `switchman` 面板，有不对劲就跑 `/switchman-doctor`，之后正常使用即可。
+
 ## 手动覆盖层：/poolConfig 与 /modelRank（v0.2.5 新增）
 
 两个手动配置命令让你用配置压过系统默认决策，全部状态落盘、可手改、保存即热加载（mtime 感知，即时生效，侧栏同步刷新）。会话式（AI 交互换算 CLI）版本为同名的 `-chat` 后缀命令：
