@@ -30,7 +30,13 @@ curl -fsSL https://raw.githubusercontent.com/mrzturn/opencode-switchman/main/scr
 or
 
 ```bash
-npx -y opencode-switchman@latest    # or: bunx opencode-switchman@latest
+npx -y opencode-switchman@latest
+```
+
+or
+
+```bash
+bunx opencode-switchman@latest
 ```
 
 Either path rewrites the `plugin` entry in your opencode config to the exact latest version and prunes stale caches. Manual npm install, from-source build, and the "why exact versions" note: [Installation details](./docs/reference.md#installation).
@@ -102,7 +108,7 @@ This plugin is open source and free to use, and it will stay that way. Keeping i
 
 If the plugin has genuinely helped you and your budget allows, buy me a coffee. Thank you — sincerely.
 
-| Alipay | WeChat Pay | WeChat Pay |
+| Alipay | WeChat Pay | Scan with WeChat to give him a like |
 |:---:|:---:|:---:|
 | ![Alipay](docs/pay/alipay.png) | ![WeChat Pay](docs/pay/wechat_pay.jpg) | ![WeChat Pay](docs/pay/wechat_pay_2.jpg) |
 

@@ -30,7 +30,13 @@ curl -fsSL https://raw.githubusercontent.com/mrzturn/opencode-switchman/main/scr
 或
 
 ```bash
-npx -y opencode-switchman@latest    # 或：bunx opencode-switchman@latest
+npx -y opencode-switchman@latest
+```
+
+或
+
+```bash
+bunx opencode-switchman@latest
 ```
 
 两种方式都会把 opencode 配置里的 `plugin` 条目改写为最新精确版本，并清理旧插件缓存。手动 npm 安装、源码构建、以及「为什么必须精确版本号」的说明：[安装细节](./docs/reference.zh.md#安装)。
@@ -102,7 +108,7 @@ npx -y opencode-switchman@latest    # 或：bunx opencode-switchman@latest
 
 如果这个插件真的帮到了你，手头也宽裕，可以请作者喝杯咖啡。在此万分感谢。
 
-| 支付宝 | 微信支付 | 微信支付 |
+| 支付宝 | 微信支付 | 微信扫码为他点赞 |
 |:---:|:---:|:---:|
 | ![支付宝](docs/pay/alipay.png) | ![微信支付](docs/pay/wechat_pay.jpg) | ![微信支付](docs/pay/wechat_pay_2.jpg) |
 
