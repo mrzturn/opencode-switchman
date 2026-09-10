@@ -8,32 +8,47 @@ import { loadSupersetShells, loadManifest, paths } from "./state"
 import {
   loadCapabilityRank, loadPoolConfig, poolAllowlist,
   writeCapabilityRank, clearCapabilityRank, writePoolConfig, resetPoolConfig,
+  type RankScoreOverride,
 } from "./user-overrides"
 import { LANE_ORDER, type Lane } from "./types"
 import { TIER_RANK } from "./model-ranks"
 
-interface ModelRow { key: string; modelId: string; tier: string; source: string; raw: number | null }
+interface ModelRow { key: string; modelId: string; tier: string; source: string; raw: number | null; manualIdx?: number }
 
+// [2026-09-10]-[manual-first tie-break: on exact (tier, raw) ties manual entries sort above base entries, ordered by
+//  their models-array slot — lets anchored moves win ties without touching base-vs-base ordering]
 function capabilityCompare(a: ModelRow, b: ModelRow): number {
   return TIER_RANK[a.tier as "S"] - TIER_RANK[b.tier as "S"] ||
     (b.raw ?? -Infinity) - (a.raw ?? -Infinity) ||
+    (a.manualIdx ?? Infinity) - (b.manualIdx ?? Infinity) ||
     a.key.localeCompare(b.key)
 }
 
 function toRow(modelId: string): ModelRow {
   const base = baseScoreDynamic(modelId)
-  return {
-    key: normalizeModelKey(modelId),
+  const key = normalizeModelKey(modelId)
+  const row: ModelRow = {
+    key,
     modelId,
     tier: base.tier,
     source: base.source,
     raw: base.rawScore ?? null,
   }
+  // manual array slot (undefined for non-manual rows): the merged view uses it as the exact-tie tie-break
+  if (base.source === "manual" && base.matchedAs) {
+    const idx = loadCapabilityRank()?.models.indexOf(base.matchedAs) ?? -1
+    if (idx >= 0) row.manualIdx = idx
+  }
+  return row
 }
 
-/** All available models (superset manifest first, falling back to the bundled manifest; deduped by modelId across provider pools); sorted by effective capability descending */
+/** All available models (full-superset candidates first — every conversable model of credentialed providers — falling back to
+ *  the injection-face shells, then the bundled manifest; deduped by modelId across provider pools); sorted by effective capability descending
+ *  [2026-09-10]-[candidate surface widened from the pruned injection face to the full superset: pools can now be configured
+ *  with models that are not (yet) favorites/visible — actual chain candidacy is still decided at runtime by pool selection ∩ activation] */
 export function allModelRows(): ModelRow[] {
-  const shells = loadSupersetShells()?.shells ?? loadManifest().shells
+  const sup = loadSupersetShells()
+  const shells = (sup?.candidates && sup.candidates.length > 0 ? sup.candidates : sup?.shells) ?? loadManifest().shells
   const seen = new Set<string>()
   const rows: ModelRow[] = []
   for (const s of shells) {
@@ -133,21 +148,20 @@ function cmdPool(args: string[]): number {
   throw new Error(`unknown subcommand pool ${sub} (list/add/remove/set/clear)`)
 }
 
-/** Merged view of the manual ranking + reference ordering of available models (indices are globally contiguous, referenced by rank set/add/remove) */
+/** [2026-09-10]-[merged interleaved view: manual entries no longer float as a block on top — every model (manual + base)
+ *  is sorted by effective capability (tier, raw; manual wins exact ties), so /modelRank moves and rank CLI indices act
+ *  on one global ordering. Manual keys missing from the model universe keep a row (dead-key tolerance)] */
 export function rankViewRows(): ModelRow[] {
   const rank = loadCapabilityRank()
-  const rankedKeys = new Set(rank?.models ?? [])
-  const ranked: ModelRow[] = (rank?.models ?? []).map((k) => ({ ...toRow(k), source: "manual" }))
-  const flat = allModelRows()
-  const seen = new Set<string>(rankedKeys)
-  const rest: ModelRow[] = []
-  for (const r of flat) {
-    if (seen.has(r.key)) continue
-    seen.add(r.key)
-    rest.push(r)
+  const rows = allModelRows()
+  const seen = new Set(rows.map((r) => r.key))
+  for (const k of rank?.models ?? []) {
+    if (seen.has(k)) continue
+    seen.add(k)
+    rows.push(toRow(k))
   }
-  rest.sort(capabilityCompare)
-  return [...ranked, ...rest]
+  rows.sort(capabilityCompare)
+  return rows
 }
 
 function cmdRank(args: string[]): number {
@@ -156,14 +170,13 @@ function cmdRank(args: string[]): number {
   if (!sub || sub === "list") {
     const view = rankViewRows()
     const manualCount = rank?.models.length ?? 0
-    console.log(`Model capability ranking (config file ${paths().capabilityRank}; the manual ranking takes priority over the base capability score; higher up = stronger)`)
-    console.log(`== Manual ranking (${manualCount}${manualCount > 0 ? "" : "; unconfigured = all use the base capability score"}) ==`)
+    console.log(`Model capability ranking (config file ${paths().capabilityRank}; one merged ordering — manual entries interleave with base-score models by effective score; higher up = stronger)`)
+    console.log(`== Merged ordering (${manualCount} manual${manualCount > 0 ? "" : "; none = all use the base capability score"}; CLI set/add order entries by the legacy ladder, TUI moves anchor scores between neighbors) ==`)
     view.forEach((row, i) => {
-      if (i < manualCount) console.log(` #${String(i + 1).padStart(2, "0")} ${row.modelId} (${row.tier}-tier·manual)`)
-    })
-    console.log("== Reference ordering of available models (base capability score) ==")
-    view.forEach((row, i) => {
-      if (i >= manualCount) console.log(` #${String(i + 1).padStart(2, "0")} ${row.modelId} (${row.tier}-tier)`)
+      const manualTag = row.source === "manual"
+        ? `·manual${row.raw !== null ? ` ${row.raw}` : ""}`
+        : ""
+      console.log(` #${String(i + 1).padStart(2, "0")} ${row.modelId} (${row.tier}-tier${manualTag})`)
     })
     return 0
   }
@@ -171,11 +184,28 @@ function cmdRank(args: string[]): number {
     if (rest.length === 0) throw new Error(`rank ${sub} requires an index or model name`)
     const refs = resolveRefs(rest, rankViewRows())
     const current = [...(rank?.models ?? [])]
+    // [2026-09-10]-[CLI writes must preserve anchored scores: add keeps every existing entry's score, remove/set drop
+    //  only the keys leaving the list (ladder fallback covers the rest)]
+    const keepScores = (keep: string[]): Record<string, RankScoreOverride> | undefined => {
+      const next: Record<string, RankScoreOverride> = {}
+      for (const [k, v] of Object.entries(rank?.scores ?? {})) if (keep.includes(k)) next[k] = v
+      return Object.keys(next).length > 0 ? next : undefined
+    }
     let next: string[]
-    if (sub === "add") next = [...current, ...refs.filter((k) => !current.includes(k))]
-    else if (sub === "remove") next = current.filter((k) => !refs.includes(k))
-    else next = refs
-    const file = writeCapabilityRank(next)
+    let nextScores: Record<string, RankScoreOverride> | undefined
+    if (sub === "add") {
+      next = [...current, ...refs.filter((k) => !current.includes(k))]
+      nextScores = keepScores([...current, ...refs])
+    }
+    else if (sub === "remove") {
+      next = current.filter((k) => !refs.includes(k))
+      nextScores = keepScores(next)
+    }
+    else {
+      next = refs
+      nextScores = keepScores(refs)
+    }
+    const file = writeCapabilityRank(next, nextScores)
     console.log(`Updated the manual capability ranking (${file.models.length} models, effective immediately, sidebar refreshes in sync)`)
     return cmdRank(["list"])
   }

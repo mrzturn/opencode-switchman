@@ -2,6 +2,17 @@
 
 This project follows [Semantic Versioning](https://semver.org/). Release notes describe user-visible behavior; implementation details remain in the technical specification and commit history.
 
+## [1.0.3] - 2026-09-10
+
+### Added
+
+- **`/modelRank` interleaved ranking — manual entries merge into the base-score ordering** — the manual ranking no longer floats as a block on top of everything. The dialog (and `rank list`) now show one merged ordering sorted by effective capability, and a move (ctrl/alt+up/down or the per-model actions) acts on that merged list: the moved model gets an anchored manual score strictly between its new neighbors (tier from the neighbor below, raw at the midpoint of the same-tier gap or a ±0.001 decimal step at tier boundaries and tie groups), so nudging a model one spot no longer requires manually ranking every model above it — unranked models materialize an anchored entry on their first move. Anchored scores persist in `capability-rank.json` as an optional `scores` side-map (`{ key: { tier, raw } }`); entries without a stored score keep the legacy ladder semantics (linear percentile by array position), so hand-written and pre-existing files stay valid, and CLI `rank set/add/remove` preserve surviving anchored scores. Dispatch surfaces are unchanged in shape — a manual hit still overrides the base capability score, now via the anchored (tier, raw) pair.
+- **Full-superset candidate lists for `/modelRank` & `/poolConfig`** — both config surfaces now list every conversable model of credentialed providers (the full superset) instead of the pruned injection face, so task pools can be configured with models that are not favorites/visible yet, and models already configured in a pool stay listed even when they drop out of the pruned face (force-keep). Actual chain candidacy is still decided at runtime by pool selection ∩ activation.
+
+### Fixed
+
+- **Runaway list scrolling in the `/modelRank` dialog** — moving the mouse up/down across the list could set off a wild, never-ending scroll: the plugin mirrored every hover-driven selection change back into the dialog's `current` prop, and the host dialog re-centered the scroll on `current` each time — the centering scroll slid fresh rows under the stationary cursor, each firing another hover → selection change → re-scroll: an unbounded self-sustaining loop. `current` is now driven only by explicit ctrl/alt+up/down hotkey moves, never mirrored from hover.
+
 ## [1.0.2] - 2026-09-07
 
 ### Added

@@ -450,19 +450,35 @@ function manualRankMatch(normKey: string): { rank: NonNullable<ReturnType<typeof
   return best >= 0 ? { rank, index: best } : null
 }
 
-/** Manual rank hit -> DynamicBaseResult (source="manual"; miss=null, falls through the original fallback chain) */
+/** Manual rank hit -> DynamicBaseResult (source="manual"; miss=null, falls through the original fallback chain).
+ *  [2026-09-10]-[anchored-score entries (capability-rank.json `scores` side-map) take precedence: tier + rawScore come
+ *  from the stored (tier, raw) pair so manual entries interleave with base-score models; entries without an anchored
+ *  score keep the legacy ladder (linear percentile by array position + its tier table)] */
 export function manualRankResult(modelId: string): DynamicBaseResult | null {
   const norm = normalizeModelKey(modelId)
   if (!norm) return null
   const hit = manualRankMatch(norm)
   if (!hit) return null
+  const entryKey = hit.rank.models[hit.index]!
+  const version = `manual-${hit.rank.updated_at || "unset"}`
+  const anchored = hit.rank.scores?.[entryKey]
+  if (anchored) {
+    return {
+      score: TIER_SCORE[anchored.tier],
+      rawScore: anchored.raw,
+      tier: anchored.tier,
+      source: "manual",
+      version,
+      matchedAs: entryKey,
+    }
+  }
   const tier = manualTierAt(hit.index, hit.rank.models.length)
   return {
     score: TIER_SCORE[tier],
     rawScore: manualLinearScore(hit.index, hit.rank.models.length),
     tier,
     source: "manual",
-    version: `manual-${hit.rank.updated_at || "unset"}`,
-    matchedAs: hit.rank.models[hit.index]!,
+    version,
+    matchedAs: entryKey,
   }
 }

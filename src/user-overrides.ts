@@ -15,8 +15,20 @@ import { paths, readJson, writeJsonAtomic, nowIso } from "./state"
 export interface CapabilityRankFile {
   version: 1
   updated_at: string
-  /** Normalized modelId, order = capability descending (#1 strongest) */
+  /** Normalized modelId, order = capability descending (#1 strongest); among manual entries it only breaks exact (tier, raw) ties */
   models: string[]
+  /** [2026-09-10]-[interleaved ranking: per-entry anchored manual scores (tier + raw). Entries WITHOUT a score keep the
+   *  legacy ladder semantics (linear percentile by array position), so hand-written/legacy files stay valid; a TUI move
+   *  materializes the moved model's score between its merged-view neighbors, letting manual entries interleave with
+   *  base-score models instead of floating as a block on top] */
+  scores?: Record<string, RankScoreOverride>
+}
+
+/** Manual anchored score: tier drives the dispatch score (TIER_SCORE) and cross-tier order; raw (0-100-ish, 3 decimals)
+ *  orders within the tier. null base raws are treated as 0 when anchoring. */
+export interface RankScoreOverride {
+  tier: "S" | "A" | "B" | "C"
+  raw: number
 }
 
 export interface PoolConfigFile {
@@ -75,11 +87,28 @@ export function validateCapabilityRank(v: unknown): CapabilityRankFile | null {
   if (!v || typeof v !== "object" || Array.isArray(v)) return null
   const raw = (v as { models?: unknown }).models
   if (!Array.isArray(raw)) return null
-  return {
+  const models = normalizeModelList(raw)
+  const file: CapabilityRankFile = {
     version: 1,
     updated_at: typeof (v as { updated_at?: unknown }).updated_at === "string" ? String((v as { updated_at?: unknown }).updated_at) : "",
-    models: normalizeModelList(raw),
+    models,
   }
+  // [2026-09-10]-[scores side-map: keep only entries whose key survived list normalization; drop malformed ones
+  //  (fail-open = that entry falls back to the ladder); raw rounded to 3 decimals (tie-breaking granularity)]
+  const rawScores = (v as { scores?: unknown }).scores
+  if (rawScores && typeof rawScores === "object" && !Array.isArray(rawScores)) {
+    const scores: Record<string, RankScoreOverride> = {}
+    for (const [k, val] of Object.entries(rawScores as Record<string, unknown>)) {
+      if (!models.includes(k) || !val || typeof val !== "object") continue
+      const tier = (val as { tier?: unknown }).tier
+      const num = (val as { raw?: unknown }).raw
+      if (tier !== "S" && tier !== "A" && tier !== "B" && tier !== "C") continue
+      if (typeof num !== "number" || !Number.isFinite(num)) continue
+      scores[k] = { tier, raw: Math.round(num * 1000) / 1000 }
+    }
+    if (Object.keys(scores).length > 0) file.scores = scores
+  }
+  return file
 }
 
 export function validatePoolConfig(v: unknown): PoolConfigFile | null {
@@ -134,31 +163,108 @@ export function overrideSummary(): { rankModels: number; poolLanes: number } {
 
 // ---- Pure manual-ranking move (shared semantics for the TUI /modelRank dialog: enter actions and ctrl+up/ctrl+down hotkeys) ----
 
-/** [2026-09-06]-[/modelRank hotkeys: extract the reorder rules shared by the RankActions dialog and the new list-level
- *  ctrl+up/ctrl+down hotkeys into one pure helper so both surfaces stay in lockstep]-
- *  [delta 0 = pin to top; ±1 = move one spot toward the front/back (unranked + down is a no-op, unranked + up/pin
- *  materializes an entry: pin → front, up → appended at the end, mirroring the dialog's "Add to ranking (at the end)").
- *  Boundary-hit ranked moves return null (no write). Pure: returns the next list + the model's new index, no I/O] */
-export function applyRankMove(models: readonly string[], key: string, delta: -1 | 0 | 1): { models: string[]; index: number } | null {
-  const cur = [...models]
-  const i = cur.indexOf(key)
-  if (delta === 0) {
-    if (i >= 0) cur.splice(i, 1)
-    cur.unshift(key)
-    return { models: cur, index: 0 }
+/** [2026-09-10]-[interleaved move semantics: a move acts on the MERGED effective view (manual + base-score models sorted
+ *  by capability), not just the manual sub-list. Moving model X one spot gives X an anchored manual score strictly
+ *  between its new neighbors: tier from the neighbor it must stay below/above, raw at the midpoint (same tier) or a
+ *  ±0.001 step (tier boundary / tie group) — decimals break ties, per the "nudge above the model below, below the model
+ *  above" contract. delta 0 = pin to top; ±1 = one spot up/down in the merged view (unranked models materialize an
+ *  anchored entry too — no more block-on-top ranking). Boundary hits (already #1 / already last) return null (no write).
+ *  Pure: no I/O; returns the next models array (merged-view order, tie-break) + next scores map + new manual index,
+ *  merged position and the anchored score] */
+export interface RankMoveRow {
+  key: string
+  tier: string
+  raw: number | null
+}
+
+export interface RankMoveResult {
+  models: string[]
+  scores: Record<string, RankScoreOverride>
+  /** new index of the key within models */
+  index: number
+  /** new position of the key within the merged view */
+  position: number
+  /** the anchored manual score written for the key */
+  score: RankScoreOverride
+}
+
+const SCORE_STEP = 0.001
+
+function tierRankOf(tier: string): number {
+  return tier === "S" ? 3 : tier === "A" ? 2 : tier === "B" ? 1 : 0
+}
+
+function rawOf(row: RankMoveRow): number {
+  // comparator treats null raw as -Infinity within the tier; 0 is a safe anchor base for arithmetic
+  return row.raw ?? 0
+}
+
+/** Anchored score strictly above `below` and strictly below `above` (null = unbounded top) in (tier, raw) key space */
+function scoreAbove(below: RankMoveRow, above: RankMoveRow | null): RankScoreOverride {
+  // `above` sorts weakly above `below` in the comparator, so its tier rank is >= — X always takes below's tier
+  const tier = below.tier as "S" | "A" | "B" | "C"
+  if (!above || tierRankOf(above.tier) > tierRankOf(below.tier)) {
+    // different tiers (or no upper bound): stay in the lower tier, step above the neighbor (tier dominance keeps us below `above`)
+    return { tier, raw: Math.round((rawOf(below) + SCORE_STEP) * 1000) / 1000 }
   }
-  if (i < 0) return delta === 1 ? { models: [...cur, key], index: cur.length } : null
-  const target = i + delta
-  if (target < 0 || target >= cur.length) return null
-  cur.splice(i, 1)
-  cur.splice(target, 0, key)
-  return { models: cur, index: target }
+  const lo = rawOf(below)
+  const hi = rawOf(above)
+  const mid = Math.round(((lo + hi) / 2) * 1000) / 1000
+  if (mid > lo && mid < hi) return { tier, raw: mid }
+  // gap too narrow (or degenerate): step past the lower neighbor; may overshoot exact-tie groups — inherent to score granularity
+  return { tier, raw: Math.round((lo + SCORE_STEP) * 1000) / 1000 }
+}
+
+/** Anchored score strictly below `above` and strictly above `below` (null = unbounded bottom) */
+function scoreBelow(above: RankMoveRow, below: RankMoveRow | null): RankScoreOverride {
+  if (!below) return { tier: above.tier as "S" | "A" | "B" | "C", raw: Math.round((rawOf(above) - SCORE_STEP) * 1000) / 1000 }
+  return scoreAbove(below, above)
+}
+
+export function applyRankMove(
+  models: readonly string[],
+  scores: Readonly<Record<string, RankScoreOverride>> | undefined,
+  rows: readonly RankMoveRow[],
+  key: string,
+  delta: -1 | 0 | 1,
+): RankMoveResult | null {
+  const i = rows.findIndex((r) => r.key === key)
+  if (i < 0) return null
+  let score: RankScoreOverride
+  let position: number
+  if (delta === 0) {
+    if (i === 0 && models[0] === key && scores?.[key]) {
+      // already pinned at #1 with an anchored score: keep the entry but still return it (idempotent write)
+      score = scores[key]!
+    } else {
+      score = scoreAbove(rows[0]!, null)
+    }
+    position = 0
+  } else if (delta === -1) {
+    if (i === 0) return null
+    score = scoreAbove(rows[i - 1]!, rows[i - 2] ?? null)
+    position = i - 1
+  } else {
+    const next = rows[i + 1]
+    if (!next) return null
+    score = scoreBelow(next, rows[i + 2] ?? null)
+    position = i + 1
+  }
+  // models array = merged-view order of manual keys (stable tie-break + display); keys absent from the view keep their tail slots
+  const manualKeys = new Set([...models, key])
+  const without = rows.filter((_, idx) => idx !== i).map((r) => r.key)
+  const reordered = [...without.slice(0, position), key, ...without.slice(position)].filter((k) => manualKeys.has(k))
+  const seen = new Set(reordered)
+  const nextModels = [...reordered, ...models.filter((k) => !seen.has(k))]
+  const nextScores: Record<string, RankScoreOverride> = { ...(scores ?? {}) }
+  nextScores[key] = score
+  return { models: nextModels, scores: nextScores, index: nextModels.indexOf(key), position, score }
 }
 
 // ---- Writes (shared by CLI/TUI; atomic replacement + cache invalidation; empty list = delete key/file back to default) ----
 
-export function writeCapabilityRank(models: string[]): CapabilityRankFile {
-  const file = validateCapabilityRank({ models })!
+export function writeCapabilityRank(models: string[], scores?: Record<string, RankScoreOverride>): CapabilityRankFile {
+  const file = validateCapabilityRank({ models, scores })!
   writeJsonAtomic(paths().capabilityRank, { ...file, updated_at: nowIso() })
   mtimeCache.delete(paths().capabilityRank)
   return file

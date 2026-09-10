@@ -608,9 +608,15 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       roAliases: true, degradedFamilyByProvider: true, markDegraded: true,
     })
     const fullShells = defs.length
+    const candidateEntries = defs.map(toManifestEntry)
+    // [2026-09-10]-[pool-config models join the force-keep set: task-pool selections must be injectable even when the
+    //  model missed favorites/visible set (runtime chains still narrow to pool selection ∩ activation, gate 5.5 unchanged)]-
+    const poolConfiguredIds = new Set<string>()
+    for (const ids of Object.values(loadPoolConfig())) for (const id of ids) poolConfiguredIds.add(id)
     defs = selectInjectableDefs(defs, {
       customLanes: (options.lanes as Record<string, readonly string[]> | null) ?? null,
       keepModels: options.injection!.mode === "all" ? new Set(supersetModels) : new Set(validConfiguredModels),
+      keepModelIds: poolConfiguredIds,
       preferredModels: new Set(validConfiguredModels.map((m) => m.slice(m.indexOf("/") + 1))),
       capabilityOf: (modelId) => baseScoreDynamic(modelId),
       billingBoostOf, unknownOf: unknownOfModel,
@@ -622,8 +628,12 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     try {
       writeJsonAtomic(paths().shellSuperset, {
         generated_at: new Date().toISOString(),
-        counts: { superset_models: supersetModels.length, shells: defs.length, full_shells: fullShells, degraded: degradedModelCount },
+        counts: { superset_models: supersetModels.length, shells: defs.length, full_shells: fullShells, candidate_shells: candidateEntries.length, degraded: degradedModelCount },
         mode: runMode,
+        // [2026-09-10]-[full-superset candidate surface for the /modelRank //poolConfig config lists: every conversable model
+        //  of credentialed providers (readers dedupe by modelId, same rule as before) so pools can be configured beyond the
+        //  pruned injection face; `shells` stays the injection face (dynamicManifest/banner/deny-candidate semantics unchanged)]-
+        candidates: candidateEntries,
         shells: defs.map(toManifestEntry),
       })
     } catch { /* fail-open */ }

@@ -76,7 +76,7 @@ Not every model a provider offers needs to join the matrix. You decide the **act
 
 By default, model capability comes from an automatic cascade (live third-party index → bundled snapshot → curated table). If you disagree — your workload, your ranking.
 
-**TUI**: run `/modelRank` — a dialog lists every model by effective capability; select a model to pin it to top, move it up/down, or remove it from the ranking.
+**TUI**: run `/modelRank` — a dialog listing every model by effective capability, manual entries interleaved with base-score models; move a model up/down to anchor it a manual score between its new neighbors (one-spot nudges), or pin it to top / remove it from the ranking.
 
 ![/modelRank — capability ranking with manual-rank vs base-score provenance](assets/tui-model-rank.png)
 

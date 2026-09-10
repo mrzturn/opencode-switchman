@@ -112,6 +112,54 @@ describe("capability-rank.json (manual capability ranking)", () => {
   })
 })
 
+// [2026-09-10]-[anchored scores side-map: interleaved manual ranking — per-entry (tier, raw) overrides beat the ladder,
+//  survive the write/read round-trip, cover prefix variants, and drop malformed entries fail-open]
+describe("capability-rank.json anchored scores (interleaved ranking)", () => {
+  test("write/read round-trip preserves the scores side-map", () => {
+    writeCapabilityRank(["glm-5.3", "gpt-5.6"], { "glm-5.3": { tier: "A", raw: 57.2549 } })
+    const loaded = loadCapabilityRank()
+    expect(loaded?.models).toEqual(["glm-5.3", "gpt-5.6"])
+    expect(loaded?.scores?.["glm-5.3"]).toEqual({ tier: "A", raw: 57.255 }) // 3-decimal rounding on validate
+  })
+
+  test("manualRankResult: an anchored entry overrides the ladder (tier + rawScore from the stored pair)", () => {
+    writeCapabilityRank(["glm-5.3", "gpt-5.6"], { "glm-5.3": { tier: "B", raw: 42 } })
+    const hit = baseScoreDynamic("glm-5.3")
+    expect(hit.source).toBe("manual")
+    expect(hit.tier).toBe("B")
+    expect(hit.rawScore).toBe(42)
+    expect(hit.score).toBe(0.7)
+    // ladder fallback for the entry without an anchored score (2-item list runner-up = A/0)
+    const ladder = baseScoreDynamic("gpt-5.6")
+    expect(ladder.tier).toBe("A")
+    expect(ladder.rawScore).toBe(0)
+  })
+
+  test("anchored entries cover prefix variants (exact entry key wins)", () => {
+    writeCapabilityRank(["gpt-5.6"], { "gpt-5.6": { tier: "B", raw: 44.5 } })
+    const hit = manualRankResult("gpt-5.6-luna")
+    expect(hit?.source).toBe("manual")
+    expect(hit?.matchedAs).toBe("gpt-5.6")
+    expect(hit?.tier).toBe("B")
+    expect(hit?.rawScore).toBe(44.5)
+  })
+
+  test("validation drops malformed score entries (bad tier, non-finite raw, unknown key) fail-open", () => {
+    const v = validateCapabilityRank({
+      models: ["a", "b"],
+      scores: { a: { tier: "X", raw: 50 }, b: { tier: "A", raw: Number.NaN }, ghost: { tier: "S", raw: 90 } },
+    })
+    expect(v?.scores).toBeUndefined()
+  })
+
+  test("after clear everything falls back again", () => {
+    writeCapabilityRank(["glm-5.3"], { "glm-5.3": { tier: "S", raw: 99 } })
+    clearCapabilityRank()
+    expect(loadCapabilityRank()).toBeNull()
+    expect(baseScoreDynamic("glm-5.3").source).toBe("exact")
+  })
+})
+
 // ---- Task-pool selection (lane keys: economy/mechanical/main/hard/vision/review; the same model may repeat across pools) ----
 
 describe("pool-config.json (task-pool selection)", () => {

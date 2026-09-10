@@ -177,7 +177,7 @@ Two manual commands let your configuration beat system defaults. All state is pe
 
 ### /modelRank — model capability ranking (manual dialog; conversational: /modelRank-chat)
 
-- **TUI (/modelRank)**: a dialog listing models by effective capability; select a model to pin it to top, move it up/down, or remove it from the ranking.
+- **TUI (/modelRank)**: a dialog listing models by effective capability — manual entries interleave with base-score models in one merged ordering; moving a model up/down anchors it a manual score between its new neighbors (one-spot nudges, no need to rank everything above), plus pin-to-top / remove; effective immediately.
 - **Non-TUI / in-session (/modelRank-chat)**: a conversational flow — it injects the current ranking and a reference ordering; reply "pin glm-5.3 to top" or "clear the ranking" and the agent translates that into `rank` CLI calls to persist.
 - **Semantics**: manual ranking **takes priority over the base capability score** (realtime index → bundled snapshot → curated table all yield) — matched models (including their prefix variants) get a rank-position score and S/A/B/C tier: rankings with ≤4 entries map positions to S/A/B/C in order; ≥5 entries use quantile buckets (top 20% S / next 20% A / next 20% B / rest C, same semantics as the OpenRouter rank source); within a tier, the linear rank position breaks ties. Unranked models are unaffected. The ranking feeds every decision surface: lane chains, effort affinity, capability-level gates, and deny hints.
 - **Config file**: `~/.config/opencode/opencode-switchman/capability-rank.json` (`models` array order = strongest first).
