@@ -144,4 +144,4 @@
 | `/switchman-doctor` | TUI & app | 本地、脱敏诊断 | 单次调用 | — |
 | `/switchman-update` | TUI & app | 升级插件到最新版 | 重启后生效 | opencode 插件配置 |
 
-> 延伸阅读（[README.zh.md](../README.zh.md)）：手动覆盖层 · 配置项（opencode-switchman.jsonc） · 工作原理
+> 延伸阅读（[reference.zh.md](./reference.zh.md)）：手动覆盖层 · 配置项（opencode-switchman.jsonc） · 工作原理
