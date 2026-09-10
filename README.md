@@ -4,7 +4,9 @@
 
 > Context on a meter. Tasks dispatch themselves.
 
-[![opencode-switchman capability overview](docs/assets/preview-en.png)](https://mrzturn.github.io/opencode-switchman/)
+![opencode-switchman — the context water level drives the switchman and throws the route](docs/assets/hero.svg)
+
+> Interactive demo deck: [opencode-switchman in action](https://mrzturn.github.io/opencode-switchman/)
 
 An orchestration plugin for [OpenCode](https://opencode.ai). It does two things, and does them well:
 

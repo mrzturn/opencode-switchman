@@ -4,7 +4,9 @@
 
 > 上下文有水位，任务自己派。
 
-[![opencode-switchman 能力介绍演示](docs/assets/preview.png)](https://mrzturn.github.io/opencode-switchman/index.zh.html)
+![opencode-switchman —— 上下文水位驱动扳道工自动扳道](docs/assets/hero.svg)
+
+> 交互式演示：[opencode-switchman 宣传页](https://mrzturn.github.io/opencode-switchman/index.zh.html)
 
 一个 [OpenCode](https://opencode.ai) 编排插件，核心就两件事：
 
