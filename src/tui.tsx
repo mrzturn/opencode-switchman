@@ -524,6 +524,34 @@ function openModelRankDialog(api: TuiPluginApi): void {
   api.ui.dialog.replace(() => <RankPickerDialog api={api} />)
 }
 
+// ---- [2026-09-10]-[interleaved move plumbing: one shared path for the list hotkeys and the per-model actions dialog —
+//  loads the rank file, applies applyRankMove against the merged view, persists models+scores, toasts the anchored result]----
+
+function rankMoveApply(api: TuiPluginApi, key: string, delta: -1 | 0 | 1): boolean {
+  const rank = loadCapabilityRank()
+  const view = rankViewRows()
+  const name = view.find((r) => r.key === key)?.modelId ?? key
+  const res = applyRankMove(rank?.models ?? [], rank?.scores, view, key, delta)
+  if (!res) {
+    api.ui.toast({
+      variant: "info",
+      message: `${name} is already at the ${delta === 1 ? "bottom" : "top"} of the merged capability list`,
+    })
+    return false
+  }
+  try {
+    writeCapabilityRank(res.models, res.scores)
+  } catch (exc) {
+    api.ui.toast({ variant: "error", message: `write failed: ${exc instanceof Error ? exc.message : exc}` })
+    return false
+  }
+  api.ui.toast({
+    variant: "success",
+    message: `${delta === 0 ? "Pinned" : "Moved"} ${name} to #${res.position + 1} (manual score ${res.score.tier}/${res.score.raw}, anchored between its neighbors; effective immediately, sidebar refreshes)`,
+  })
+  return true
+}
+
 // ---- [2026-09-06]-[/modelRank list hotkeys: ctrl+up / ctrl+down (alt+up / alt+down mirrored for terminals that swallow
 //  ctrl+arrows) move the highlighted model within the manual ranking without opening the per-model action dialog.
 //  The host DialogSelect has no per-dialog key API exposed to plugins, so the binding lives in the global keymap layer
@@ -555,36 +583,16 @@ function RankPickerDialog(props: { api: TuiPluginApi }) {
     move: (delta) => {
       const key = highlighted()
       if (!key) return
-      const row = rows().find((r) => r.key === key)
-      const name = row?.modelId ?? key
-      const cur = [...(loadCapabilityRank()?.models ?? [])]
-      const i = cur.indexOf(key)
-      const res = applyRankMove(cur, key, delta)
-      const skip = (message: string) => props.api.ui.toast({ variant: "info", message })
-      if (!res) {
-        // Boundary no-ops must stay audible, otherwise mashing the key feels broken
-        if (i < 0) skip(`${name} is not in the manual ranking (ctrl+up adds it at the end; enter = per-model actions)`)
-        else skip(`${name} is already at the ${delta === -1 ? "top" : "bottom"} of the manual ranking`)
-        return
+      // [2026-09-10]-[interleaved semantics: the move acts on the merged view (manual + base models); any model can
+      //  move up/down — unranked ones materialize an anchored manual score between their neighbors]
+      if (rankMoveApply(props.api, key, delta)) {
+        // Cursor follows the moved model: `current` is the only cursor control the plugin DialogSelect exposes
+        // (side effect: the ● marker stays on the last-moved model until the dialog closes); set here ONLY —
+        // see the hover feedback loop note above for why onMove must not feed into `current`
+        setHighlight(key)
+        setCursor(key)
+        setRev((v) => v + 1)
       }
-      try {
-        writeCapabilityRank(res.models)
-      } catch (exc) {
-        props.api.ui.toast({ variant: "error", message: `write failed: ${exc instanceof Error ? exc.message : exc}` })
-        return
-      }
-      props.api.ui.toast({
-        variant: "success",
-        message: i < 0
-          ? `Added ${name} to the ranking (manual rank #${res.index + 1}, effective immediately, sidebar refreshes)`
-          : `Moved ${name} to rank #${res.index + 1} (effective immediately, sidebar refreshes)`,
-      })
-      // Cursor follows the moved model: `current` is the only cursor control the plugin DialogSelect exposes
-      // (side effect: the ● marker stays on the last-moved model until the dialog closes); set here ONLY —
-      // see the hover feedback loop note above for why onMove must not feed into `current`
-      setHighlight(key)
-      setCursor(key)
-      setRev((v) => v + 1)
     },
   }
   rankHotkeyClaim = claim
@@ -593,12 +601,12 @@ function RankPickerDialog(props: { api: TuiPluginApi }) {
   })
   return (
     <props.api.ui.DialogSelect
-      title="Model capability ranking (#1 strongest; ctrl+up/ctrl+down move the highlighted model; enter = per-model actions)"
+      title="Model capability ranking — merged order (#1 strongest; manual entries interleave with base-score models; ctrl+up/ctrl+down move one spot; enter = per-model actions)"
       placeholder="Search · alt+up/alt+down mirror ctrl+up/ctrl+down (also work)"
       options={rows().map((r, i) => ({
         title: `#${String(i + 1).padStart(2, "0")} ${r.modelId}`,
         value: r.key,
-        description: `${r.tier}-tier · ${r.source === "manual" ? "manual rank" : "base capability score"}`,
+        description: `${r.tier}-tier · ${r.source === "manual" ? `manual${r.raw !== null ? ` ${r.raw}` : ""}` : "base capability score"}`,
         onSelect: () => props.api.ui.dialog.replace(() => <RankActionsDialog api={props.api} model={r.modelId} modelKey={r.key} />),
       }))}
       current={cursor() ?? undefined}
@@ -609,43 +617,44 @@ function RankPickerDialog(props: { api: TuiPluginApi }) {
 }
 
 function RankActionsDialog(props: { api: TuiPluginApi; model: string; modelKey: string }) {
-  const rank = () => [...(loadCapabilityRank()?.models ?? [])]
-  const at = () => rank().indexOf(props.modelKey)
-  // [2026-09-06]-[reorder rules now come from the shared applyRankMove helper (same semantics as the list hotkeys);
-  //  only the boundary feedback is dialog-specific]-
-  const apply = (next: string[], message: string) => {
-    writeCapabilityRank(next)
-    props.api.ui.toast({ variant: "success", message: `${message} (effective immediately, sidebar refreshes)` })
-    props.api.ui.dialog.replace(() => <RankPickerDialog api={props.api} />)
-  }
+  // [2026-09-10]-[interleaved semantics: up/down/pin act on the merged view via the shared rankMoveApply path (any
+  //  model can move — unranked ones materialize an anchored manual score between their neighbors); the obsolete
+  //  "add at the end" action is gone; remove strips both the membership and the anchored score]
+  const rank = () => loadCapabilityRank()
+  const ranked = () => (rank()?.models ?? []).includes(props.modelKey)
+  const anchored = () => rank()?.scores?.[props.modelKey]
   const move = (delta: -1 | 0 | 1) => {
-    const res = applyRankMove(rank(), props.modelKey, delta)
-    if (!res) {
-      props.api.ui.toast({ variant: "info", message: `${props.model} is already at the ${delta === 1 ? "bottom" : "top"} of the manual ranking` })
+    if (rankMoveApply(props.api, props.modelKey, delta)) {
+      props.api.ui.dialog.replace(() => <RankPickerDialog api={props.api} />)
+    }
+  }
+  const remove = () => {
+    const cur = rank()
+    const nextModels = (cur?.models ?? []).filter((k) => k !== props.modelKey)
+    const nextScores = { ...(cur?.scores ?? {}) }
+    delete nextScores[props.modelKey]
+    try {
+      writeCapabilityRank(nextModels, Object.keys(nextScores).length > 0 ? nextScores : undefined)
+    } catch (exc) {
+      props.api.ui.toast({ variant: "error", message: `write failed: ${exc instanceof Error ? exc.message : exc}` })
       return
     }
-    apply(res.models, delta === 0 ? `Pinned ${props.model} to top` : `Moved ${props.model} to rank #${res.index + 1}`)
+    props.api.ui.toast({ variant: "success", message: `Removed ${props.model} from the manual ranking (falls back to the base capability score, effective immediately, sidebar refreshes)` })
+    props.api.ui.dialog.replace(() => <RankPickerDialog api={props.api} />)
   }
-  const ranked = () => at() >= 0
-  const options = createMemo(() => {
-    const list = [
-      { title: "▲ Pin to top (set as strongest)", value: "top", onSelect: () => move(0) },
-      ...(ranked() && at() > 0
-        ? [{ title: "↑ Move up one", value: "up", onSelect: () => move(-1) }]
-        : []),
-      ...(ranked() && at() < rank().length - 1
-        ? [{ title: "↓ Move down one", value: "down", onSelect: () => move(1) }]
-        : []),
-      ...(ranked()
-        ? [{ title: "✕ Remove from ranking (fall back to base score)", value: "out", onSelect: () => apply(rank().filter((k) => k !== props.modelKey), `Removed ${props.model}`) }]
-        : [{ title: "＋ Add to ranking (at the end)", value: "in", onSelect: () => move(1) }]),
-      { title: "← Back to ranking list", value: "__back", onSelect: () => props.api.ui.dialog.replace(() => <RankPickerDialog api={props.api} />) },
-    ]
-    return list
-  })
+  const options = createMemo(() => [
+    { title: "▲ Pin to top (above every model)", value: "top", onSelect: () => move(0) },
+    { title: "↑ Move up one (swaps with the model above; anchors a manual score between neighbors)", value: "up", onSelect: () => move(-1) },
+    { title: "↓ Move down one (swaps with the model below)", value: "down", onSelect: () => move(1) },
+    ...(ranked()
+      ? [{ title: "✕ Remove from ranking (fall back to the base score)", value: "out", onSelect: remove }]
+      : []),
+    { title: "← Back to ranking list", value: "__back", onSelect: () => props.api.ui.dialog.replace(() => <RankPickerDialog api={props.api} />) },
+  ])
+  const a = anchored()
   return (
     <props.api.ui.DialogSelect
-      title={`${props.model} (currently ${ranked() ? `manual rank #${at() + 1}` : "not manually ranked"})`}
+      title={`${props.model} (${ranked() ? `manually ranked${a ? `, anchored score ${a.tier}/${a.raw}` : " (legacy ladder order)"}` : "not manually ranked"})`}
       options={options()}
       flat
     />
