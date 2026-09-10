@@ -35,7 +35,7 @@ Either path rewrites the `plugin` entry in your opencode config to the exact lat
 
 Prefer hands-off? Let your AI do the installation — paste this prompt into the AI you're using:
 
-<details>
+<details open>
 <summary><strong>AI-assisted install prompt</strong></summary>
 
 ```text
@@ -60,7 +60,7 @@ Do not declare success until all three steps pass; report what you changed and s
 
 ## Quick start
 
-Five steps. Full walkthrough with screenshots: **[docs/quick-start.md](./docs/quick-start.md)** / 中文.
+Five steps. Full walkthrough with screenshots: **[docs/quick-start.md](./docs/quick-start.md)** / [中文](./docs/quick-start.zh.md).
 
 1. **Connect providers** — `/connect` in the TUI: Copilot OAuth, DeepSeek API key; GLM Coding Plan goes into `opencode.json` as the `zhipuai-coding-plan` custom provider.
 2. **Pick the models that join orchestration** — `/models` then `ctrl+f` to favorite (desktop app: "Manage models" toggles).

@@ -35,7 +35,7 @@ npx -y opencode-switchman@latest    # 或：bunx opencode-switchman@latest
 
 嫌麻烦？让 AI 替你装——把下面这段话复制给你正在用的 AI：
 
-<details>
+<details open>
 <summary><strong>AI 代安装提示词</strong></summary>
 
 ```text
@@ -60,7 +60,7 @@ npx -y opencode-switchman@latest    # 或：bunx opencode-switchman@latest
 
 ## 快速上手
 
-五步跑通。完整图文版：**[docs/quick-start.zh.md](./docs/quick-start.zh.md)** / English。
+五步跑通。完整图文版：**[docs/quick-start.zh.md](./docs/quick-start.zh.md)** / [English](./docs/quick-start.md)。
 
 1. **连接 provider** —— TUI 里运行 `/connect`：Copilot 走 OAuth、DeepSeek 粘 API key；GLM Coding Plan 在 `opencode.json` 里加 `zhipuai-coding-plan` 自定义 provider。
 2. **挑选参与编排的模型** —— `/models` 后按 `ctrl+f` 收藏（桌面端：「管理模型」开关）。
