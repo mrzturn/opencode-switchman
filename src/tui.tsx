@@ -543,6 +543,14 @@ function RankPickerDialog(props: { api: TuiPluginApi }) {
   // Highlight tracking: onMove covers filter/navigate; before the first onMove the host selects row 0
   const [highlight, setHighlight] = createSignal<string | null>(null)
   const highlighted = () => highlight() ?? rows()[0]?.key ?? null
+  // [2026-09-10]-[hover feedback loop fix: mirroring onMove back into `current` re-fired the host's
+  //  current-effects on every mouse-over — the setTimeout moveTo(index, center) call re-scrolled the list
+  //  to center the hovered row, sliding fresh rows under the stationary cursor, each firing another
+  //  onMouseOver → onMove → current change → re-scroll: an unbounded self-sustaining scroll loop. `current`
+  //  is now driven only by explicit programmatic jumps (the ctrl/alt+up/down hotkey moves below), never
+  //  mirrored from onMove]-[fixes the runaway /modelRank list scrolling after mouse movement; the ● marker
+  //  now marks the last hotkey-moved model only]
+  const [cursor, setCursor] = createSignal<string | null>(null)
   const claim: RankHotkeyClaim = {
     move: (delta) => {
       const key = highlighted()
@@ -572,8 +580,10 @@ function RankPickerDialog(props: { api: TuiPluginApi }) {
           : `Moved ${name} to rank #${res.index + 1} (effective immediately, sidebar refreshes)`,
       })
       // Cursor follows the moved model: `current` is the only cursor control the plugin DialogSelect exposes
-      // (side effect: the ● marker stays on the last-moved model until the dialog closes)
+      // (side effect: the ● marker stays on the last-moved model until the dialog closes); set here ONLY —
+      // see the hover feedback loop note above for why onMove must not feed into `current`
       setHighlight(key)
+      setCursor(key)
       setRev((v) => v + 1)
     },
   }
@@ -591,7 +601,7 @@ function RankPickerDialog(props: { api: TuiPluginApi }) {
         description: `${r.tier}-tier · ${r.source === "manual" ? "manual rank" : "base capability score"}`,
         onSelect: () => props.api.ui.dialog.replace(() => <RankActionsDialog api={props.api} model={r.modelId} modelKey={r.key} />),
       }))}
-      current={highlighted() ?? undefined}
+      current={cursor() ?? undefined}
       onMove={(opt) => setHighlight(String(opt.value))}
       flat
     />
