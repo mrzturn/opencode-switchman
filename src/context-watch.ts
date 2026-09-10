@@ -51,6 +51,37 @@ export function watermarkLevel(tokens: number, t: ContextThresholds): WatermarkL
   return "ok"
 }
 
+// [2026-09-11]-[/ctx-pause //ctx-resume: per-session suspension of context control — the commands inject a fixed
+// marker line into the user message and the plugin captures it at the event layer (mechanism, not model goodwill);
+// markers live here as the single source shared by the command templates and the capture hook]
+export const CTX_PAUSE_MARKER = "[CTX-CONTROL-PAUSE]"
+export const CTX_RESUME_MARKER = "[CTX-CONTROL-RESUME]"
+
+export type CtxControlAction = "pause" | "resume"
+
+/** Scan a user message's text parts for the pause/resume marker; first match wins (null = unrelated message) */
+export function ctxControlMarkerOf(info: unknown): CtxControlAction | null {
+  const parts = (info as { parts?: Array<{ type?: unknown; text?: unknown }> } | null | undefined)?.parts
+  if (!Array.isArray(parts)) return null
+  for (const p of parts) {
+    if (p?.type === "text" && typeof p.text === "string") {
+      if (p.text.includes(CTX_PAUSE_MARKER)) return "pause"
+      if (p.text.includes(CTX_RESUME_MARKER)) return "resume"
+    }
+  }
+  return null
+}
+
+/** [2026-09-11]-[while paused, the ONLY override of a session's ctx-control pause: a pure warning when the measured
+ *  context reaches ≥95% of the model's real context window (overflow hard-errors the session regardless of pause;
+ *  text only — the pause promise of no denies is kept). Unknown window → empty (fail-open, numbers only) */
+export function pausedWindowWarning(wmTokens: number, windowTokens?: number): string {
+  if (typeof windowTokens !== "number" || !Number.isFinite(windowTokens) || windowTokens <= 0) return ""
+  return wmTokens >= windowTokens * 0.95
+    ? `—[WARNING] context window ≥95% full (~${fmtK(wmTokens)}/${fmtK(windowTokens)}): overflow hard-errors this session regardless of pause; compact or run /handover now`
+    : ""
+}
+
 /** Verification/delivery commands pass through (tiny output, no context injection): delivery git (state-changing +
  *  bounded-output reads, including add/commit/push wrap-up), test/lint/typecheck, build/pack — wrap-up verification
  *  and delivery still work at every watermark. Archaeology git is excluded here and handled as scanning below. */

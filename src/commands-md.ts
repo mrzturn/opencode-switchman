@@ -9,6 +9,7 @@
 // (review head preferred; hard head's -ro face as fallback), dispatch goes through the standard six gates + auto-redirect]
 import { paths } from "./state"
 import { LANG_SETTINGS_FILE } from "./lang-config"
+import { CTX_PAUSE_MARKER, CTX_RESUME_MARKER } from "./context-watch"
 
 const q = (p: string): string => JSON.stringify(p)
 
@@ -111,6 +112,37 @@ export function expertCommandMd(): string {
     "4. Delegation prompt body (self-contained): verbatim user requirement; known facts/conclusions and relevant file paths from this session; project-level constraints; output format = expert answer or design — conclusion first, then rationale, alternatives, risks, acceptance criteria, file:line evidence. Read-only consultation: no code changes.",
     "5. Relay the expert's full conclusions to the user and end with one line naming the shell and lane used, e.g. `expert: <shell> (review)` / `<shell> (hard·ro, DOWNGRADED)`.",
     "6. If a dispatch is denied, redirect to the first candidate named in the deny postscript (the plugin auto-redirects by default). If both pools are unavailable, follow the terminal failure protocol: explain the reason and offer 2 options.",
+    "",
+  ].join("\n")
+}
+
+// [2026-09-11]-[/ctx-pause //ctx-resume: per-session context-control suspension. The marker line below is the whole
+// mechanism: the plugin captures it from the user message at the event layer (context-watch.ctxControlMarkerOf) and
+// flips an in-memory set — session-scoped, restart = auto-resume, session.deleted = cleaned. Measurement keeps
+// running while paused (resume must not lose pace history); shell subagent caps are NOT suspended. The model is told
+// to just confirm briefly — enforcement never depends on its goodwill]
+export function ctxPauseCommandMd(): string {
+  return [
+    "---",
+    "description: pause this session's context watermark control (read gates + self-read budget + auto-handover) until /ctx-resume or an opencode restart; this session only, measurement continues",
+    "---",
+    "",
+    `${CTX_PAUSE_MARKER} The user paused opencode-switchman's context control for THIS session — the plugin captures this marker itself; no tool call is needed.`,
+    "",
+    "Confirm in one short sentence: context read gates, self-read budget and auto-handover are suspended for this session (the [WATERMARK:SESSION] line keeps reporting measured numbers); control resumes via /ctx-resume or an opencode restart. Note that overflowing the model's context window still hard-errors the session regardless of pause. Then continue the task at hand without further ceremony.",
+    "",
+  ].join("\n")
+}
+
+export function ctxResumeCommandMd(): string {
+  return [
+    "---",
+    "description: resume this session's context watermark control (undo /ctx-pause); read gates, self-read budget and auto-handover go live again from the next turn",
+    "---",
+    "",
+    `${CTX_RESUME_MARKER} The user resumed opencode-switchman's context control for THIS session — the plugin captures this marker itself; no tool call is needed.`,
+    "",
+    "Confirm resumption in one short sentence and read the next [WATERMARK:SESSION] banner line: if it reports a soft/hard/force tier, follow its directive immediately (delegate reads, wrap up, or stand by for auto-handover). Then continue the task at hand.",
     "",
   ].join("\n")
 }
