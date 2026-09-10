@@ -144,4 +144,4 @@ That's it — from here just use opencode normally. Your primary model is now a 
 | `/switchman-doctor` | TUI & app | Local, credential-free diagnostics | Per call | — |
 | `/switchman-update` | TUI & app | Upgrade the plugin to the latest release | After restart | opencode plugin config |
 
-> Deeper dives: [Manual overrides](../README.md#manual-overrides-poolconfig-and-modelrank-new-in-v025) · [Options (`opencode-switchman.jsonc`)](../README.md#options-opencode-switchmanjsonc) · [How it works](../README.md#how-it-works)
+> Deeper dives: [Manual overrides](./reference.md#manual-overrides) · [Options (`opencode-switchman.jsonc`)](./reference.md#configuration-opencode-switchmanjsonc) · [How it works](./reference.md#how-it-works)
