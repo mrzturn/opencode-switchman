@@ -7,6 +7,7 @@ import { LANE_ORDER } from "./types"
 import type { ShellDefinition } from "./catalog"
 import type { CapabilityScore, LaneShellAttr } from "./lane-policy"
 import { laneBaseChain } from "./lane-policy"
+import { normalizeModelKey } from "./capability"
 import { loadCachedThinkingShapes, deriveThinkingParam } from "./copilot-thinking"
 
 // [2026-09-01]-[aligned with core packages/opencode/src/plugin/github-copilot/models.ts: for the github-copilot pool,
@@ -115,6 +116,11 @@ export interface InjectableSelectOpts {
    *  competition; the sole meaning of slimming becomes "uninjected = really unavailable", eliminating favorites false
    *  positives and missing vision shells] */
   keepModels?: ReadonlySet<string>
+  /** [2026-09-10]-[pool-configured models force-kept (normalized modelId keys, same key space as pool-config.json values):
+   *  task-pool selections may reference models absent from favorites/visible set; without force-keep their shells never
+   *  inject and a configured pool member is denied at gate 1 before the activation intersection can speak. Runtime chain
+   *  candidacy is still gated by activation (favorites/visible set) ∩ pool selection — force-keep only makes dispatch possible] */
+  keepModelIds?: ReadonlySet<string>
   /** [2026-09-02]-[favorites first (by modelId): favorite models sort first within the same tier in the chain algorithm, passed through to computeLaneChain] */
   preferredModels?: ReadonlySet<string>
   capabilityOf: (modelId: string) => number | CapabilityScore
@@ -169,6 +175,12 @@ export function selectInjectableDefs(
   if (opts.keepModels) {
     for (const d of defs) {
       if (opts.keepModels.has(`${d.provider}/${d.modelId}`)) keep.add(d.name)
+    }
+  }
+  // [2026-09-10]-[pool-config force-keep: normalized modelId match (pool-config.json stores bare normalized modelIds)]
+  if (opts.keepModelIds) {
+    for (const d of defs) {
+      if (opts.keepModelIds.has(normalizeModelKey(d.modelId))) keep.add(d.name)
     }
   }
   if (keep.size === 0) return [...defs]

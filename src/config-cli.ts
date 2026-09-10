@@ -31,9 +31,13 @@ function toRow(modelId: string): ModelRow {
   }
 }
 
-/** All available models (superset manifest first, falling back to the bundled manifest; deduped by modelId across provider pools); sorted by effective capability descending */
+/** All available models (full-superset candidates first — every conversable model of credentialed providers — falling back to
+ *  the injection-face shells, then the bundled manifest; deduped by modelId across provider pools); sorted by effective capability descending
+ *  [2026-09-10]-[candidate surface widened from the pruned injection face to the full superset: pools can now be configured
+ *  with models that are not (yet) favorites/visible — actual chain candidacy is still decided at runtime by pool selection ∩ activation] */
 export function allModelRows(): ModelRow[] {
-  const shells = loadSupersetShells()?.shells ?? loadManifest().shells
+  const sup = loadSupersetShells()
+  const shells = (sup?.candidates && sup.candidates.length > 0 ? sup.candidates : sup?.shells) ?? loadManifest().shells
   const seen = new Set<string>()
   const rows: ModelRow[] = []
   for (const s of shells) {

@@ -256,11 +256,17 @@ export function laneShells(ctx: RuntimeContext, lane: string): string[] {
   return Array.isArray(l) ? l : []
 }
 
-/** Dynamic superset manifest (config hook persists shell-superset.json; missing/broken = null) */
-export function loadSupersetShells(): { shells: ShellManifestEntry[]; generated_at?: string } | null {
-  const data = readJson<{ shells?: unknown; generated_at?: string }>(paths().shellSuperset)
+/** Dynamic superset manifest (config hook persists shell-superset.json; missing/broken = null)
+ *  [2026-09-10]-[candidates = full-superset entries feeding the /modelRank //poolConfig config surfaces (pre-pruning,
+ *  deduped by the readers); shells = injection face. Older files without candidates = undefined (readers fall back to shells)] */
+export function loadSupersetShells(): { shells: ShellManifestEntry[]; candidates?: ShellManifestEntry[]; generated_at?: string } | null {
+  const data = readJson<{ shells?: unknown; candidates?: unknown; generated_at?: string }>(paths().shellSuperset)
   if (!data || !Array.isArray(data.shells) || data.shells.length === 0) return null
-  return { shells: data.shells as ShellManifestEntry[], generated_at: data.generated_at }
+  return {
+    shells: data.shells as ShellManifestEntry[],
+    candidates: Array.isArray(data.candidates) ? (data.candidates as ShellManifestEntry[]) : undefined,
+    generated_at: data.generated_at,
+  }
 }
 
 // [2026-09-01]-[provider.list cache across restarts: models/providers are plain string arrays; broken/missing = null (caller falls back to blocking probe)]

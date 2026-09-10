@@ -62,3 +62,28 @@ describe("selectInjectableDefs (available-model force-keep)", () => {
     expect(kept).not.toContain("cp-mx-m3-high-ro")
   })
 })
+
+// [2026-09-10]-[pool-config force-keep: /modelRank //poolConfig candidates widen to the full superset, so selections may
+//  name models outside favorites; their shells must stay injectable (runtime chains still apply pool ∩ activation)]
+describe("selectInjectableDefs (pool-config keepModelIds)", () => {
+  test("keepModelIds force-keeps every face of a pool-configured model that lost chain competition and missed keepModels", () => {
+    // m3-high survives via economy; m3-high-ro is dropped by chain competition — bare normalized id must resurrect it
+    const kept = selectInjectableDefs(defs, { ...opts, keepModelIds: new Set(["m3"]) }).map((d) => d.name).sort()
+    expect(kept).toContain("cp-mx-m3-high")
+    expect(kept).toContain("cp-mx-m3-high-ro")
+    expect(kept).not.toContain("cp-mx-m2-high-ro")
+  })
+  test("keepModelIds keys are bare normalized modelIds (no provider prefix), unlike keepModels full keys", () => {
+    // provider-qualified key in keepModelIds matches nothing — proves the two key spaces stay distinct
+    const kept = selectInjectableDefs(defs, { ...opts, keepModelIds: new Set(["github-copilot/m3"]) }).map((d) => d.name).sort()
+    expect(kept).toEqual(selectInjectableDefs(defs, opts).map((d) => d.name).sort())
+  })
+  test("keepModelIds ∪ keepModels union: both force-keep paths compose", () => {
+    const kept = selectInjectableDefs(defs, {
+      ...opts,
+      keepModels: new Set(["github-copilot/m2"]),
+      keepModelIds: new Set(["m3"]),
+    }).map((d) => d.name).sort()
+    for (const name of ["cp-mx-m2-high", "cp-mx-m2-high-ro", "cp-mx-m3-high", "cp-mx-m3-high-ro"]) expect(kept).toContain(name)
+  })
+})
