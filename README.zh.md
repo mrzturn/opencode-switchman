@@ -68,13 +68,17 @@ bunx opencode-switchman@latest
 
 ## 快速上手
 
-五步跑通。完整图文版：**[docs/quick-start.zh.md](./docs/quick-start.zh.md)** / [English](./docs/quick-start.md)。
+六步跑通。完整图文版：**[docs/quick-start.zh.md](./docs/quick-start.zh.md)** / [English](./docs/quick-start.md)。
 
 1. **连接 provider** —— TUI 里运行 `/connect`：Copilot 走 OAuth、DeepSeek 粘 API key；GLM Coding Plan 在 `opencode.json` 里加 `zhipuai-coding-plan` 自定义 provider。
 2. **挑选参与编排的模型** —— `/models` 后按 `ctrl+f` 收藏（桌面端：「管理模型」开关）。
-3. *（可选）***`/modelRank`** —— 固定你自己的能力排名，所有决策面压过系统评分。
-4. *（可选）***`/poolConfig`** —— 为六个任务池定制候选清单。
-5. **重启、验证** —— 确认 `[ROUTES]`/`[LIMITS]` 横幅与侧栏 `switchman` 面板，有不对劲就跑 `/switchman-doctor`。之后正常使用即可。
+3. **`/modelRank`** *（推荐）* —— 优先在 TUI 弹窗里手动调整能力排名，人工条目在所有决策面覆盖初始默认。
+4. **`/poolConfig`** *（推荐）* —— 优先在 TUI 弹窗里为六个任务池手工定制候选清单，覆盖初始默认。
+5. **三个上下文命令**
+   - **`/handover`** —— 手动备份并压缩当前会话。`[WATERMARK:SESSION]` 行的数字偏大、或任务告一段落时用，不必等自动交接。
+   - **`/ctx-pause`** —— 临时关掉本会话的读取限制和自动交接。需要一次性读大量大文件、不在乎多花 token 时用；测量不受影响。
+   - **`/ctx-resume`** —— 把限制重新打开。大文件读完后就恢复；重启 opencode 效果相同。
+6. **重启、验证** —— 确认 `[ROUTES]`/`[LIMITS]` 横幅与侧栏 `switchman` 面板，有不对劲就跑 `/switchman-doctor`。之后正常使用即可。
 
 ## 核心功能
 
@@ -86,7 +90,7 @@ bunx opencode-switchman@latest
 **辅助**
 
 - **多订阅编排** —— Copilot / GLM / DeepSeek 跨池配额感知路由（任意供应商均可参与）、高峰避让、计费加权、跨家族评审强制。
-- **手动覆盖** —— `/poolConfig`、`/modelRank`、`/expert`、`/handover`、`/switchman-doctor`、`/switchman-update`。
+- **手动覆盖** —— `/poolConfig`、`/modelRank`、`/expert`、`/handover`、`/ctx-pause`、`/ctx-resume`、`/switchman-doctor`、`/switchman-update`。
 - **看得见** —— 每轮系统提示注入实时四行横幅、TUI 侧栏状态面板、tmux 窗格镜像、按会话归档的工件工作区、路由决策审计日志。
 
 完整配置项表、架构与内部机制：[docs/reference.zh.md](./docs/reference.zh.md)（English: [docs/reference.md](./docs/reference.md)）。

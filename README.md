@@ -68,13 +68,17 @@ Do not declare success until all three steps pass; report what you changed and s
 
 ## Quick start
 
-Five steps. Full walkthrough with screenshots: **[docs/quick-start.md](./docs/quick-start.md)** / [中文](./docs/quick-start.zh.md).
+Six steps. Full walkthrough with screenshots: **[docs/quick-start.md](./docs/quick-start.md)** / [中文](./docs/quick-start.zh.md).
 
 1. **Connect providers** — `/connect` in the TUI: Copilot OAuth, DeepSeek API key; GLM Coding Plan goes into `opencode.json` as the `zhipuai-coding-plan` custom provider.
 2. **Pick the models that join orchestration** — `/models` then `ctrl+f` to favorite (desktop app: "Manage models" toggles).
-3. *(Optional)* **`/modelRank`** — pin your own capability ranking; it overrides system scoring everywhere.
-4. *(Optional)* **`/poolConfig`** — curate per-pool candidate lists for the six task pools.
-5. **Restart and verify** — check the `[ROUTES]`/`[LIMITS]` banner and the sidebar `switchman` panel; run `/switchman-doctor` if anything looks off. Then just use opencode normally.
+3. **`/modelRank`** *(recommended)* — open the TUI dialog and hand-tune your own capability ranking; manual entries override the initial defaults everywhere.
+4. **`/poolConfig`** *(recommended)* — curate per-pool candidate lists in the TUI dialog, overriding the initial defaults for the six task pools.
+5. **Context commands**
+   - **`/handover`** — back up the session and compact it yourself. Use it when the `[WATERMARK:SESSION]` line is getting large or the task hits a good stopping point, instead of waiting for the automatic handover.
+   - **`/ctx-pause`** — turn off this session's read limits and auto-handover. Use it when you need to read many large files at once and don't mind spending the tokens; measurement keeps running.
+   - **`/ctx-resume`** — turn the limits back on. Use it as soon as the heavy reading is done; restarting opencode has the same effect.
+6. **Restart and verify** — check the `[ROUTES]`/`[LIMITS]` banner and the sidebar `switchman` panel; run `/switchman-doctor` if anything looks off. Then just use opencode normally.
 
 ## What you get
 
@@ -86,7 +90,7 @@ Five steps. Full walkthrough with screenshots: **[docs/quick-start.md](./docs/qu
 **Extras**
 
 - **Multi-subscription orchestration** — quota-aware routing across Copilot / GLM / DeepSeek (any provider participates), peak-window yield, billing-aware scoring, cross-family review enforcement.
-- **Manual overrides** — `/poolConfig`, `/modelRank`, `/expert`, `/handover`, `/switchman-doctor`, `/switchman-update`.
+- **Manual overrides** — `/poolConfig`, `/modelRank`, `/expert`, `/handover`, `/ctx-pause`, `/ctx-resume`, `/switchman-doctor`, `/switchman-update`.
 - **Visibility** — live four-line banner in every system prompt, TUI sidebar panel, tmux pane mirroring, per-session artifact workspace, and an audit log of every routing decision.
 
 Full options table, architecture, and internals: [docs/reference.md](./docs/reference.md) (中文: [docs/reference.zh.md](./docs/reference.zh.md)).
