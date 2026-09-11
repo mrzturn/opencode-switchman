@@ -81,6 +81,34 @@ test("ctx-pause: marker suspends the hard-tier read gate for this session only; 
   expect(readStatusLog().split(`ctx control resumed for session ${sid}`).length - 1).toBe(1)
 })
 
+test("ctx-pause: transform-path capture (real host shape — parts live on the message, not on info)", async () => {
+  const { hooks, watermark, glob, system } = await boot()
+  const sid = "ses_ctxpa_transform"
+  // [2026-09-11 fix]-[live verification: the real host's message.updated info carries no parts, so capture had to
+  //  move to experimental.chat.messages.transform where {info, parts} pairs arrive per round-trip]
+  const turn = (msgId: string, text: string) =>
+    hooks["experimental.chat.messages.transform"]!({ sessionID: sid } as any, {
+      messages: [{ info: { id: msgId, role: "user", sessionID: sid }, parts: [{ type: "text", text }] }],
+    } as any)
+
+  await watermark(sid, 85_000) // hard tier armed
+  await expect(glob(sid)).rejects.toThrow(/hard watermark/)
+
+  await turn("msg_t1", `${CTX_PAUSE_MARKER} pause this session`) // info has NO parts field — the real shape
+  await glob(sid) // gate suspended
+
+  // seen-map: the same message id re-arriving in later round-trips never double-logs
+  await turn("msg_t1", `${CTX_PAUSE_MARKER} pause this session`)
+  expect(readStatusLog().split(`ctx control paused for session ${sid}`).length - 1).toBe(1)
+
+  // watermark line keeps reporting with the PAUSED notice
+  expect((await system(sid)).some((l) => l.includes("ctx control PAUSED"))).toBe(true)
+
+  // resume via the transform path restores enforcement
+  await turn("msg_t2", `${CTX_RESUME_MARKER} resume this session`)
+  await expect(glob(sid)).rejects.toThrow(/hard watermark/)
+})
+
 test("ctx-pause: auto-handover suspended while paused (fresh session — no cooldown interference)", async () => {
   const forks: string[] = []
   const recordingClient = {

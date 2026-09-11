@@ -34,7 +34,7 @@ import {
   capThresholdsByWindow, subagentCapOf, capByWindow,
   subagentCapDenyMessage, subagentResumeDenyMessage, ctxControlMarkerOf, pausedWindowWarning,
 } from "./context-watch"
-import type { ReadEstimate, FileSample, ContextThresholds } from "./context-watch"
+import type { CtxControlAction, ReadEstimate, FileSample, ContextThresholds } from "./context-watch"
 import { backupSession, compactSession, v1HandoverPort, type HandoverResult } from "./handover-core"
 import { logDecision, BILLING_API_BOOST } from "./scoring"
 import type { WaterFactor, DecisionRecord } from "./scoring"
@@ -172,7 +172,12 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   //  and the capture happens at the event layer (never model goodwill). While paused: read gates + self-read budget
   //  charging + auto-handover are suspended for that session; measurement keeps recording (resume keeps pace history);
   //  shell subagent caps are NOT suspended; restart = auto-resume (fail-safe direction); session.deleted cleans]
+  //  [2026-09-11 fix]-[live verification showed message.updated's info carries no parts in the real host (marker in
+  //  the user turn, zero capture lines) — the reliable capture lives in experimental.chat.messages.transform where
+  //  every round-trip exposes full {info, parts} pairs (shape production-verified by the image relay); the event
+  //  handler stays as an opportunistic first-try]
   const ctxPaused = new Set<string>()
+  const ctxMarkerSeen = new Map<string, string>() // per-session last-processed user message id (transform-path dedup)
   // [2026-09-05]-[window cap: current session model key (providerID/modelID from message.updated assistant messages;
   //  registry-keyed, unlike chat.params' sessionModelKey which can be stale/absent when a turn never fires chat.params)]
   const sessionMsgModel = new Map<string, string>()
@@ -227,6 +232,18 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     if (!sessionID) return false
     if (dynamic) return manager?.isShellSession(sessionID) === true
     return /-mx-/.test(sessionAgent.get(sessionID) ?? "")
+  }
+
+  /** [2026-09-11 fix]-[shared flip for both capture paths (message.updated event + chat.messages.transform);
+   *  idempotent — a re-fire of the same marker never double-logs]-[see ctxPaused declaration for why the transform
+   *  path exists: the real host's event info carries no parts] */
+  function applyCtxControlAction(sid: string, act: CtxControlAction | null): void {
+    if (act === "pause" && !ctxPaused.has(sid)) {
+      ctxPaused.add(sid)
+      appendStatusLog(`ctx control paused for session ${sid} (/ctx-pause): read gates + self-read budget + auto-handover suspended; measurement continues`)
+    } else if (act === "resume" && ctxPaused.delete(sid)) {
+      appendStatusLog(`ctx control resumed for session ${sid} (/ctx-resume): read gates + auto-handover live again`)
+    }
   }
 
   function kk(n: number): string { return `${Math.round(n / 1000)}k` }
@@ -1490,6 +1507,24 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     //  persistCache deduplicates disk writes across round-trips]
     "experimental.chat.messages.transform": async (_input, output) => {
       try {
+        // [2026-09-11 fix]-[ctx-pause//ctx-resume capture runs here, before the relay early-returns: every round-trip
+        //  exposes full {info, parts} pairs (production-verified by the image relay), unlike message.updated whose info
+        //  carries no parts in the real host. Per-session last-seen id keeps it O(1) per turn; only the LAST user
+        //  message is scanned, so a marker missed on its turn is not backfilled (user re-sends the command)]
+        try {
+          const tm = (output as any)?.messages
+          if (Array.isArray(tm) && tm.length > 0) {
+            let lastU: { info: any; parts: unknown[] } | null = null
+            for (let i = tm.length - 1; i >= 0; i--) {
+              if (tm[i]?.info?.role === "user") { lastU = tm[i]; break }
+            }
+            const msid = typeof lastU?.info?.sessionID === "string" ? lastU.info.sessionID : undefined
+            if (lastU && msid && !isShellOrInternalSession(msid) && ctxMarkerSeen.get(msid) !== lastU.info.id) {
+              ctxMarkerSeen.set(msid, lastU.info.id)
+              applyCtxControlAction(msid, ctxControlMarkerOf(lastU))
+            }
+          }
+        } catch { /* fail-open */ }
         if (options.relay?.image === false) return
         const msgs = (output as any)?.messages
         if (!Array.isArray(msgs) || msgs.length === 0) return
@@ -1887,15 +1922,10 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
              if (info?.role === "user") {
                lastUserMsg.set(sid, info.id)
                turnReadUsage.delete(sid)
-               // [2026-09-11]-[/ctx-pause //ctx-resume capture: the marker line the command injected → flip the
-               //  in-memory set (idempotent: a re-fired message.updated never double-logs); no model cooperation involved]
-               const act = ctxControlMarkerOf(info)
-               if (act === "pause" && !ctxPaused.has(sid)) {
-                 ctxPaused.add(sid)
-                 appendStatusLog(`ctx control paused for session ${sid} (/ctx-pause): read gates + self-read budget + auto-handover suspended; measurement continues`)
-               } else if (act === "resume" && ctxPaused.delete(sid)) {
-                 appendStatusLog(`ctx control resumed for session ${sid} (/ctx-resume): read gates + auto-handover live again`)
-               }
+                // [2026-09-11]-[opportunistic first-try: if the host ever ships parts on the event's info this fires
+                //  before the transform pass; in the real host info carries no parts so this no-ops and the reliable
+                //  capture lives in experimental.chat.messages.transform (see applyCtxControlAction)]
+                applyCtxControlAction(sid, ctxControlMarkerOf(info))
                // [2026-09-07]-[lang ask was one-shot per session and the model routinely skipped the turn-1 directive
               //  (buried under the injected protocol) — reset the latch on every new user message so the ask directive
               //  re-surfaces each user turn until the config is persisted; impact: unconfigured projects get asked
@@ -1958,7 +1988,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             lastUserMsg.delete(sid)
             sessionMsgModel.delete(sid)
             sessionTodos.delete(sid)
-            ctxPaused.delete(sid) // [2026-09-11]-[/ctx-pause: per-session suspension follows the session out]
+             ctxPaused.delete(sid) // [2026-09-11]-[/ctx-pause: per-session suspension follows the session out]
+             ctxMarkerSeen.delete(sid) // [2026-09-11 fix]-[transform-path dedup map follows the session out too]
             workspace.forget(sid)
             langAsked.delete(sid)
             langGateWaived.delete(sid)
