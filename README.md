@@ -114,7 +114,7 @@ If the plugin has genuinely helped you and your budget allows, buy me a coffee. 
 
 | Alipay | WeChat Pay | Scan with WeChat to give him a like |
 |:---:|:---:|:---:|
-| ![Alipay](docs/pay/alipay.png) | ![WeChat Pay](docs/pay/wechat_pay.jpg) | ![WeChat Pay](docs/pay/wechat_pay_2.jpg) |
+| <img src="docs/pay/alipay.png" width="150" alt="Alipay QR code" /> | <img src="docs/pay/wechat_pay.jpg" width="150" alt="WeChat Pay QR code" /> | <img src="docs/pay/wechat_pay_2.jpg" width="150" alt="WeChat scan-to-like QR code" /> |
 
 ## License
 
