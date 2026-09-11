@@ -112,9 +112,16 @@ This plugin is open source and free to use, and it will stay that way. Keeping i
 
 If the plugin has genuinely helped you and your budget allows, buy me a coffee. Thank you — sincerely.
 
+👇
+
+<details>
+<summary>☕ Click here 【Buy the author a coffee】</summary>
+
 | Alipay | WeChat Pay | Scan with WeChat to give him a like |
 |:---:|:---:|:---:|
 | <img src="docs/pay/alipay.png" width="150" alt="Alipay QR code" /> | <img src="docs/pay/wechat_pay.jpg" width="150" alt="WeChat Pay QR code" /> | <img src="docs/pay/wechat_pay_2.jpg" width="150" alt="WeChat scan-to-like QR code" /> |
+
+</details>
 
 ## License
 
