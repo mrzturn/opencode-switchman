@@ -114,7 +114,7 @@ bunx opencode-switchman@latest
 
 | 支付宝 | 微信支付 | 微信扫码为他点赞 |
 |:---:|:---:|:---:|
-| ![支付宝](docs/pay/alipay.png) | ![微信支付](docs/pay/wechat_pay.jpg) | ![微信支付](docs/pay/wechat_pay_2.jpg) |
+| <img src="docs/pay/alipay.png" width="150" alt="支付宝收款码" /> | <img src="docs/pay/wechat_pay.jpg" width="150" alt="微信收款码" /> | <img src="docs/pay/wechat_pay_2.jpg" width="150" alt="微信扫码点赞码" /> |
 
 ## License
 
