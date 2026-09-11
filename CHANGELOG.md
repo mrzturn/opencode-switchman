@@ -2,6 +2,12 @@
 
 This project follows [Semantic Versioning](https://semver.org/). Release notes describe user-visible behavior; implementation details remain in the technical specification and commit history.
 
+## [1.0.4] - 2026-09-11
+
+### Added
+
+- **`/ctx-pause` & `/ctx-resume` — per-session context-control suspension** — typing `/ctx-pause` suspends the measured-context regime for the current session only: read gates (watermark tiers and the self-read budget) and force-tier auto-handover stop intervening, while measurement keeps recording so pace estimates stay intact after `/ctx-resume` restores enforcement. The commands work without model cooperation — the injected marker line is captured by the plugin at the event layer (idempotent; per-session in-memory state, so an opencode restart auto-resumes control and session deletion cleans it). While paused the `[WATERMARK:SESSION]` banner keeps reporting measured numbers with a PAUSED notice, and the only override is a pure warning at ≥95% of the model's real context window (overflow still hard-errors the session regardless of pause). Shell subagent caps are never suspended.
+
 ## [1.0.3] - 2026-09-10
 
 ### Added

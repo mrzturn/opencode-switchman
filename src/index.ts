@@ -32,9 +32,9 @@ import {
   READ_CLASS_TOOLS, estimateContextTokens, thresholdsOf, watermarkLevel,
   budgetGateDecision, estimateReadRange, estimateOutputTokens, readBudgetOf, turnBudgetOf,
   capThresholdsByWindow, subagentCapOf, capByWindow,
-  subagentCapDenyMessage, subagentResumeDenyMessage,
+  subagentCapDenyMessage, subagentResumeDenyMessage, ctxControlMarkerOf, pausedWindowWarning,
 } from "./context-watch"
-import type { ReadEstimate, FileSample, ContextThresholds } from "./context-watch"
+import type { CtxControlAction, ReadEstimate, FileSample, ContextThresholds } from "./context-watch"
 import { backupSession, compactSession, v1HandoverPort, type HandoverResult } from "./handover-core"
 import { logDecision, BILLING_API_BOOST } from "./scoring"
 import type { WaterFactor, DecisionRecord } from "./scoring"
@@ -46,7 +46,7 @@ import { injectShells, injectShellDefs, selectInjectableDefs } from "./shells"
 import { buildBanner, shortName, providerStatusEntries } from "./banner"
 import { refreshSelfUpdate, updateBannerText, ensureUpdateCommands, detectLoadMode, pluginCliPath } from "./selfupdate"
 import { loadPoolConfig, overrideSummary } from "./user-overrides"
-import { poolConfigCommandMd, modelRankCommandMd, expertCommandMd, langCommandMd } from "./commands-md"
+import { poolConfigCommandMd, modelRankCommandMd, expertCommandMd, langCommandMd, ctxPauseCommandMd, ctxResumeCommandMd } from "./commands-md"
 import { billingOfProvider, loadUserConfig, resolveEffectiveOptions, routingPeakActive, routePolicy, DEFAULT_DELEGATION_FLOOR } from "./config"
 import { poolForProviderId } from "./provider-config"
 import { runDoctor } from "./doctor"
@@ -168,6 +168,16 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   const turnReadUsage = new Map<string, { used: number; at: number }>()
   const wmHistory = new Map<string, number[]>()
   const lastUserMsg = new Map<string, string>()
+  // [2026-09-11]-[/ctx-pause //ctx-resume: per-session context-control suspension — the commands inject a fixed marker
+  //  and the capture happens at the event layer (never model goodwill). While paused: read gates + self-read budget
+  //  charging + auto-handover are suspended for that session; measurement keeps recording (resume keeps pace history);
+  //  shell subagent caps are NOT suspended; restart = auto-resume (fail-safe direction); session.deleted cleans]
+  //  [2026-09-11 fix]-[live verification showed message.updated's info carries no parts in the real host (marker in
+  //  the user turn, zero capture lines) — the reliable capture lives in experimental.chat.messages.transform where
+  //  every round-trip exposes full {info, parts} pairs (shape production-verified by the image relay); the event
+  //  handler stays as an opportunistic first-try]
+  const ctxPaused = new Set<string>()
+  const ctxMarkerSeen = new Map<string, string>() // per-session last-processed user message id (transform-path dedup)
   // [2026-09-05]-[window cap: current session model key (providerID/modelID from message.updated assistant messages;
   //  registry-keyed, unlike chat.params' sessionModelKey which can be stale/absent when a turn never fires chat.params)]
   const sessionMsgModel = new Map<string, string>()
@@ -222,6 +232,18 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     if (!sessionID) return false
     if (dynamic) return manager?.isShellSession(sessionID) === true
     return /-mx-/.test(sessionAgent.get(sessionID) ?? "")
+  }
+
+  /** [2026-09-11 fix]-[shared flip for both capture paths (message.updated event + chat.messages.transform);
+   *  idempotent — a re-fire of the same marker never double-logs]-[see ctxPaused declaration for why the transform
+   *  path exists: the real host's event info carries no parts] */
+  function applyCtxControlAction(sid: string, act: CtxControlAction | null): void {
+    if (act === "pause" && !ctxPaused.has(sid)) {
+      ctxPaused.add(sid)
+      appendStatusLog(`ctx control paused for session ${sid} (/ctx-pause): read gates + self-read budget + auto-handover suspended; measurement continues`)
+    } else if (act === "resume" && ctxPaused.delete(sid)) {
+      appendStatusLog(`ctx control resumed for session ${sid} (/ctx-resume): read gates + auto-handover live again`)
+    }
   }
 
   function kk(n: number): string { return `${Math.round(n / 1000)}k` }
@@ -350,6 +372,17 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       const growth = pace
         ? ` | growth ~${kk(pace.delta)}/turn, ~${pace.turnsToHard} turns to hard`
         : " | growth unknown yet"
+      // [2026-09-11]-[/ctx-pause: control suspended for this session — keep reporting the measured numbers (observation
+      //  never pauses) + the resume hint; the only override is the ≥95%-window pure warning (context-watch.pausedWindowWarning —
+      //  text only, no denies; unknown window fails open to numbers)]
+      if (ctxPaused.has(sessionID)) {
+        let win: number | undefined
+        try {
+          const key = sessionMsgModel.get(sessionID) ?? sessionModelKey.get(sessionID)
+          win = key ? contextWindowOf(metaIndexRuntime ?? bundledModelIndex(), key) : undefined
+        } catch { /* fail-open: numbers only */ }
+        return `[WATERMARK:SESSION] measured session context ~${kk(wm.tokens)} (soft ${kk(t.soft)}/hard ${kk(t.hard)}/force ${kk(t.force)})${growth} | ctx control PAUSED by /ctx-pause (read gates + auto-handover suspended for this session; resume with /ctx-resume)${pausedWindowWarning(wm.tokens, win)}`
+      }
       const base = `[WATERMARK:SESSION] measured session context ~${kk(wm.tokens)} (soft ${kk(t.soft)}/hard ${kk(t.hard)}/force ${kk(t.force)})${growth} | self-read this turn ${used}/${cap}`
       if (level === "ok") return base
       if (level === "soft") return `${base}—past soft: prefer delegating new reads/scans to an economy shell (scouter/clerk) (self-read budget still open — bounded reads under the cap pass)`
@@ -1116,6 +1149,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       if (options.context?.gates !== true) return
       const sid = input.sessionID
       if (!sid || isShellOrInternalSession(sid)) return
+      // [2026-09-11]-[/ctx-pause: whole gate suspended for this session — both the self-read budget and the watermark
+      //  tiers fall through ("release context control" in full); the no-vision image guard above stays (not ctx control)]
+      if (ctxPaused.has(sid)) return
       const wm = sessionWatermark.get(sid)
       if (!wm) return
       const t = sessionThresholds(sid)
@@ -1257,6 +1293,10 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           // [2026-09-05]-[/switchman-lang: show/reconfigure the project language preference (marker-question re-ask
           //  flows through the same plugin-side capture; see commands-md.langCommandMd)]
           "switchman-lang": { template: langCommandMd(options.workspace?.dirname || DEFAULT_WORKSPACE_DIRNAME), description: "Show or reconfigure this project's language preference (conversation / code comments & commit messages / documents)" },
+          // [2026-09-11]-[/ctx-pause //ctx-resume: per-session context-control suspension — the marker inside the
+          //  template is captured at the event layer (context-watch.ctxControlMarkerOf); session-scoped, restart auto-resumes]
+          "ctx-pause": { template: ctxPauseCommandMd(), description: "Pause this session's context watermark control (read gates + self-read budget + auto-handover) until /ctx-resume or an opencode restart; this session only, measurement continues" },
+          "ctx-resume": { template: ctxResumeCommandMd(), description: "Resume this session's context watermark control (undo /ctx-pause); gates and auto-handover go live again from the next turn" },
           // [2026-09-04]-[removed the /handover conversational registration: moved to direct TUI palette execution (fork backup + compaction of the
           //  current session, no AI in the loop); opencode's built-in session.fork (message-selection fork dialog) also occupies /fork,
           //  so the plugin no longer registers a same-name command, avoiding dual entries]-
@@ -1467,6 +1507,24 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     //  persistCache deduplicates disk writes across round-trips]
     "experimental.chat.messages.transform": async (_input, output) => {
       try {
+        // [2026-09-11 fix]-[ctx-pause//ctx-resume capture runs here, before the relay early-returns: every round-trip
+        //  exposes full {info, parts} pairs (production-verified by the image relay), unlike message.updated whose info
+        //  carries no parts in the real host. Per-session last-seen id keeps it O(1) per turn; only the LAST user
+        //  message is scanned, so a marker missed on its turn is not backfilled (user re-sends the command)]
+        try {
+          const tm = (output as any)?.messages
+          if (Array.isArray(tm) && tm.length > 0) {
+            let lastU: { info: any; parts: unknown[] } | null = null
+            for (let i = tm.length - 1; i >= 0; i--) {
+              if (tm[i]?.info?.role === "user") { lastU = tm[i]; break }
+            }
+            const msid = typeof lastU?.info?.sessionID === "string" ? lastU.info.sessionID : undefined
+            if (lastU && msid && !isShellOrInternalSession(msid) && ctxMarkerSeen.get(msid) !== lastU.info.id) {
+              ctxMarkerSeen.set(msid, lastU.info.id)
+              applyCtxControlAction(msid, ctxControlMarkerOf(lastU))
+            }
+          }
+        } catch { /* fail-open */ }
         if (options.relay?.image === false) return
         const msgs = (output as any)?.messages
         if (!Array.isArray(msgs) || msgs.length === 0) return
@@ -1753,7 +1811,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       //  to the per-turn budget from the result payload size (main sessions only, mirroring the before-hook's shell-session
       //  exemption; ≥100-token charges are logged as the v2 data substrate; fail-open)]
       try {
-        if ((hookInput.tool === "bash" || READ_CLASS_TOOLS.has(hookInput.tool)) && hookInput.tool !== "task" && sid && !isShellOrInternalSession(sid)) {
+        if ((hookInput.tool === "bash" || READ_CLASS_TOOLS.has(hookInput.tool)) && hookInput.tool !== "task" && sid && !isShellOrInternalSession(sid) && !ctxPaused.has(sid)) {
           const len = JSON.stringify((hookOutput as any)?.output ?? "").length
           const charge = estimateOutputTokens(len)
           chargeTurnRead(sid, charge)
@@ -1763,6 +1821,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       try {
         if (options.context?.autoHandover === false) return
         if (!sid || isShellOrInternalSession(sid)) return
+        // [2026-09-11]-[/ctx-pause: auto-handover suspended for this session; the watermark line keeps a ≥95%-window warning]
+        if (ctxPaused.has(sid)) return
         const wm = sessionWatermark.get(sid)
         if (!wm) return
         if (watermarkLevel(wm.tokens, sessionThresholds(sid)) !== "force") return
@@ -1859,10 +1919,14 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           const sid = props?.sessionID
           const info = props?.info
           if (typeof sid === "string" && !isShellOrInternalSession(sid)) {
-            if (info?.role === "user") {
-              lastUserMsg.set(sid, info.id)
-              turnReadUsage.delete(sid)
-              // [2026-09-07]-[lang ask was one-shot per session and the model routinely skipped the turn-1 directive
+             if (info?.role === "user") {
+               lastUserMsg.set(sid, info.id)
+               turnReadUsage.delete(sid)
+                // [2026-09-11]-[opportunistic first-try: if the host ever ships parts on the event's info this fires
+                //  before the transform pass; in the real host info carries no parts so this no-ops and the reliable
+                //  capture lives in experimental.chat.messages.transform (see applyCtxControlAction)]
+                applyCtxControlAction(sid, ctxControlMarkerOf(info))
+               // [2026-09-07]-[lang ask was one-shot per session and the model routinely skipped the turn-1 directive
               //  (buried under the injected protocol) — reset the latch on every new user message so the ask directive
               //  re-surfaces each user turn until the config is persisted; impact: unconfigured projects get asked
               //  every turn instead of silently never (decline still re-asks; escape hatch = lang.ask:false)]
@@ -1924,6 +1988,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             lastUserMsg.delete(sid)
             sessionMsgModel.delete(sid)
             sessionTodos.delete(sid)
+             ctxPaused.delete(sid) // [2026-09-11]-[/ctx-pause: per-session suspension follows the session out]
+             ctxMarkerSeen.delete(sid) // [2026-09-11 fix]-[transform-path dedup map follows the session out too]
             workspace.forget(sid)
             langAsked.delete(sid)
             langGateWaived.delete(sid)
