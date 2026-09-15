@@ -2,6 +2,8 @@
 
 [English](./README.md) | **中文**
 
+> **也在用 zcode？** 看看 [zcode-switchman](https://github.com/mrzturn/zcode-switchman)——同作者的开源兄弟项目，为 zcode 玩家带来同样的编排能力。
+
 > 上下文有水位，任务自己派。
 
 ![opencode-switchman —— 上下文水位驱动扳道工自动扳道](docs/assets/hero.svg)
