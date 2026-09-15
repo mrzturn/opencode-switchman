@@ -47,7 +47,8 @@ export interface UserConfig {
 export interface LoadedUserConfig { path: string; config: UserConfig; diagnostics: ConfigDiagnostic[]; generated: boolean }
 
 // [2026-09-15]-[subagentForce entry dropped: the shell hard line follows forceTokens by default (subagentForceTokens optional override)]
-export const DEFAULT_CONTEXT_TOKENS = { soft: 60_000, hard: 80_000, force: 120_000 } as const
+// [2026-09-15]-[default context watermarks retuned 60/80/120k → 50/90/130k; thresholdsOf in src/context-watch.ts must stay in sync]
+export const DEFAULT_CONTEXT_TOKENS = { soft: 50_000, hard: 90_000, force: 130_000 } as const
 export const DEFAULT_DELEGATION_FLOOR = 3_000
 
 /** Factory defaults for behavior sections (fillMissing baseline; only bad-typed values fall back and report SWM037) */

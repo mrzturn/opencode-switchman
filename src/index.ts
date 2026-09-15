@@ -1518,7 +1518,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         const rulesAlreadyPresent = Array.isArray(output.system)
           && output.system.some((p) => typeof p === "string" && p.includes(rulesMarker))
         if (options.rules!.enabled && !rulesAlreadyPresent) {
-          // [2026-09-04]-[rules interpolation: delegation floor and the three watermark thresholds come from user jsonc (defaults 3k/60k/80k/120k)]
+          // [2026-09-04]-[rules interpolation: delegation floor and the three watermark thresholds come from user jsonc]
+          // [2026-09-15]-[default watermarks retuned 60/80/120k → 50/90/130k (DEFAULT_CONTEXT_TOKENS in src/config.ts)]
           const t = sessionThresholds(input.sessionID)
           let rules = AGENTS_MD.trimEnd()
             .replaceAll("{{DELEGATION_FLOOR}}", String(options.rules!.delegationFloor ?? DEFAULT_DELEGATION_FLOOR))

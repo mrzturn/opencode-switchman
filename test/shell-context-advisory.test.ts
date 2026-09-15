@@ -2,8 +2,8 @@
 //  a dispatched shell session (never internal title/compaction/summary) gets at most one [SHELL-CONTEXT] advisory per tier,
 //  tracking the shell watermark (conserve → hand-off); subagentCap:false disables the advisories, a terminated session
 //  stays silent (the deny message governs), and session.deleted re-arms the dedup map]
-// [2026-09-15]-[tiers now sit at the MAIN session's absolute soft/hard lines (60k/80k defaults) and the default shell cap
-//  follows forceTokens (120k) — advisory copy below pins 120k as the effective cap]
+// [2026-09-15]-[tiers now sit at the MAIN session's absolute soft/hard lines (50k/90k defaults) and the default shell cap
+//  follows forceTokens (130k) — advisory copy below pins 130k as the effective cap]
 import { expect, test } from "bun:test"
 import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -61,25 +61,25 @@ test("shell advisory: tier 1 conserve fires once, tier 2 hand-off once, then qui
   let sys = await system(sid)
   expect(advisory(sys)).toBeUndefined()
 
-  // crossing tier 1: 60k input → 64k measured ≥ 60k (shared soft line), < 80k → conserve line, numbers rendered from the live measurement
-  await mark(sid, 60_000)
+  // crossing tier 1: 50k input → 54k measured ≥ 50k (shared soft line), < 90k → conserve line, numbers rendered from the live measurement
+  await mark(sid, 50_000)
   sys = await system(sid)
-  expect(advisory(sys)).toBe("[SHELL-CONTEXT] measured shell context ≈ 64k/120k (conserve): stop batch reads and long pastes — switch to targeted grep and cite only the needed excerpts; finish the current work unit before starting anything new; keep outputs compact.")
+  expect(advisory(sys)).toBe("[SHELL-CONTEXT] measured shell context ≈ 54k/130k (conserve): stop batch reads and long pastes — switch to targeted grep and cite only the needed excerpts; finish the current work unit before starting anything new; keep outputs compact.")
 
   // same tier again → suppressed (once-per-tier dedup)
   expect(advisory(await system(sid))).toBeUndefined()
 
-  // crossing tier 2: 80k input → 84k ≥ 80k (shared hard line) → hand-off line with the inline HANDOFF marker
-  await mark(sid, 80_000)
+  // crossing tier 2: 90k input → 94k ≥ 90k (shared hard line) → hand-off line with the inline HANDOFF marker
+  await mark(sid, 90_000)
   sys = await system(sid)
-  expect(advisory(sys)?.startsWith("[SHELL-CONTEXT] measured shell context ≈ 84k/120k (hand-off):")).toBe(true)
+  expect(advisory(sys)?.startsWith("[SHELL-CONTEXT] measured shell context ≈ 94k/130k (hand-off):")).toBe(true)
   expect(advisory(sys)).toContain("`HANDOFF: inline · progress: n/m · next: <one sentence>`")
 
   // tier 2 delivered → quiet again
   expect(advisory(await system(sid))).toBeUndefined()
 
-  // crossing the hard cap (116k input → 120k measured ≥ the 120k shared force line) terminates the session → the deny message governs, advisories stop
-  await mark(sid, 116_000)
+  // crossing the hard cap (126k input → 130k measured ≥ the 130k shared force line) terminates the session → the deny message governs, advisories stop
+  await mark(sid, 126_000)
   expect(advisory(await system(sid))).toBeUndefined()
   await expect(deny(sid, "call_adv_deny")).rejects.toThrow("SUBAGENT CONTEXT CAP REACHED")
 }, 30_000)
@@ -106,10 +106,10 @@ test("shell advisory: internal and main sessions never receive it; session.delet
   // session.deleted clears shellWatermark + the dedup map: after deletion the same measurements re-arm tier 1
   const sid = "ses_adv_gone"
   await seedShell(sid)
-  await mark(sid, 60_000)
-  expect(advisory(await system(sid))?.startsWith("[SHELL-CONTEXT] measured shell context ≈ 64k/120k (conserve):")).toBe(true)
+  await mark(sid, 50_000)
+  expect(advisory(await system(sid))?.startsWith("[SHELL-CONTEXT] measured shell context ≈ 54k/130k (conserve):")).toBe(true)
   expect(advisory(await system(sid))).toBeUndefined()
   await emit({ type: "session.deleted", properties: { info: { id: sid } } })
-  await mark(sid, 60_000)
-  expect(advisory(await system(sid))?.startsWith("[SHELL-CONTEXT] measured shell context ≈ 64k/120k (conserve):")).toBe(true)
+  await mark(sid, 50_000)
+  expect(advisory(await system(sid))?.startsWith("[SHELL-CONTEXT] measured shell context ≈ 54k/130k (conserve):")).toBe(true)
 }, 30_000)

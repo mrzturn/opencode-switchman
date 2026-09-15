@@ -27,17 +27,18 @@ describe("context-watch: token estimation and watermark levels", () => {
     expect(watermarkLevel(80_000, t)).toBe("hard")
     expect(watermarkLevel(100_000, t)).toBe("force")
   })
-  test("thresholdsOf: defaults 60k/80k/120k", () => {
-    expect(thresholdsOf(undefined)).toEqual({ soft: 60_000, hard: 80_000, force: 120_000 })
+  // [2026-09-15]-[default context watermarks retuned 60/80/120k → 50/90/130k (DEFAULT_CONTEXT_TOKENS); pins updated, semantics unchanged]
+  test("thresholdsOf: defaults 50k/90k/130k", () => {
+    expect(thresholdsOf(undefined)).toEqual({ soft: 50_000, hard: 90_000, force: 130_000 })
   })
   // [2026-09-05]-[window cap: effective thresholds are capped at 90% of the session model's context window; order preserved, fail-open]
   test("capThresholdsByWindow: 90% cap, order preserved, fail-open on unknown window", () => {
-    const t = { soft: 60_000, hard: 80_000, force: 120_000 }
+    const t = { soft: 50_000, hard: 90_000, force: 130_000 }
     expect(capThresholdsByWindow(t, undefined)).toEqual(t)
     expect(capThresholdsByWindow(t, Number.NaN)).toEqual(t)
     expect(capThresholdsByWindow(t, 0)).toEqual(t)
-    expect(capThresholdsByWindow(t, 200_000)).toEqual({ soft: 60_000, hard: 80_000, force: 120_000 })
-    expect(capThresholdsByWindow(t, 128_000)).toEqual({ soft: 60_000, hard: 80_000, force: 115_200 })
+    expect(capThresholdsByWindow(t, 200_000)).toEqual({ soft: 50_000, hard: 90_000, force: 130_000 })
+    expect(capThresholdsByWindow(t, 128_000)).toEqual({ soft: 50_000, hard: 90_000, force: 115_200 })
     expect(capThresholdsByWindow(t, 32_000)).toEqual({ soft: 28_800, hard: 28_800, force: 28_800 })
   })
 })
@@ -176,11 +177,11 @@ describe("gates: built-in subagent blocking", () => {
 
 describe("config: new behavior-section validation", () => {
   const base = { version: 1, providers: {}, extensions: {} }
-  test("defaults: context 60/80/120k, gates on, builtinAgents deny, injection chain, floor 3000", () => {
+  test("defaults: context 50/90/130k, gates on, builtinAgents deny, injection chain, floor 3000", () => {
     const { config, diagnostics } = validateUserConfig(base)
     expect(diagnostics.filter((d) => d.level === "error")).toEqual([])
     // [2026-09-15]-[subagentForceTokens omitted (absent follows forceTokens); the subagentSoftTiers field is retired]
-    expect(config.context).toEqual({ gates: true, softTokens: 60_000, hardTokens: 80_000, forceTokens: 120_000, readBudgetTokens: 1_500, autoHandover: true, subagentCap: true })
+    expect(config.context).toEqual({ gates: true, softTokens: 50_000, hardTokens: 90_000, forceTokens: 130_000, readBudgetTokens: 1_500, autoHandover: true, subagentCap: true })
     expect(config.builtinAgents.mode).toBe("deny")
     expect(config.injection.mode).toBe("chain")
     expect(config.rules.delegationFloor).toBe(3_000)
@@ -193,10 +194,10 @@ describe("config: new behavior-section validation", () => {
   })
   test("out-of-order/non-positive-integer watermarks revert the whole section to defaults with SWM037", () => {
     const r1 = validateUserConfig({ ...base, context: { softTokens: 80_000, hardTokens: 80_000, forceTokens: 100_000 } })
-    expect(r1.config.context.softTokens).toBe(60_000)
+    expect(r1.config.context.softTokens).toBe(50_000)
     expect(r1.diagnostics.some((d) => d.code === "SWM037")).toBe(true)
     const r2 = validateUserConfig({ ...base, context: { softTokens: -1, hardTokens: 80_000, forceTokens: 100_000 } })
-    expect(r2.config.context.softTokens).toBe(60_000)
+    expect(r2.config.context.softTokens).toBe(50_000)
   })
   test("bad enum values revert to defaults", () => {
     const r = validateUserConfig({ ...base, builtinAgents: { mode: "maybe" }, injection: { mode: 42 }, rules: { delegationFloor: "low" } })

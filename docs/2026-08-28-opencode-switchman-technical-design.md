@@ -14,6 +14,7 @@
 > - v1.0: design finalized (shell matrix / six gates / ROUTE_META / breaker / quota awareness / cost awareness).
 > - v1.1: implementation-stage verification errata — banner hook moved to `experimental.chat.system.transform`; shell landing changed to config-hook injection (no file generation); the `tools` field deprecated in favor of `permission`; thinking efforts moved to agent `options`; task argument name confirmed as `subagent_type`; failure bookkeeping main path moved to `event`; the Copilot usage endpoint and model catalog were field-tested, closing two pending items; added the three-pool quota switches, cost tiebreaker, and the token read-only red line.
 > - v1.2: full-matrix shape established — enabled models × all declared thinking efforts; the enabled surface takes the model-management pin list as its first source of truth; the effort source of truth moved to models.dev `reasoning_options`.
+> - v1.3 ([2026-09-15]): ro-shell permission errata — bare `bash: "deny"` blocked even `git diff` for review shells; `permission.bash` is now a read-only allowlist object (catch-all `"*": "deny"` first, specific allows after — opencode judges the last matching rule, per compound segment), covering git view subcommands, listing-only git forms, and search/inspect utilities; the ro prompt appends a one-line restriction note (§2.2, §2.3).
 
 ## 1. Requirements Overview
 
@@ -80,8 +81,8 @@ cfg.agent["copilot-mx-luna-low"] = {
   mode: "subagent",
   model: "github-copilot/gpt-5.6-luna",
   options: { reasoningEffort: "low" },          // thinking effort mapped per family (§3.6)
-  permission: { edit: "deny", bash: "deny" },   // ro shells are read-only; rw shells omit this key
-  prompt: "<body of the 5 general rules>",      // role contract / trust stated facts without re-checking / minimal necessity with file:line / verify before delivery / report honestly
+  permission: { edit: "deny", bash: { "*": "deny", "git diff*": "allow", "rg*": "allow", … } }, // [2026-09-15] ro shells: edit denied + read-only bash allowlist (git view subcommands, search/inspect utilities); rw shells omit this key
+  prompt: "<body of the 5 general rules>",      // role contract / trust stated facts without re-checking / minimal necessity with file:line / verify before delivery / report honestly — ro shells append a one-line bash-restriction note
 }
 ```
 
@@ -212,7 +213,7 @@ The plugin **stores no keys of its own and goes through no proxy**: credentials 
 ### 3.3 Shells = Config-Hook Injection
 
 - The plugin's `config(cfg)` hook loads `shells.json` and injects `cfg.agent[shell name]` for every enabled shell (shape in §2.3); user-defined agents are never overwritten.
-- Frontmatter mapping: the `tools` field is deprecated → `permission` (ro shells deny `edit`/`bash`); `thoughtLevel` has no corresponding field → `options` (§2.9).
+- Frontmatter mapping: the `tools` field is deprecated → `permission` (ro shells deny `edit` and use a read-only bash allowlist — [2026-09-15], see the v1.3 errata above); `thoughtLevel` has no corresponding field → `options` (§2.9).
 - Global AGENTS.md injection has no per-agent switch; the fixed token cost is accepted.
 - Risk fallback: if config injection does not take effect, degrade to writing `~/.config/opencode/agent/*.md` at startup (dual-track alternative, isolated behind a single switch in shells.ts).
 

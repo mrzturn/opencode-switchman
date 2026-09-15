@@ -14,11 +14,12 @@ export type WatermarkLevel = "ok" | "soft" | "hard" | "force"
 
 export interface ContextThresholds { soft: number; hard: number; force: number }
 
+// Sync note: these fallbacks must stay in sync with DEFAULT_CONTEXT_TOKENS in src/config.ts (currently 50k/90k/130k).
 export function thresholdsOf(options: ContextOptions | undefined): ContextThresholds {
   return {
-    soft: options?.softTokens ?? 60_000,
-    hard: options?.hardTokens ?? 80_000,
-    force: options?.forceTokens ?? 120_000,
+    soft: options?.softTokens ?? 50_000,
+    hard: options?.hardTokens ?? 90_000,
+    force: options?.forceTokens ?? 130_000,
   }
 }
 
@@ -194,7 +195,7 @@ const fmtK = (n: number): string => `${Math.round(n / 1000)}k`
 
 // [2026-09-15]-[subagent soft tiers switch from fraction coefficients to the MAIN session's ABSOLUTE soft/hard
 //  thresholds: subagent context is equally token-expensive as main-session context, so the two graceful advisories
-//  (conserve → hand-off) reuse softTokens/hardTokens (defaults 60k/80k) with no user-facing coefficients, expressed
+//  (conserve → hand-off) reuse softTokens/hardTokens (defaults 50k/90k) with no user-facing coefficients, expressed
 //  against the force anchor (subagentForceTokens when a valid finite number, else forceTokens). The window-clamped
 //  effective cap (capByWindow, already applied at the call site) still pulls the tiers down proportionally, so a tier
 //  never exceeds the real termination line and small-window shells keep headroom before termination; misconfigured
@@ -207,7 +208,7 @@ export function subagentSoftTiersOf(
   const anchor = typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? raw : t.force
   const f0 = t.soft / anchor
   const f1 = t.hard / anchor
-  if (!(f0 > 0 && f0 < f1 && f1 < 1)) return [60_000 / 120_000, 80_000 / 120_000]
+  if (!(f0 > 0 && f0 < f1 && f1 < 1)) return [50_000 / 130_000, 90_000 / 130_000] // fail-open: pure-defaults derivation, in sync with DEFAULT_CONTEXT_TOKENS
   return [f0, f1]
 }
 
