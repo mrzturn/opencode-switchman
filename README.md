@@ -2,6 +2,8 @@
 
 **English** | [中文](./README.zh.md)
 
+> **Also using zcode?** Check out [zcode-switchman](https://github.com/mrzturn/zcode-switchman) — a sibling open-source project by the same author that brings the same orchestration to zcode users.
+
 > Context on a meter. Tasks dispatch themselves.
 
 ![opencode-switchman — the context water level drives the switchman and throws the route](docs/assets/hero.svg)
