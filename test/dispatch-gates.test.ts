@@ -176,10 +176,11 @@ describe("gates: built-in subagent blocking", () => {
 
 describe("config: new behavior-section validation", () => {
   const base = { version: 1, providers: {}, extensions: {} }
-  test("defaults: context 60/80/100k, gates on, builtinAgents deny, injection chain, floor 3000", () => {
+  test("defaults: context 60/80/120k, gates on, builtinAgents deny, injection chain, floor 3000", () => {
     const { config, diagnostics } = validateUserConfig(base)
     expect(diagnostics.filter((d) => d.level === "error")).toEqual([])
-    expect(config.context).toEqual({ gates: true, softTokens: 60_000, hardTokens: 80_000, forceTokens: 120_000, readBudgetTokens: 1_500, autoHandover: true, subagentForceTokens: 100_000, subagentCap: true })
+    // [2026-09-15]-[subagentForceTokens omitted (absent follows forceTokens); the subagentSoftTiers field is retired]
+    expect(config.context).toEqual({ gates: true, softTokens: 60_000, hardTokens: 80_000, forceTokens: 120_000, readBudgetTokens: 1_500, autoHandover: true, subagentCap: true })
     expect(config.builtinAgents.mode).toBe("deny")
     expect(config.injection.mode).toBe("chain")
     expect(config.rules.delegationFloor).toBe(3_000)
@@ -265,15 +266,169 @@ describe("gates: GateResult.redirect (autoRedirect)", () => {
     expect(r.redirect).toBeNull()
   })
 
-  test("gate 6 invalid META deny → redirect=null (index layer synthesizes META for redirection)", () => {
-    const r = checkShell(glmShell.name, glmShell, "没有 META 的 prompt", snap()) // fixture: prompt without META
-    expect(r.deny).toContain("invalid ROUTE_META")
-    expect(r.redirect).toBeNull()
+  // [2026-09-14]-[D5 gate-6 downgrade-to-observe: a missing META no longer denies — the gate synthesizes from lane
+  //  and allows with a note; only a PRESENT-but-wrong META (invalid field value / missing required field) still
+  //  denies, with redirect=null (the producer must fix the line, the plugin does not rewrite it)]-
+  test("gate 6 META missing → allowed with the synthesized-from-lane note; present-but-wrong still denies (redirect=null)", () => {
+    const rMissing = checkShell(glmShell.name, glmShell, "没有 META 的 prompt", snap()) // fixture: prompt without META
+    expect(rMissing.deny).toBeNull()
+    expect(rMissing.note).toContain("synthesized from lane")
+    const rBad = checkShell(glmShell.name, glmShell, 'ROUTE_META {"lane":"main","role":"programmer","capability":"bogus","source":"auto"}\n任务', snap())
+    expect(rBad.deny).toContain("invalid ROUTE_META")
+    expect(rBad.redirect).toBeNull()
   })
 
   test("allow path has deny=null and redirect=null", () => {
     const r = checkShell(copilotShell.name, copilotShell, META, snap())
     expect(r.deny).toBeNull()
     expect(r.redirect).toBeNull()
+  })
+})
+
+// [2026-09-14]-[D3 dispatch:"off" stand-down fixtures: a project that set the top-level "dispatch":"off" in
+//  .switchman/settings.json gets its task calls allowed UNGOVERNED — every task deny class (breaker, gate 7 rw/ro,
+//  built-in blocking, dynamic uninjected deny) stands down, while the non-dispatch surfaces stay on: the subagent cap
+//  gate and the lang gate still deny (they run BEFORE the stand-down), breaker RECORDING in message.part.updated
+//  keeps feeding routing state, and the [ROUTE] line is the only prompt surface that hides. Fixture project A carries
+//  dispatch:"off" with NO lang block in settings.json + the AGENTS.md marker for the lang config — proving the
+//  "settings exists but no valid lang block" case stays silent and falls back; project B has dispatch:"off" and no
+//  lang config at all, proving the lang gate outranks the opt-out (specified gate order)]-
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+
+const d3State = mkdtempSync(join(tmpdir(), "switchman-d3-state-"))
+const d3Config = mkdtempSync(join(tmpdir(), "switchman-d3-config-"))
+const prevD3State = process.env.SWITCHMAN_STATE
+const prevD3Config = process.env.OPENCODE_CONFIG_DIR
+process.env.SWITCHMAN_STATE = d3State
+process.env.OPENCODE_CONFIG_DIR = d3Config
+mkdirSync(d3State, { recursive: true })
+writeFileSync(join(d3State, "capability.json"), JSON.stringify({ source: "artificial-analysis", version: "fixed-empty", fetched_at: Date.now() / 1000, thresholds: { S: 62, A: 55, B: 45 }, models: {} }))
+writeFileSync(join(d3State, "model-catalog.json"), JSON.stringify({ fetched_at: Date.now(), etag: null, index: {} }))
+// hermetic TTL pre-seeds (same trick as auto-redirect.test.ts: zero networking, gates reach gate 4/7 deterministically)
+// + a pre-seeded breaker entry: project A's task calls to this shell must pass under dispatch:"off" (fleet denies)
+const breakerShell = "glm-mx-53-high"
+writeFileSync(
+  join(d3State, "model-matrix.json"),
+  JSON.stringify({
+    generated_at: new Date().toISOString(),
+    combos: Object.fromEntries(loadManifest().shells.map((s) => [s.matrixKey, { status: "ok", latency_ms: 100, checked_at: new Date().toISOString() }])),
+  }),
+)
+for (const [file, body] of Object.entries({
+  "routing.json": { down_agents: { [breakerShell]: "consecutive failures" }, down_expiry: { [breakerShell]: Date.now() / 1000 + 3600 } },
+  "costs.json": { scores: {}, fetched_at: Date.now() / 1000 },
+  "selfupdate.json": { checked_at: Date.now() / 1000, mode: "prod", current: "0.0.0-test", latest: "0.0.0-test", outdated: false },
+  "glm-quota.json": { status: "ok", fetched_at: Date.now() / 1000 },
+  "copilot-quota.json": { status: "ok", fetched_at: Date.now() / 1000 },
+  "ds-balance.json": { status: "ok", fetched_at: Date.now() / 1000 },
+  // subagent cap persistence: this session is terminated BEFORE boot → the cap gate outranks the stand-down
+  "subagent-cap.json": { ses_d3cap: { at: Date.now(), tokens: 150_000 } },
+} as Record<string, unknown>)) {
+  writeFileSync(join(d3State, file), JSON.stringify(body))
+}
+// project A: dispatch off + lang configured ONLY via the AGENTS.md marker (settings.json has no lang block)
+const d3ProjectA = mkdtempSync(join(tmpdir(), "switchman-d3-project-a-"))
+mkdirSync(join(d3ProjectA, ".switchman"), { recursive: true })
+writeFileSync(join(d3ProjectA, ".switchman", "settings.json"), JSON.stringify({ dispatch: "off" }))
+writeFileSync(join(d3ProjectA, "AGENTS.md"), "switchman:lang conversation=en comments=en docs=en\n")
+// project B: dispatch off + NO lang config anywhere → the lang hard gate must still deny task calls
+const d3ProjectB = mkdtempSync(join(tmpdir(), "switchman-d3-project-b-"))
+mkdirSync(join(d3ProjectB, ".switchman"), { recursive: true })
+writeFileSync(join(d3ProjectB, ".switchman", "settings.json"), JSON.stringify({ dispatch: "off" }))
+
+import { SwitchmanPlugin } from "../src/index"
+import { loadManifest, loadRouting } from "../src/state"
+import { renderRouteLine } from "../src/route-line"
+
+type D3Hooks = Awaited<ReturnType<typeof SwitchmanPlugin>>
+const d3Client = {
+  provider: { list: async () => [] },
+  session: {
+    async get(opts: any) { return { data: { id: opts?.path?.id, title: "T", directory: d3ProjectA } } },
+    async list() { return { data: [] } },
+  },
+}
+async function d3Boot(projectDir: string, options: Record<string, unknown> = { matrix: { mode: "legacy" } }): Promise<D3Hooks> {
+  return SwitchmanPlugin({ client: d3Client, directory: projectDir } as any, options as any)
+}
+async function d3Task(hooks: D3Hooks, callID: string, subagentType: string, prompt: string, extraArgs: Record<string, unknown> = {}): Promise<string> {
+  const output: any = { args: { subagent_type: subagentType, prompt, ...extraArgs } }
+  await hooks["tool.execute.before"]!({ tool: "task", sessionID: "ses_d3main", callID } as any, output)
+  return String(output.args.subagent_type)
+}
+async function d3ExpectDeny(hooks: D3Hooks, callID: string, tool: string, args: Record<string, unknown>): Promise<string> {
+  try {
+    await hooks["tool.execute.before"]!({ tool, sessionID: "ses_d3main", callID } as any, { args } as any)
+  } catch (exc) {
+    return String((exc as Error).message ?? exc)
+  }
+  throw new Error(`expected deny throw did not happen: ${tool}`)
+}
+const MAIN_META = 'ROUTE_META {"lane":"main","role":"programmer","capability":"rw","modality":"text","source":"auto"}\nbody'
+
+describe("dispatch off: task deny classes stand down (allowed ungoverned)", () => {
+  let hooks: D3Hooks
+  test("plugin construction (project A, legacy)", async () => {
+    hooks = await d3Boot(d3ProjectA)
+  }, 20_000)
+
+  test("breaker deny stands down: a breaker-downed shell dispatch is allowed", async () => {
+    expect(loadRouting().down_agents[breakerShell]).toBeTruthy() // fleet would deny via gate 4
+    const landed = await d3Task(hooks, "d3-a1", breakerShell, MAIN_META)
+    expect(landed).toBe(breakerShell)
+  })
+
+  test("gate 7 rw/ro deny stands down: an rw task on an ro shell is allowed", async () => {
+    const ro = loadManifest().shells.find((s) => s.capability === "ro")!
+    const landed = await d3Task(hooks, "d3-a2", ro.name, 'ROUTE_META {"lane":"review","role":"planner","capability":"rw","modality":"text","source":"auto"}\nbody')
+    expect(landed).toBe(ro.name)
+  })
+
+  test("built-in agent deny stands down: explore allowed with no redirect rewriting", async () => {
+    const landed = await d3Task(hooks, "d3-a3", "explore", "scan the repo")
+    expect(landed).toBe("explore")
+  })
+
+  test("dynamic uninjected-shell deny stands down: a shell-shaped unregistered name is allowed", async () => {
+    const hooksDyn = await d3Boot(d3ProjectA, {})
+    const landed = await d3Task(hooksDyn, "d3-a4", "glm-mx-nonexist-high", MAIN_META)
+    expect(landed).toBe("glm-mx-nonexist-high")
+  }, 20_000)
+})
+
+describe("dispatch off: non-dispatch surfaces stay on", () => {
+  let hooks: D3Hooks
+  test("plugin construction (project A + B, legacy)", async () => {
+    hooks = await d3Boot(d3ProjectA)
+  }, 20_000)
+
+  test("subagent cap gate still denies a terminated-session resume (cap outranks the stand-down)", async () => {
+    const msg = await d3ExpectDeny(hooks, "d3-b1", "task", { subagent_type: breakerShell, task_id: "ses_d3cap", prompt: MAIN_META })
+    expect(msg).toContain("can never be resumed")
+  })
+
+  test("lang hard gate still denies task calls in an unconfigured project (lang outranks the stand-down)", async () => {
+    const hooksB = await d3Boot(d3ProjectB)
+    const msg = await d3ExpectDeny(hooksB, "d3-b2", "task", { subagent_type: breakerShell, prompt: MAIN_META })
+    expect(msg).toContain("language preference is not configured")
+  }, 20_000)
+
+  test("breaker RECORDING still updates routing state under dispatch off (message.part.updated accounting)", async () => {
+    const shell = loadManifest().shells.find((s) => s.name !== breakerShell && s.pool === "glm")!
+    const part = { type: "tool", state: { status: "error", input: { subagent_type: shell.name }, error: "boom quota" } }
+    await hooks.event!({ event: { type: "message.part.updated", properties: { part } } } as any)
+    await hooks.event!({ event: { type: "message.part.updated", properties: { part } } } as any)
+    // 2 failures within the window trip the breaker; for a registered shell the key is the comboKey (= matrixKey)
+    const routing = loadRouting()
+    expect(routing.down_agents[shell.name] ?? routing.down_agents[shell.matrixKey]).toBeTruthy()
+  })
+
+  test("[ROUTE] line suppressed in a dispatch-off project; the lang line still renders", async () => {
+    const output = { system: [] as string[] }
+    await hooks["experimental.chat.system.transform"]!({ sessionID: "ses_d3main" } as any, output as any)
+    expect(output.system.some((l) => l === renderRouteLine())).toBe(false)
+    expect(output.system.some((l) => l.startsWith("[LANG]"))).toBe(true)
   })
 })

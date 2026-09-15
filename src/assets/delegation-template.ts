@@ -4,7 +4,7 @@ export const DELEGATION_TEMPLATE = `# DELEGATION_V1 Delegation Prompt Template
 
 > Fixed-order template for the main model delegating tasks to empty shells (\`*-mx-*\`).
 > Fixed sections first, variable sections last — API-billed shells (pay-as-you-go) benefit from prefix caching; a byte-stable template head saves 1/30 of the input cost.
-> The opencode-switchman plugin intercepts before task dispatch: a shell-name dispatch missing META or with a broken format will be denied (task tool error) with this sample attached.
+> The opencode-switchman plugin intercepts before task dispatch: ROUTE_META is optional — a dispatch with a missing or unparseable line is allowed with a lane-synthesized META (source=auto) — but declaring it unlocks cross-family review ranking on the review lane and source=user pinning; a PRESENT line with an illegal value or a missing required field is still denied (task tool error) with this sample attached.
 
 ## Template Body (copy and use)
 

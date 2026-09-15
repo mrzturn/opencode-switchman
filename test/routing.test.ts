@@ -165,11 +165,21 @@ describe("six-gate order", () => {
     const d = denyOf("copilot-mx-terra-high", meta(), s)
     expect(d).toContain("temporarily unavailable")
   })
-  test("14 META missing/malformed → deny with sample", () => {
-    expect(denyOf("glm-mx-53-high", "裸任务无 META")).toContain("missing ROUTE_META")
-    expect(denyOf("glm-mx-53-high", "ROUTE_META {broken\n任务")).toContain("malformed")
+  // [2026-09-14]-[D5 gate-6 downgrade-to-observe: missing/malformed → allowed with a lane-synthesized META + note;
+  //  a PRESENT-but-wrong line (invalid field value / missing required field) still denies with the sample hint]-
+  test("14 META missing/malformed → allowed with the synthesized-from-lane note; present-but-wrong still denies", () => {
+    const rMissing = decOf("glm-mx-53-high", "裸任务无 META")
+    expect(rMissing.deny).toBeNull()
+    expect(rMissing.note).toContain("synthesized from lane")
+    const rMalformed = decOf("glm-mx-53-high", "ROUTE_META {broken\n任务")
+    expect(rMalformed.deny).toBeNull()
+    expect(rMalformed.note).toContain("synthesized from lane")
+    // present-but-wrong: a parseable line missing required fields is a producer error → deny stays
     const d = denyOf("glm-mx-53-high", 'ROUTE_META {"lane":"main","modality":"text"}\n任务')
     expect(d).toContain("missing required field")
+    // present-but-wrong: an invalid field value denies too
+    const d2 = denyOf("glm-mx-53-high", 'ROUTE_META {"lane":"main","role":"programmer","capability":"bogus","source":"auto"}\n任务')
+    expect(d2).toContain("invalid ROUTE_META")
   })
   test("15 same-family reviewer → deny (cross-family re-review gate)", () => {
     const d = denyOf("glm-mx-53-high", meta("review", "reviewer", "glm", "ro"), snap())

@@ -90,16 +90,13 @@ describe("autoRedirect: legacy hooks (on by default)", () => {
     hooks = await makeHooks({ matrix: { mode: "legacy" } })
   }, 20_000)
 
-  test("gate 6 META invalid → synthesize ROUTE_META at the prompt tail per the shell's lane and allow (same shell, no reshaping)", async () => {
+  // [2026-09-14]-[D5 gate-6 downgrade-to-observe: missing META no longer triggers a prompt-rewriting retry — gate 6
+  //  synthesizes internally and allows; the prompt is carried as-is (the observe note goes to the status log, not the prompt)]-
+  test("gate 6 META missing → allowed on the same shell, prompt untouched (synthesis lives inside the gate)", async () => {
     const before = "do one thing for me"
     const r = await runTask(hooks, "c1", "copilot-mx-luna-medium", before)
     expect(r.subagentType).toBe("copilot-mx-luna-medium")
-    expect(r.prompt.startsWith(before)).toBe(true)
-    // laneOfShell takes the first hit in LANE_ORDER order (the static manifest lists luna-medium under mechanical/main; mechanical hits first)
-    const lanesStatic = loadManifest().lanes as Record<string, string[]>
-    const lane = (["economy", "mechanical", "main", "hard", "vision", "review"] as const).find((l) => lanesStatic[l]?.includes("copilot-mx-luna-medium"))!
-    const roleOf: Record<string, string> = { economy: "scouter", mechanical: "tester", main: "programmer", hard: "planner", vision: "observer" }
-    expect(r.prompt).toContain(`ROUTE_META {"lane":"${lane}","role":"${roleOf[lane]}","modality":"text","capability":"${lane === "economy" ? "ro" : "rw"}","source":"auto"}`)
+    expect(r.prompt).toBe(before)
   })
 
   test("gate 7 non-vision shell taking an image task → silently redirected to the vision chain-head shell (no throw)", async () => {
@@ -112,9 +109,13 @@ describe("autoRedirect: legacy hooks (on by default)", () => {
     expect(def?.vision).toBe(true)
   })
 
-  test("review lane META invalid → still throws the original deny (cross-family re-review cannot synthesize a META)", async () => {
-    const msg = await expectDeny(hooks, "c3", "copilot-mx-opus5-high-ro", "no META")
-    expect(msg).toContain("invalid ROUTE_META")
+  // [2026-09-14]-[D5: the review-lane corner is downgraded too — a missing META on an ro review shell is synthesized
+  //  (lane=review → role=reviewer, capability=ro) and allowed; gate 7 runs with producer_family absent = cross-family
+  //  preference unenforced (the old "review cannot synthesize" deny is gone)]-
+  test("review lane META missing → allowed with the gate-6 synthesis (no throw)", async () => {
+    const r = await runTask(hooks, "c3", "copilot-mx-opus5-high-ro", "no META")
+    expect(r.subagentType).toBe("copilot-mx-opus5-high-ro")
+    expect(r.prompt).toBe("no META")
   })
 
   test("target guard still refuses (rw meta landing on a ro cross-family shell) → throws the original deny, no redirect", async () => {
@@ -123,13 +124,19 @@ describe("autoRedirect: legacy hooks (on by default)", () => {
     expect(msg).toContain("requires a cross-family perspective")
   })
 
-  test("explore built-in blocking → appends a synthetic ROUTE_META and rewrites subagent_type (no throw)", async () => {
+  // [2026-09-14]-[D5: the built-in-agent redirect no longer appends a synthetic ROUTE_META — the gate-6 synthesizer
+  //  covers the re-check, so subagent_type is rewritten and the prompt is carried as-is]-
+  test("explore built-in blocking → rewrites subagent_type to an economy shell, prompt untouched (no throw)", async () => {
     const cfgAny = (hooks as any)._cfg as Record<string, any>
-    const r = await runTask(hooks, "c5", "explore", "scan the whole repo structure")
+    const before = "scan the whole repo structure"
+    const r = await runTask(hooks, "c5", "explore", before)
     expect(r.subagentType).not.toBe("explore")
     expect(r.subagentType).not.toBe("general")
     expect(cfgAny.agent![r.subagentType]).toBeTruthy()
-    expect(r.prompt).toContain('"lane":"economy","role":"scouter","modality":"text","capability":"ro","source":"auto"')
+    expect(r.prompt).toBe(before)
+    const laneOfTarget = (["economy", "mechanical", "main", "hard", "vision", "review"] as const)
+      .find((l) => (loadManifest().lanes as Record<string, string[]>)[l]?.includes(r.subagentType))
+    expect(laneOfTarget).toBe("economy")
   })
 })
 
@@ -139,8 +146,14 @@ describe("autoRedirect=false: keep throwing the deny", () => {
     hooks = await makeHooks({ matrix: { mode: "legacy" }, dispatch: { autoRedirect: false } })
   }, 20_000)
 
-  test("gate 6 META invalid → throws (no META synthesized)", async () => {
-    const msg = await expectDeny(hooks, "d1", "copilot-mx-luna-medium", "no META")
+  // [2026-09-14]-[D5: gate 6 synthesizes a missing META regardless of autoRedirect (it is a gate disposition, not a
+  //  redirect) — the old "deny bites when autoRedirect:false" corner is gone; a present-but-wrong META still throws]-
+  test("gate 6 META missing → allowed even with autoRedirect off (synthesis is a gate disposition, not a redirect)", async () => {
+    const r = await runTask(hooks, "d1", "copilot-mx-luna-medium", "no META")
+    expect(r.subagentType).toBe("copilot-mx-luna-medium")
+  })
+  test("gate 6 META present-but-wrong → still throws with autoRedirect off (producer error, no redirect)", async () => {
+    const msg = await expectDeny(hooks, "d1b", "copilot-mx-luna-medium", 'ROUTE_META {"lane":"mechanical","role":"programmer","capability":"bogus","source":"auto"}\n任务')
     expect(msg).toContain("invalid ROUTE_META")
   })
   test("explore → throws the built-in blocking deny", async () => {

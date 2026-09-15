@@ -87,3 +87,35 @@ describe("selectInjectableDefs (pool-config keepModelIds)", () => {
     for (const name of ["cp-mx-m2-high", "cp-mx-m2-high-ro", "cp-mx-m3-high", "cp-mx-m3-high-ro"]) expect(kept).toContain(name)
   })
 })
+
+// [2026-09-11]-[injection mode "configured": favorites/visible set non-empty → skip algorithmic chain picks; the face is
+//  keepModels (configured models) ∪ keepModelIds (pool-config) ∪ custom-lane references — runtime dispatch is already gated
+//  by activation ∩ pool selection, so off-configured chain picks are dead per-request task-tool-description context]
+describe("selectInjectableDefs (skipChainPicks / configured mode)", () => {
+  test("face narrows to exactly the configured models' faces — chain-head models outside the configured set drop out", () => {
+    const kept = selectInjectableDefs(defs, { ...opts, skipChainPicks: true, keepModels: new Set(["github-copilot/m2"]) }).map((d) => d.name).sort()
+    // m1 is the S-tier chain head everywhere, but it is not configured → both faces dropped
+    expect(kept).toEqual(["cp-mx-m2-high", "cp-mx-m2-high-ro"])
+  })
+  test("composes with pool-config keepModelIds (pool members stay injectable without chain picks)", () => {
+    const kept = selectInjectableDefs(defs, {
+      ...opts,
+      skipChainPicks: true,
+      keepModels: new Set(["github-copilot/m2"]),
+      keepModelIds: new Set(["m3"]),
+    }).map((d) => d.name).sort()
+    expect(kept).toEqual(["cp-mx-m2-high", "cp-mx-m2-high-ro", "cp-mx-m3-high", "cp-mx-m3-high-ro"])
+  })
+  test("custom-lane references stay force-kept under skipChainPicks", () => {
+    const kept = selectInjectableDefs(defs, {
+      ...opts,
+      skipChainPicks: true,
+      keepModels: new Set(["github-copilot/m2"]),
+      customLanes: { main: ["cp-mx-m1-high-ro"] },
+    }).map((d) => d.name).sort()
+    expect(kept).toEqual(["cp-mx-m1-high-ro", "cp-mx-m2-high", "cp-mx-m2-high-ro"])
+  })
+  test("skipChainPicks with no keep sets at all fail-opens back to the full set (caller gates it on a non-empty configured set)", () => {
+    expect(selectInjectableDefs(defs, { ...opts, skipChainPicks: true })).toEqual(defs)
+  })
+})

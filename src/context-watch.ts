@@ -169,16 +169,18 @@ export function turnBudgetOf(readBudget: number): number {
 //  cap every tool call in that session is denied with a wrap-up instruction, the model's next text-only answer (the
 //  detailed progress summary) becomes the task result returned to the delegator, and the session is permanently
 //  terminated (no task_id resume; fresh dispatches unaffected)]
-export const DEFAULT_SUBAGENT_CAP_TOKENS = 100_000
 export const MIN_SUBAGENT_CAP_TOKENS = 20_000
 export const MAX_SUBAGENT_CAP_TOKENS = 1_000_000
 
+// [2026-09-15]-[subagentForceTokens becomes optional, shared by default: subagent context is equally token-expensive as
+//  main-session context, so an absent/invalid override now follows forceTokens (one absolute termination line for both;
+//  the standalone 100k DEFAULT_SUBAGENT_CAP_TOKENS is retired) — present values keep the 20k..1M defensive clamp]
 /** Effective subagent hard cap in tokens (defensive defaults — config validation already guarantees sane values, but
  *  the plugin-tuple compat shim can bypass it); null = mechanism disabled */
-export function subagentCapOf(context: { subagentCap?: boolean; subagentForceTokens?: number } | undefined): number | null {
+export function subagentCapOf(context: { subagentCap?: boolean; subagentForceTokens?: number; forceTokens?: number } | undefined): number | null {
   if (context?.subagentCap === false) return null
   const raw = context?.subagentForceTokens
-  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return DEFAULT_SUBAGENT_CAP_TOKENS
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return thresholdsOf(context).force
   return Math.min(MAX_SUBAGENT_CAP_TOKENS, Math.max(MIN_SUBAGENT_CAP_TOKENS, Math.round(raw)))
 }
 
@@ -189,6 +191,60 @@ export function capByWindow(cap: number, windowTokens?: number): number {
 }
 
 const fmtK = (n: number): string => `${Math.round(n / 1000)}k`
+
+// [2026-09-15]-[subagent soft tiers switch from fraction coefficients to the MAIN session's ABSOLUTE soft/hard
+//  thresholds: subagent context is equally token-expensive as main-session context, so the two graceful advisories
+//  (conserve → hand-off) reuse softTokens/hardTokens (defaults 60k/80k) with no user-facing coefficients, expressed
+//  against the force anchor (subagentForceTokens when a valid finite number, else forceTokens). The window-clamped
+//  effective cap (capByWindow, already applied at the call site) still pulls the tiers down proportionally, so a tier
+//  never exceeds the real termination line and small-window shells keep headroom before termination; misconfigured
+//  thresholds violating 0 < f0 < f1 < 1 fall back to the pure-defaults derivation (fail-open)]
+export function subagentSoftTiersOf(
+  context: { softTokens?: number; hardTokens?: number; forceTokens?: number; subagentForceTokens?: number } | undefined,
+): [number, number] {
+  const t = thresholdsOf(context)
+  const raw = context?.subagentForceTokens
+  const anchor = typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? raw : t.force
+  const f0 = t.soft / anchor
+  const f1 = t.hard / anchor
+  if (!(f0 > 0 && f0 < f1 && f1 < 1)) return [60_000 / 120_000, 80_000 / 120_000]
+  return [f0, f1]
+}
+
+/** Highest advisory tier for measured tokens vs the effective cap: 0 = none, 1 = conserve, 2 = hand off */
+export function shellSoftTier(tokens: number, cap: number, tiers: readonly [number, number]): 0 | 1 | 2 {
+  if (!(cap > 0)) return 0
+  if (tokens >= Math.floor(tiers[1] * cap)) return 2
+  if (tokens >= Math.floor(tiers[0] * cap)) return 1
+  return 0
+}
+
+/** Advisory copy for a fired tier (tier texts pinned by test/subagent-cap.test.ts; k rendered from the live numbers) */
+export function shellSoftTierMessage(tier: 1 | 2, tokens: number, cap: number): string {
+  if (tier === 1) {
+    return `[SHELL-CONTEXT] measured shell context ≈ ${fmtK(tokens)}/${fmtK(cap)} (conserve): stop batch reads and long pastes — switch to targeted grep and cite only the needed excerpts; finish the current work unit before starting anything new; keep outputs compact.`
+  }
+  return `[SHELL-CONTEXT] measured shell context ≈ ${fmtK(tokens)}/${fmtK(cap)} (hand-off): open no new files or edits; finish the current unit, then end your FINAL message with a compact handover block (completed; key findings with file:line; remaining; next steps) followed by the marker line \`HANDOFF: inline · progress: n/m · next: <one sentence>\` (m = the delegation's work units, n = completed). Your final message is returned to the delegating session as the task result.`
+}
+
+export interface ShellSoftTierInput {
+  terminated: boolean
+  tokens: number | undefined
+  /** effective (window-clamped) cap; null = subagentCap disabled → advisories off */
+  cap: number | null
+  tiers: readonly [number, number]
+  /** highest tier already delivered for this session (0 = none) */
+  delivered: 0 | 1 | 2
+}
+
+/** Pure advisory decision: at most one line per tier, delivered only when the computed tier exceeds the highest
+ *  already delivered; terminated sessions and the disabled cap stay silent (the deny message governs) */
+export function shellSoftTierDecision(input: ShellSoftTierInput): { line: string | null; delivered: 0 | 1 | 2 } {
+  if (input.terminated || input.cap === null || input.tokens === undefined) return { line: null, delivered: input.delivered }
+  const tier = shellSoftTier(input.tokens, input.cap, input.tiers)
+  if (tier === 0 || tier <= input.delivered) return { line: null, delivered: input.delivered }
+  return { line: shellSoftTierMessage(tier, input.tokens, input.cap), delivered: tier }
+}
 
 /** Deny text injected as the tool error inside a capped subagent session — doubles as the wrap-up order */
 export function subagentCapDenyMessage(tokens: number, cap: number): string {

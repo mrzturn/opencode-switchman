@@ -110,6 +110,10 @@ export function injectShellDefs(
 export interface InjectableSelectOpts {
   /** User-defined lane overrides (baseChainFor returns their array directly); referenced shells are force-kept in the injection face */
   customLanes?: Record<string, readonly string[]> | null
+  /** [2026-09-11]-[injection mode "configured": skip the six-lane laneBaseChain picks — the face becomes keepModels ∪ keepModelIds ∪
+   *  custom-lane references only (custom lanes stay force-kept: explicit user routing config, same spirit as the pool-config
+   *  force-keep; dispatch is still gated at runtime by activation ∩ pool selection) */
+  skipChainPicks?: boolean
   /** [2026-09-02]-[available models force-kept (provider/modelId key): injection face = available superset ∪ six-lane
    *  chain selection ∪ custom lanes. When the caller passes all currently available models (provider connected and
    *  chat-capable), no capability-competition pruning happens — favorites / named models never lose their seat to chain
@@ -158,17 +162,22 @@ export function selectInjectableDefs(
   const keep = new Set<string>()
   for (const lane of LANE_ORDER as readonly Lane[]) {
     const custom = opts.customLanes?.[lane]
-    const chain = Array.isArray(custom) && custom.length > 0
-      ? custom
-      : laneBaseChain(lane, {
-        builtin: [],
-        activeShells: new Set(attrs.keys()),
-        shells: attrs,
-        capabilityOf: opts.capabilityOf,
-        billingBoostOf: opts.billingBoostOf,
-        unknownOf: opts.unknownOf,
-        preferredModels: opts.preferredModels,
-      })
+    if (Array.isArray(custom) && custom.length > 0) {
+      for (const name of custom) if (byName.has(name)) keep.add(name)
+      continue
+    }
+    // [2026-09-11]-[skipChainPicks: "configured" injection mode drops algorithmic chain picks (off-configured picks can never
+    //  dispatch past the activation gate and only bloat the per-request task tool description); custom lanes above stay force-kept]
+    if (opts.skipChainPicks) continue
+    const chain = laneBaseChain(lane, {
+      builtin: [],
+      activeShells: new Set(attrs.keys()),
+      shells: attrs,
+      capabilityOf: opts.capabilityOf,
+      billingBoostOf: opts.billingBoostOf,
+      unknownOf: opts.unknownOf,
+      preferredModels: opts.preferredModels,
+    })
     for (const name of chain) if (byName.has(name)) keep.add(name)
   }
   // [2026-09-02]-[available models force-kept: available models that lost chain competition (favorites / named targets / vision shells) are not pruned]-
