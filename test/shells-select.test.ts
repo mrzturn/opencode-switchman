@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { selectInjectableDefs } from "../src/shells"
+import { selectInjectableDefs, shellAgentConfig, SHELL_BODY, RO_SHELL_NOTE } from "../src/shells"
 import type { ShellDefinition } from "../src/catalog"
+import type { ShellRegEntry } from "../src/types"
 
 // [2026-09-04]-[English localization: translate comments; no test-logic change]
 // [2026-09-02]-[context-slimming fixtures: injection face = six-lane chain selection ∪ custom lanes; empty candidates fail-open back to the full set]
@@ -117,5 +118,67 @@ describe("selectInjectableDefs (skipChainPicks / configured mode)", () => {
   })
   test("skipChainPicks with no keep sets at all fail-opens back to the full set (caller gates it on a non-empty configured set)", () => {
     expect(selectInjectableDefs(defs, { ...opts, skipChainPicks: true })).toEqual(defs)
+  })
+})
+
+// [2026-09-15]-[ro shells gain a read-only bash allowlist: bare `bash: "deny"` blocked even `git diff` for review shells;
+//  permission.bash is now an object (catch-all "*" deny first, specific allows after) and the ro prompt carries a
+//  one-line restriction note; rw shells stay key-less and byte-identical]
+describe("shellAgentConfig (ro read-only bash allowlist)", () => {
+  // [2026-09-15]-[read-only bash allowlist fixtures: minimal ShellRegEntry shapes, one per capability face]-
+  function reg(capability: "rw" | "ro"): ShellRegEntry {
+    return {
+      name: `cp-mx-m1-high${capability === "ro" ? "-ro" : ""}`,
+      provider: "github-copilot", modelId: "m1", pool: "copilot", family: "gpt",
+      effort: "high", capability, vision: false,
+      matrixKey: "github-copilot|m1|high", status: "enabled", comboKey: "github-copilot|m1|high",
+    }
+  }
+
+  test("ro shell: edit stays denied, bash is an allowlist object with the catch-all deny first", () => {
+    const cfg = shellAgentConfig(reg("ro"))
+    const permission = cfg.permission as { edit: string; bash: Record<string, string> }
+    expect(permission.edit).toBe("deny")
+    expect(typeof permission.bash).toBe("object")
+    expect(permission.bash["*"]).toBe("deny")
+    expect(Object.keys(permission.bash)[0]).toBe("*")
+  })
+
+  test("ro shell: allowlist contains the specified git view / listing / search patterns", () => {
+    const bash = (shellAgentConfig(reg("ro")).permission as { bash: Record<string, string> }).bash
+    for (const pattern of ["git diff*", "git log*", "rg*", "git stash list*"]) {
+      expect(bash[pattern]).toBe("allow")
+    }
+  })
+
+  test("ro shell: no pattern may allow mutating commands (git push/commit) or mutation-capable utilities (find/sed)", () => {
+    const bash = (shellAgentConfig(reg("ro")).permission as { bash: Record<string, string> }).bash
+    for (const banned of ["git push*", "git commit*", "find*", "sed*"]) {
+      expect(bash[banned]).toBeUndefined()
+    }
+    // defense in depth: no key at all opens a path to push/commit/find/sed
+    for (const key of Object.keys(bash)) {
+      expect(key.startsWith("git push")).toBe(false)
+      expect(key.startsWith("git commit")).toBe(false)
+      expect(key.startsWith("find")).toBe(false)
+      expect(key.startsWith("sed")).toBe(false)
+    }
+  })
+
+  test("ro shell: allow-entry count sanity (>= 35) to catch accidental truncation of the literal list", () => {
+    const bash = (shellAgentConfig(reg("ro")).permission as { bash: Record<string, string> }).bash
+    expect(Object.values(bash).filter((v) => v === "allow").length).toBeGreaterThanOrEqual(35)
+  })
+
+  test("ro shell: prompt = SHELL_BODY + one-line RO_SHELL_NOTE suffix", () => {
+    const prompt = shellAgentConfig(reg("ro")).prompt as string
+    expect(prompt.startsWith(SHELL_BODY)).toBe(true)
+    expect(prompt.endsWith(RO_SHELL_NOTE)).toBe(true)
+  })
+
+  test("rw shell: no permission key at all, prompt stays the bare SHELL_BODY", () => {
+    const cfg = shellAgentConfig(reg("rw"))
+    expect(cfg.permission).toBeUndefined()
+    expect(cfg.prompt).toBe(SHELL_BODY)
   })
 })

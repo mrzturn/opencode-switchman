@@ -58,18 +58,90 @@ export const SHELL_BODY = [
   "6. Context cap: your shell session is hard-capped (~100k tokens). If a tool call is rejected with a context-cap error, stop calling tools immediately and output your detailed work-progress summary (completed work, key findings with file:line evidence, remaining work, next steps) as your final text answer — it is returned to the delegating session as the task result. Never repeat a denied call.",
 ].join("\n")
 
+// [2026-09-15]-[ro shells gain a read-only bash allowlist: bare `bash: "deny"` blocked even `git diff` for review/observe
+//  shells. permission.bash becomes an object — opencode semantics: wildcard "*" = zero-or-more chars, LAST matching rule
+//  wins (so the catch-all deny sits first, specific allows after), and compound commands are judged per segment (each
+//  segment must pass the rules on its own)]-[impact: ro shells can inspect (git view subcommands + search/inspect
+//  utilities) while edits and every other command stay denied; rw shells unchanged (no permission key)]
+// One-line prompt suffix for ro shells only: pre-arm the restriction so review shells report findings instead of attempting writes.
+export const RO_SHELL_NOTE = "Bash is limited to view/search commands (git diff/log/show/status, rg, grep, cat, ls, etc.); file edits and state-changing commands are denied — report findings, never attempt writes."
+
+/** [2026-09-15]-[read-only bash allowlist (opencode permission object; see header note above). Order matters: catch-all
+ *  "*" deny FIRST, specific "allow" entries after (last matching rule wins). Deliberately NOT allowed: find / sed / awk /
+ *  echo — all carry mutation forms (find -delete/-exec, sed -i, `echo … > file` redirection writes). Residual caveat: a
+ *  parsed `git diff … > out` redirect may pass the pattern — accepted, `edit: "deny"` still covers the edit/write/patch
+ *  tools. Compound commands are judged per segment by opencode, so `git diff && rm …` still falls to the catch-all deny] */
+export const RO_BASH_PERMISSION: Record<string, "allow" | "deny"> = {
+  "*": "deny",
+  // git read-only subcommands with arbitrary (non-mutating) arguments
+  "git status*": "allow",
+  "git diff*": "allow",
+  "git log*": "allow",
+  "git show*": "allow",
+  "git blame*": "allow",
+  "git rev-parse*": "allow",
+  "git ls-files*": "allow",
+  "git grep*": "allow",
+  "git shortlog*": "allow",
+  "git describe*": "allow",
+  "git merge-base*": "allow",
+  "git stash list*": "allow",
+  // git listing forms only — bare/arg variants mutate (branch -d/-m, tag -d, remote add/rm), so allow ONLY the listing shapes
+  "git branch": "allow",
+  "git branch -a*": "allow",
+  "git branch -v*": "allow",
+  "git branch --list*": "allow",
+  "git branch --show-current": "allow",
+  "git tag": "allow",
+  "git tag -l*": "allow",
+  "git tag --list*": "allow",
+  "git tag -n *": "allow",
+  "git remote": "allow",
+  "git remote -v": "allow",
+  "git worktree list*": "allow",
+  "git config --get*": "allow",
+  "git config --list*": "allow",
+  "git config -l*": "allow",
+  // search / inspect utilities (read-only by nature)
+  "rg*": "allow",
+  "grep*": "allow",
+  "ls*": "allow",
+  "fd*": "allow",
+  "cat*": "allow",
+  "head*": "allow",
+  "tail*": "allow",
+  "wc*": "allow",
+  "tree*": "allow",
+  "stat*": "allow",
+  "file*": "allow",
+  "du*": "allow",
+  "df*": "allow",
+  "pwd": "allow",
+  "which*": "allow",
+  "sort*": "allow",
+  "uniq*": "allow",
+  "basename*": "allow",
+  "dirname*": "allow",
+  "realpath*": "allow",
+  "date": "allow",
+  "whoami": "allow",
+}
+
 /** Single shell → opencode AgentConfig (for config-hook injection) */
 export function shellAgentConfig(s: ShellRegEntry): Record<string, unknown> {
+  const ro = s.capability === "ro"
   const cfg: Record<string, unknown> = {
     description: shellDescription(s),
     mode: "subagent",
     model: `${s.provider}/${s.modelId}`,
-    prompt: SHELL_BODY,
+    // [2026-09-15]-[ro shells append the one-line bash-restriction note so the model pre-empts denied write attempts]-
+    prompt: ro ? `${SHELL_BODY}\n${RO_SHELL_NOTE}` : SHELL_BODY,
   }
   const options = effortOptions(s.family, s.effort, s.modelId, s.provider)
   if (options) cfg.options = options
-  if (s.capability === "ro") {
-    cfg.permission = { edit: "deny", bash: "deny" }
+  if (ro) {
+    // fresh copy per config: opencode owns the injected object, shared references would couple agent entries
+    cfg.permission = { edit: "deny", bash: { ...RO_BASH_PERMISSION } }
   }
   return cfg
 }
