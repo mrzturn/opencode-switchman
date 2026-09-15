@@ -2,7 +2,7 @@
 
 This project follows [Semantic Versioning](https://semver.org/). Release notes describe user-visible behavior; implementation details remain in the technical specification and commit history.
 
-## [Unreleased]
+## [1.1.0] - 2026-09-15
 
 ### Added
 
