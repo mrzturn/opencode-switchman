@@ -33,6 +33,7 @@ import {
   budgetGateDecision, estimateReadRange, estimateOutputTokens, readBudgetOf, turnBudgetOf,
   capThresholdsByWindow, subagentCapOf, capByWindow,
   subagentCapDenyMessage, subagentResumeDenyMessage, ctxControlMarkerOf, pausedWindowWarning,
+  subagentSoftTiersOf, shellSoftTierDecision,
 } from "./context-watch"
 import type { CtxControlAction, ReadEstimate, FileSample, ContextThresholds } from "./context-watch"
 import { backupSession, compactSession, v1HandoverPort, type HandoverResult } from "./handover-core"
@@ -60,7 +61,9 @@ import { LANE_ORDER, DEFAULT_LANG_CANDIDATES } from "./types"
 import type { SwitchmanOptions, Lane, LaneResult, Pool, ShellRegEntry, ModelKey } from "./types"
 import { WorkspaceTracker, DEFAULT_WORKSPACE_DIRNAME, type EnsuredWorkspace } from "./workspace"
 import { TmuxPaneManager, serverOriginOf } from "./tmux"
-import { loadLangConfig, renderLangLine, renderAskDirective, saveLangFromQuestion, langGateDecision, LANG_GATE_TOOLS, hasLangMarkerQuestions } from "./lang-config"
+import { loadLangConfig, renderLangLine, renderAskDirective, saveLangFromQuestion, langGateDecision, LANG_GATE_TOOLS, hasLangMarkerQuestions, detectUiLocale } from "./lang-config"
+import { renderRouteLine, routeLineEnabled } from "./route-line"
+import { loadDispatchMode } from "./dispatch-mode"
 import { detectMode, readConfigured, normalizeProviderListResponse } from "./activation"
 import type { MatrixModeOption } from "./activation"
 // [2026-08-29]-[event/parameter shape-extraction pure functions moved to helpers.ts: the entry must not export non-plugin functions, otherwise
@@ -163,6 +166,10 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   //  and the session can never be resumed via task_id; fresh dispatches are unaffected]
   const shellWatermark = new Map<string, { tokens: number; at: number }>()
   const terminatedSessions = new Set<string>()
+  // [2026-09-14]-[subagent soft tiers: per-session highest advisory tier delivered (conserve=1 / hand-off=2); dedup is
+  //  in-memory only — one long-lived plugin process, no state file — cleared on session.deleted; an opencode restart
+  //  re-arms the advisories once per shell session (idempotent reminders; the hard cap keeps its persistent registry)]
+  const shellSoftTierDelivered = new Map<string, 0 | 1 | 2>()
   // [2026-09-05]-[v1 read budget: per-turn self-read spend (resets each user turn), watermark sample history for
   //  pace estimation, and last-seen user message id for turn-boundary detection (assistant parentID comparison)]
   const turnReadUsage = new Map<string, { used: number; at: number }>()
@@ -414,6 +421,29 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     } catch { return null }
   }
 
+  /**
+   * [SHELL-CONTEXT] advisory line for the system.transform shell branch: tracks the live shellWatermark measurement
+   * (exactly how [WATERMARK:SESSION] tracks main sessions), fires at most once per soft tier; terminated sessions and
+   * subagentCap:false stay silent (the deny message governs)
+   * [2026-09-14]-[D1: the graceful path before the hard cap termination backstop; HANDOFF relay contract = agents-md §2 item 5]
+   * [2026-09-15]-[tiers now derive from the MAIN session's absolute soft/hard thresholds (shared with the main session,
+   *  no user-facing fraction coefficients), still pulled down proportionally by the effective window-clamped cap]
+   */
+  function shellSoftTierLine(sessionID: string | undefined): string | null {
+    if (!sessionID) return null
+    try {
+      const d = shellSoftTierDecision({
+        terminated: terminatedSessions.has(sessionID),
+        tokens: shellWatermark.get(sessionID)?.tokens,
+        cap: effectiveSubagentCap(sessionID),
+        tiers: subagentSoftTiersOf(options.context),
+        delivered: shellSoftTierDelivered.get(sessionID) ?? 0,
+      })
+      shellSoftTierDelivered.set(sessionID, d.delivered)
+      return d.line
+    } catch { return null }
+  }
+
   /** [2026-09-05]-[artifact workspace event path: record + ensure a main session's folder; shell/internal sessions filtered
    *  (call AFTER the agent classification so isShellOrInternalSession sees the registration); logs only on create/rename] */
   function noteWorkspaceSession(info: { id?: unknown; title?: unknown; directory?: unknown; created?: unknown } | null | undefined): void {
@@ -449,8 +479,11 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     } catch { return null }
   }
 
-  /** [2026-09-05]-[artifact workspace dispatch trace: one JSONL line per allowed delegation (lane/role from ROUTE_META); fail-open no-op] */
-  function traceDispatch(sessionID: string | undefined, shellName: string, prompt: unknown, redirected: boolean): void {
+  /** [2026-09-05]-[artifact workspace dispatch trace: one JSONL line per allowed delegation (lane/role from ROUTE_META); fail-open no-op]
+   *  [2026-09-14]-[D5: when the META was missing/malformed it was synthesized by gate 6 — the trace falls back to
+   *  laneOfShell inference over the caller's lane map and logs source:"synthesized" so dispatches.jsonl keeps lane
+   *  attribution without inventing producer data] */
+  function traceDispatch(sessionID: string | undefined, shellName: string, prompt: unknown, redirected: boolean, lanes?: Record<string, string[]>): void {
     try {
       if (!sessionID || isShellOrInternalSession(sessionID)) return
       // [2026-09-06]-[tmux pane mirroring: record the dispatch intent; the matching child session.created consumes it]
@@ -460,12 +493,15 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         if (q.length > 8) q.splice(0, q.length - 8)
         pendingTask.set(sessionID, q)
       }
-      const [meta] = parseRouteMeta(prompt)
+      const [meta, metaErr] = parseRouteMeta(prompt)
+      const synthesized = metaErr === "missing" || metaErr === "malformed"
       workspace.traceDispatch(sessionID, {
         ts: nowIso(), session: sessionID, shell: shellName,
-        lane: typeof meta?.lane === "string" ? meta.lane : undefined,
+        lane: typeof meta?.lane === "string"
+          ? meta.lane
+          : synthesized && lanes ? laneOfShell(shellName, lanes) ?? undefined : undefined,
         role: typeof meta?.role === "string" ? meta.role : undefined,
-        source: typeof meta?.source === "string" ? meta.source : undefined,
+        source: synthesized ? "synthesized" : typeof meta?.source === "string" ? meta.source : undefined,
         redirected: redirected || undefined,
       })
     } catch { /* fail-open */ }
@@ -646,8 +682,14 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     //  model missed favorites/visible set (runtime chains still narrow to pool selection ∩ activation, gate 5.5 unchanged)]-
     const poolConfiguredIds = new Set<string>()
     for (const ids of Object.values(loadPoolConfig())) for (const id of ids) poolConfiguredIds.add(id)
+    // [2026-09-11]-[injection mode "configured": favorites/visible set non-empty → skip chain picks, the face is exactly the
+    //  configured models' shells ∪ custom-lane/pool-config force-keeps (runtime dispatch is already gated by activation (configured ∪
+    //  session models) ∩ pool selection, so off-configured chain picks are dead per-request task-tool-description context); an
+    //  empty configured set behaves identically to "chain" (fail-open)]
+    const configuredNarrowing = options.injection!.mode === "configured" && validConfiguredModels.length > 0
     defs = selectInjectableDefs(defs, {
       customLanes: (options.lanes as Record<string, readonly string[]> | null) ?? null,
+      skipChainPicks: configuredNarrowing,
       keepModels: options.injection!.mode === "all" ? new Set(supersetModels) : new Set(validConfiguredModels),
       keepModelIds: poolConfiguredIds,
       preferredModels: new Set(validConfiguredModels.map((m) => m.slice(m.indexOf("/") + 1))),
@@ -1423,7 +1465,16 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         // shell subagents/internal agents get no dispatcher rules or banner (their role is already the executor; saves tokens and prevents role confusion);
         // [2026-08-29]-[re-review P1 fix — first-turn timing: transform runs before chat.params — rely on the agent-name classification pre-registered
         //  by session.created (dynamic = skipSystemInjection; legacy = sessionAgent ∪ internal agent names), not on chat.params arriving first]
+        //  [2026-09-14]-[the bare early-return becomes a shell branch: dispatched shell sessions (never internal
+        //  title/compaction/summary) get at most one [SHELL-CONTEXT] soft-tier advisory pushed before returning —
+        //  the transform re-runs on every model request, so the advisory tracks the live shellWatermark measurement;
+        //  internal sessions and the zero-injection path keep returning with nothing injected]-
         if (input.sessionID) {
+          if (isShellAgentSession(input.sessionID)) {
+            const advisory = shellSoftTierLine(input.sessionID)
+            if (advisory) output.system.push(advisory)
+            return
+          }
           if (dynamic) {
             if (manager?.skipSystemInjection(input.sessionID)) return
           } else {
@@ -1445,7 +1496,12 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           if (loaded) output.system.push(renderLangLine(loaded.cfg, loaded.source))
           else if (options.lang!.ask !== false && input.sessionID && !langAsked.has(input.sessionID) && !langGateWaived.has(input.sessionID)) {
             langAsked.add(input.sessionID)
-            output.system.push(renderAskDirective(options.lang!.candidates ?? DEFAULT_LANG_CANDIDATES))
+            // [2026-09-14]-[D4 locale-following ask: question texts follow the detected UI locale (env LC_ALL → LANG,
+            //  normalized, fail-open "en"); the `switchman-lang n/3: ` marker prefix stays byte-stable so the plugin-side
+            //  capture anchor is locale-independent; the directive body/deny copy stay English (model-facing)]
+            const ui = detectUiLocale()
+            appendStatusLog(`lang ask locale=${ui.locale} (${ui.via === "default" ? "default" : `env ${ui.via}`})`)
+            output.system.push(renderAskDirective(options.lang!.candidates ?? DEFAULT_LANG_CANDIDATES, ui.locale))
           }
         }
         // [2026-08-29]-[fail-open visibility: explicit warning when injection crashes — don't dispatch; do it yourself or tell the user]-
@@ -1462,7 +1518,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         const rulesAlreadyPresent = Array.isArray(output.system)
           && output.system.some((p) => typeof p === "string" && p.includes(rulesMarker))
         if (options.rules!.enabled && !rulesAlreadyPresent) {
-          // [2026-09-04]-[rules interpolation: delegation floor and the three watermark thresholds come from user jsonc (defaults 3k/60k/80k/120k)]
+          // [2026-09-04]-[rules interpolation: delegation floor and the three watermark thresholds come from user jsonc]
+          // [2026-09-15]-[default watermarks retuned 60/80/120k → 50/90/130k (DEFAULT_CONTEXT_TOKENS in src/config.ts)]
           const t = sessionThresholds(input.sessionID)
           let rules = AGENTS_MD.trimEnd()
             .replaceAll("{{DELEGATION_FLOOR}}", String(options.rules!.delegationFloor ?? DEFAULT_DELEGATION_FLOOR))
@@ -1491,6 +1548,19 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           // [2026-09-05]-[todo nudge line: same gate as the watermark line — re-surfaces the unfinished todo list every turn]
           const todoLine = sessionTodoLine(input.sessionID)
           if (todoLine) output.system.push(todoLine)
+          // [2026-09-14]-[D2 per-turn [ROUTE] line: facts first, rule last — pushed after the watermark/TODO lines inside
+          //  the same rules||banner block (zero-injection wish respected); carries the token cost-model sentence + the
+          //  every-substantive-action declaration discipline]
+          //  [2026-09-14]-[D3: the [ROUTE] line is the only prompt surface that hides under dispatch:"off" (per-request
+          //  disk re-read, same stickiness as the lang line); watermark/TODO/banner stay on (information, not governance)]-
+          if (routeLineEnabled(
+            Boolean(options.rules!.enabled),
+            Boolean(options.banner!.enabled),
+            loadDispatchMode(pluginDirectory, options.workspace?.dirname || DEFAULT_WORKSPACE_DIRNAME) === "off",
+          )) {
+            const routeLine = renderRouteLine()
+            if (routeLine) output.system.push(routeLine)
+          }
         }
       } catch (exc) {
         appendStatusLog(`rules/banner fail-open: ${exc}`)
@@ -1624,6 +1694,22 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         if (denySkip.has(input.callID)) throw e
         // internal error on our side (never one of our own denies) → fail-open, do not break the tool path
       }
+      // [2026-09-14]-[D3 dispatch:"off" opt-out: a project that set the top-level "dispatch":"off" in
+      //  <workspace-dirname>/settings.json stands down ALL dispatch governance for task calls — the entire task path
+      //  below is skipped (uninjected-shell deny + its autoRedirect, built-in agent deny + its autoRedirect,
+      //  checkShell gates 1-7 including the breaker deny and gate 6/7) and the call is allowed ungoverned (a project
+      //  that opted out must not be denied by governance it turned off; nothing left to redirect from either).
+      //  Not dispatch governance, therefore still on: the cap gate and lang gate above, read/watermark gates,
+      //  auto-handover, breaker RECORDING in message.part.updated, banner/watermark/TODO/[LANG] lines. Settings are
+      //  re-read per call → toggling takes effect on the next task call without a restart; fail-open on errors]-
+      if (input.tool === "task") {
+        try {
+          if (loadDispatchMode(pluginDirectory, options.workspace?.dirname || DEFAULT_WORKSPACE_DIRNAME) === "off") {
+            appendStatusLog(`dispatch off: task call allowed ungoverned (subagent_type='${String(output.args?.subagent_type ?? "")}')`)
+            return
+          }
+        } catch { /* fail-open */ }
+      }
       // [2026-09-04]-[read watermark gate: read-class/bash tools other than task are intercepted by tier per the measured session watermark]
       if (input.tool !== "task") {
         // [2026-09-05]-[no-vision image read guard runs first: image files are skipped by the read budget gate (BINARY_EXT),
@@ -1692,13 +1778,14 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         if (!shell) {
           if (dynamic && shellLikeName(agent)) {
             const hint = firstCandidateHint(agent, ctx, gateExtras)
-            // [2026-09-04]-[autoRedirect: uninjected-shell deny — when the META is valid and the chain-head candidate passes the guard, silently redirect and allow]
+            // [2026-09-04]-[autoRedirect: uninjected-shell deny — when the chain-head candidate passes the guard, silently redirect and allow]
+            //  [2026-09-14]-[D5: dropped the META-validity precondition — a missing/malformed META is synthesized by
+            //  gate 6 itself during the redirect guard's re-check, so the candidate is tried regardless of the prompt's META]-
             if (autoRedirectOn) {
-              const [meta, metaErr] = parseRouteMeta(output.args?.prompt)
-              const cand = meta !== null && metaErr === null ? firstCandidateShell(agent, ctx, gateExtras) : null
+              const cand = firstCandidateShell(agent, ctx, gateExtras)
               if (cand && tryRedirect(cand, output.args?.prompt)) {
                 appendStatusLog(`auto-redirect ${agent} → ${cand} (uninjected shell; redirected to the chain-head candidate)`)
-                traceDispatch(input.sessionID, cand, output.args?.prompt, true)
+                traceDispatch(input.sessionID, cand, output.args?.prompt, true, gateSnap.lanes)
                 noteResumedChild(input.sessionID, cand, output.args)
                 return
               }
@@ -1711,65 +1798,44 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           // [2026-09-04]-[built-in subagent blocking: explore/general compete with shell routing; default deny with a redirect suggestion]
           const builtinDeny = builtinAgentDeny(agent, options.builtinAgents!.mode ?? "deny", (lane) => laneHeadCandidate(lane, ctx))
           if (builtinDeny) {
-            // [2026-09-04]-[autoRedirect: built-in agent blocking — append a synthetic ROUTE_META to the prompt tail and redirect to the corresponding lane's chain head]
+            // [2026-09-04]-[autoRedirect: built-in agent blocking — redirect to the corresponding lane's chain head]
+            //  [2026-09-14]-[D5: the synthetic ROUTE_META append is gone — gate 6 synthesizes the missing META itself
+            //  during the redirect guard's re-check, so the prompt is carried as-is (no rewriting at this site)]-
             if (autoRedirectOn) {
               const lane = BUILTIN_SUBAGENTS[agent]
               const cand = lane ? laneHeadCandidate(lane, ctx) : null
-              if (cand) {
-                const role = lane === "economy" ? "scouter" : "generic"
-                const metaLine = `ROUTE_META {"lane":"${lane}","role":"${role}","modality":"text","capability":"ro","source":"auto"}`
-                const basePrompt = typeof output.args?.prompt === "string" ? output.args.prompt : ""
-                const newPrompt = `${basePrompt}${basePrompt.endsWith("\n") ? "" : "\n"}${metaLine}`
-                if (tryRedirect(cand, newPrompt)) {
-                  output.args.prompt = newPrompt
-                  appendStatusLog(`auto-redirect ${agent} → ${cand} (built-in agent blocked; appended a synthetic ROUTE_META)`)
-                  traceDispatch(input.sessionID, cand, newPrompt, true)
-                  noteResumedChild(input.sessionID, cand, output.args)
-                  return
-                }
+              if (cand && tryRedirect(cand, output.args?.prompt)) {
+                appendStatusLog(`auto-redirect ${agent} → ${cand} (built-in agent blocked)`)
+                traceDispatch(input.sessionID, cand, output.args?.prompt, true, gateSnap.lanes)
+                noteResumedChild(input.sessionID, cand, output.args)
+                return
               }
             }
             denySkip.add(input.callID)
             throw new Error(builtinDeny)
           }
           appendStatusLog(noteUnknownAgent(agent))
-          traceDispatch(input.sessionID, agent, output.args?.prompt, false)
+          traceDispatch(input.sessionID, agent, output.args?.prompt, false, gateSnap.lanes)
           noteResumedChild(input.sessionID, agent, output.args)
           return
         }
         const r = checkShell(agent, shell, output.args?.prompt, gateSnap)
         if (r.note) appendStatusLog(r.note)
         if (!r.deny) {
-          traceDispatch(input.sessionID, agent, output.args?.prompt, false)
+          traceDispatch(input.sessionID, agent, output.args?.prompt, false, gateSnap.lanes)
           noteResumedChild(input.sessionID, agent, output.args)
         }
         if (r.deny) {
           // [2026-09-04]-[autoRedirect: denied and a hint candidate is already computed → one-hop silent redirect (guard re-check), zero retries]
           if (tryRedirect(r.redirect, output.args?.prompt)) {
             appendStatusLog(`auto-redirect ${agent} → ${r.redirect} (${r.deny.slice(0, 60)})`)
-            traceDispatch(input.sessionID, r.redirect ?? agent, output.args?.prompt, true)
+            traceDispatch(input.sessionID, r.redirect ?? agent, output.args?.prompt, true, gateSnap.lanes)
             noteResumedChild(input.sessionID, r.redirect ?? agent, output.args)
             return
           }
-          // [2026-09-04]-[autoRedirect: gate 6 META invalid — synthesize a ROUTE_META at the prompt tail for non-review lanes and re-check the same
-          //  shell for pass (review requires a real cross-family producer_family, cannot be synthesized; deny stands)]
-          if (autoRedirectOn && !r.redirect && r.deny.includes("invalid ROUTE_META")) {
-            const lane = laneOfShell(agent, gateSnap.lanes) ?? "main"
-            if (lane !== "review") {
-              const role = ({ hard: "planner", main: "programmer", mechanical: "tester", economy: "scouter", vision: "observer" } as Record<string, string>)[lane] ?? "programmer"
-              const metaLine = `ROUTE_META {"lane":"${lane}","role":"${role}","modality":"${lane === "vision" ? "image" : "text"}","capability":"${lane === "economy" ? "ro" : "rw"}","source":"auto"}`
-              const basePrompt = typeof output.args?.prompt === "string" ? output.args.prompt : ""
-              const newPrompt = `${basePrompt}${basePrompt.endsWith("\n") ? "" : "\n"}${metaLine}`
-              const g = checkShell(agent, shell, newPrompt, gateSnap)
-              if (!g.deny && !(g.redirect && g.redirect !== agent)) {
-                output.args.prompt = newPrompt
-                appendStatusLog(`auto-redirect ${agent} (added ROUTE_META, ${lane} lane)`)
-                traceDispatch(input.sessionID, agent, newPrompt, true)
-                noteResumedChild(input.sessionID, agent, output.args)
-                return
-              }
-            }
-          }
+          // [2026-09-14]-[D5: the former gate-6 META-synthesis retry is gone — missing/malformed META no longer denies
+          //  (gate 6 synthesizes + observes before gate 7), and a present-but-wrong META is a producer error that must
+          //  be corrected by the delegator, not masked by a plugin-side rewrite]-
           denySkip.add(input.callID)
           throw new Error(r.deny)
         }
@@ -1983,6 +2049,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           if (sid) {
             sessionWatermark.delete(sid)
             shellWatermark.delete(sid) // [2026-09-06]-[subagent cap watermark follows the same cleanup; terminatedSessions is intentionally NOT cleaned — termination is permanent]
+            shellSoftTierDelivered.delete(sid) // [2026-09-14]-[subagent soft-tier dedup follows the session out (re-arm on a fresh same-id session is impossible; keeps the map bounded)]
             turnReadUsage.delete(sid)
             wmHistory.delete(sid)
             lastUserMsg.delete(sid)

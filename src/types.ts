@@ -296,8 +296,11 @@ export interface ContextOptions {
   readBudgetTokens?: number
   /** [2026-09-06]-[subagent hard cap (tokens): when a shell subagent's measured context reaches it, every further tool
    *  call in that session is denied with a wrap-up order (the next text-only answer = detailed progress summary = task
-   *  result) and the session is permanently terminated (no task_id resume); default 100_000, clamped 20k..1M, window-capped
-   *  at 90%; subagentCap: false disables the mechanism entirely] */
+   *  result) and the session is permanently terminated (no task_id resume); clamped 20k..1M when present, window-capped
+   *  at 90%; subagentCap: false disables the mechanism entirely]
+   *  [2026-09-15]-[now optional: absent follows forceTokens — the shell shares the main session's absolute termination
+   *  line by default; the fraction-coefficient subagentSoftTiers option is retired, the two soft-tier advisories derive
+   *  from the same shared soft/hard thresholds instead] */
   subagentForceTokens?: number
   subagentCap?: boolean
 }
@@ -306,7 +309,10 @@ export interface ContextOptions {
 export interface BuiltinAgentsOptions { mode?: "deny" | "allow" }
 // [2026-09-04]-[Injection surface mode: chain = six-lane chain picks ∪ favorites ∪ visible set (saves 6-10k/session; off-chain models
 //  explicitly named get the denyUninjected hint); all = full available set (old behavior, any available model can be explicitly named)]
-export interface InjectionOptions { mode?: "chain" | "all" }
+// [2026-09-11]-[mode "configured": favorites/visible set non-empty → the injection face narrows to exactly those models' shells
+//  (custom-lane/pool-config force-keeps stay); runtime dispatch is already gated by activation ∩ pool selection, so off-configured
+//  chain picks are dead per-request context in the task tool description; empty configured set = identical to chain (fail-open)]
+export interface InjectionOptions { mode?: "chain" | "all" | "configured" }
 // [2026-09-04]-[deny auto-redirect: wrong landing spots are silently rewritten inside tool.execute.before to the chain-head candidate (one hop + same-snapshot
 //  guard re-check), sparing the main model repeated deny-and-retry token waste; default true]
 export interface DispatchOptions { autoRedirect?: boolean }

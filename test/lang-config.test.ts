@@ -8,7 +8,7 @@ import { join } from "node:path"
 import {
   normalizeLangValue, parseLangSettings, parseAgentsMdLangMarker, loadLangConfig, saveLangConfig,
   renderAskDirective, renderLangLine, parseQuestionAnswers, saveLangFromQuestion, langGateDecision,
-  hasLangMarkerQuestions, LANG_SETTINGS_FILE,
+  hasLangMarkerQuestions, LANG_SETTINGS_FILE, UI_LOCALE_ASK_TEXT, normalizeUiLocale, detectUiLocale,
 } from "../src/lang-config"
 import { validateUserConfig, resolveEffectiveOptions } from "../src/config"
 import { DEFAULT_LANG_CANDIDATES } from "../src/types"
@@ -154,6 +154,82 @@ describe("lang-config: IO (load/save/capture)", () => {
     expect(saveLangFromQuestion({ questions: [{ question: "unrelated?" }] }, out, dir, ".switchman")).toBeNull()
     expect(saveLangFromQuestion(args, "user declined to answer", dir, ".switchman")).toBeNull()
     rmSync(dir, { recursive: true, force: true })
+  })
+})
+
+// [2026-09-14]-[D4 locale-following ask: the 11-tag question table localizes ONLY the user-facing question texts —
+//  the `switchman-lang n/3: ` marker prefix (the plugin-side capture anchor) stays byte-stable across every locale,
+//  and the directive body/deny copy stay English. Locale chain = env LC_ALL → LANG → "en" (opencode exposes no
+//  locale surface to plugins), read at ask time, fail-open]
+describe("lang-config: locale-following ask (D4)", () => {
+  const TAGS = ["en", "zh-CN", "zh-TW", "ja", "ko", "es", "fr", "de", "it", "pt", "ru"]
+
+  test("marker prefix `switchman-lang n/3: ` byte-exact across 11 tags × 3 questions", () => {
+    for (const tag of TAGS) {
+      const asks = UI_LOCALE_ASK_TEXT[tag]!
+      expect(asks).toHaveLength(3)
+      for (let i = 0; i < 3; i++) expect(asks[i]!.startsWith(`switchman-lang ${i + 1}/3: `)).toBe(true)
+      const d = renderAskDirective(DEFAULT_LANG_CANDIDATES, tag)
+      expect(d).toContain("switchman-lang 1/3: ")
+      expect(d).toContain("switchman-lang 2/3: ")
+      expect(d).toContain("switchman-lang 3/3: ")
+    }
+  })
+
+  test("zh-CN rendering matches the approved copy; the directive body stays English", () => {
+    expect(UI_LOCALE_ASK_TEXT["zh-CN"]).toEqual([
+      "switchman-lang 1/3: 本项目的对话语言（你的回复与推理）？",
+      "switchman-lang 2/3: 代码注释与提交信息用什么语言？",
+      "switchman-lang 3/3: 生成的文档（计划、PRD、设计文档、报告）用什么语言？",
+    ])
+    const d = renderAskDirective(DEFAULT_LANG_CANDIDATES, "zh-CN")
+    expect(d).toContain("本项目的对话语言（你的回复与推理）？")
+    expect(d).toContain("never write the settings file yourself")
+    expect(d).toContain("HARD GATE")
+  })
+
+  test("unknown locale → English fallback (fail-open en)", () => {
+    expect(normalizeUiLocale("xx-YY")).toBeNull()
+    expect(detectUiLocale({}).locale).toBe("en")
+    const d = renderAskDirective(DEFAULT_LANG_CANDIDATES, "xx-YY")
+    expect(d).toContain("Conversation language for this project (your replies and reasoning)?")
+    // default parameter keeps existing single-argument callers on English questions
+    expect(renderAskDirective(DEFAULT_LANG_CANDIDATES)).toBe(renderAskDirective(DEFAULT_LANG_CANDIDATES, "en"))
+  })
+
+  test("normalization: env-style and script values map onto known tags", () => {
+    expect(normalizeUiLocale("zh_CN.UTF-8")).toBe("zh-CN")
+    expect(normalizeUiLocale("zh-HK")).toBe("zh-TW")
+    expect(normalizeUiLocale("zh-Hant")).toBe("zh-TW")
+    expect(normalizeUiLocale("zh-TW")).toBe("zh-TW")
+    expect(normalizeUiLocale("zh_SG")).toBe("zh-CN")
+    expect(normalizeUiLocale("en_US.UTF-8")).toBe("en")
+    expect(normalizeUiLocale("ja_JP")).toBe("ja")
+    expect(normalizeUiLocale("ko_KR.eucKR")).toBe("ko")
+    expect(normalizeUiLocale("  RU ")).toBe("ru")
+    expect(normalizeUiLocale("pt_BR")).toBe("pt")
+    expect(normalizeUiLocale("es_MX")).toBe("es")
+    expect(normalizeUiLocale("fr_FR@euro")).toBe("fr")
+    expect(normalizeUiLocale("xx-YY")).toBeNull()
+    expect(normalizeUiLocale("")).toBeNull()
+    expect(normalizeUiLocale(42)).toBeNull()
+  })
+
+  test("env chain order: LC_ALL wins over LANG; unrecognized values fall through to the next step", () => {
+    expect(detectUiLocale({ LC_ALL: "zh_CN.UTF-8", LANG: "en_US.UTF-8" })).toEqual({ locale: "zh-CN", via: "LC_ALL" })
+    expect(detectUiLocale({ LANG: "ja_JP.UTF-8" })).toEqual({ locale: "ja", via: "LANG" })
+    expect(detectUiLocale({ LC_ALL: "", LANG: "de_DE.UTF-8" })).toEqual({ locale: "de", via: "LANG" })
+    expect(detectUiLocale({ LC_ALL: "bogus", LANG: "ko_KR" })).toEqual({ locale: "ko", via: "LANG" })
+    expect(detectUiLocale({ LC_ALL: "bogus", LANG: "also-bogus" })).toEqual({ locale: "en", via: "default" })
+    expect(detectUiLocale({ LC_ALL: "bogus" })).toEqual({ locale: "en", via: "default" })
+  })
+
+  test("capture round-trip: localized questions keep the marker-match anchor locale-independent", () => {
+    for (const tag of TAGS) {
+      const [q1, q2, q3] = UI_LOCALE_ASK_TEXT[tag]!
+      const out = `User has answered your questions: "${q1}"="简体中文", "${q2}"="English", "${q3}"="日本語"`
+      expect(parseQuestionAnswers(out)).toEqual(["简体中文", "English", "日本語"])
+    }
   })
 })
 

@@ -59,7 +59,7 @@ test("ctx-pause: marker suspends the hard-tier read gate for this session only; 
   const sid = "ses_ctxpa_main"
   const other = "ses_ctxpa_other"
 
-  await watermark(sid, 85_000) // defaults 60k/80k/120k → hard tier
+  await watermark(sid, 90_000) // defaults 50k/90k/130k → hard tier
   await expect(glob(sid)).rejects.toThrow(/hard watermark/)
 
   // pause marker → gate open (no throw, args untouched)
@@ -71,7 +71,7 @@ test("ctx-pause: marker suspends the hard-tier read gate for this session only; 
   expect(readStatusLog().split(`ctx control paused for session ${sid}`).length - 1).toBe(1)
 
   // session scoping: another session at the same tier stays gated
-  await watermark(other, 85_000)
+  await watermark(other, 90_000)
   await expect(glob(other)).rejects.toThrow(/hard watermark/)
 
   // resume restores enforcement; idempotent on re-fire
@@ -91,7 +91,7 @@ test("ctx-pause: transform-path capture (real host shape — parts live on the m
       messages: [{ info: { id: msgId, role: "user", sessionID: sid }, parts: [{ type: "text", text }] }],
     } as any)
 
-  await watermark(sid, 85_000) // hard tier armed
+  await watermark(sid, 90_000) // hard tier armed
   await expect(glob(sid)).rejects.toThrow(/hard watermark/)
 
   await turn("msg_t1", `${CTX_PAUSE_MARKER} pause this session`) // info has NO parts field — the real shape
@@ -152,8 +152,8 @@ test("ctx-pause: watermark line keeps numbers + PAUSED notice; resume returns ti
   expect(line).toContain("resume with /ctx-resume")
   expect(line).not.toContain("[WARNING]")
 
-  // resume → tiered directives return (85k ≥ hard 80k)
-  await assistant(85_000)
+  // resume → tiered directives return (95k ≥ hard 90k)
+  await assistant(95_000)
   await user(sid, `${CTX_RESUME_MARKER} resume`)
   sys = await system(sid)
   line = sys.find((l) => l.startsWith("[WATERMARK:SESSION]"))

@@ -91,16 +91,119 @@ export function saveLangConfig(projectDir: string, workspaceDirname: string, cfg
 
 const askTag = (n: 1 | 2 | 3) => `${LANG_ASK_MARKER} ${n}/3`
 
-/** First-run ask directive: one question-tool call, three marker questions, plugin-side capture */
-export function renderAskDirective(candidates: readonly string[]): string {
+// [2026-09-14]-[D4 locale-following ask: opencode exposes no locale surface to plugins, so the chain is env LC_ALL →
+//  LANG → "en" (normalized, unknown values fall through). Only the user-facing question texts localize — the directive
+//  body, the [LANG] line, the deny copy and the `switchman-lang n/3: ` prefix (the capture anchor for
+//  parseQuestionAnswers) stay byte-stable across all locales, so capture never depends on the locale]
+/** Locale tags the ask questions are translated into (translation-table keys; matches the LANG_TAGS candidate set) */
+const UI_LOCALE_TAGS = ["en", "zh-CN", "zh-TW", "ja", "ko", "es", "fr", "de", "it", "pt", "ru"]
+
+/**
+ * Map a raw locale (BCP-47 or env style, e.g. "zh_CN.UTF-8") to one of UI_LOCALE_TAGS: exact case-insensitive match
+ * wins; zh-TW / zh-Hant / zh-HK / zh-MO prefixes map to zh-TW, any other zh* to zh-CN; otherwise the primary subtag
+ * must itself be a known tag; null when nothing matches (caller falls through / defaults to en).
+ */
+export function normalizeUiLocale(raw: unknown): string | null {
+  if (typeof raw !== "string") return null
+  const cleaned = raw.trim().split(".")[0]!.split("@")[0]!.replace(/_/g, "-")
+  if (!cleaned) return null
+  const lower = cleaned.toLowerCase()
+  const exact = UI_LOCALE_TAGS.find((t) => t.toLowerCase() === lower)
+  if (exact) return exact
+  if (lower.startsWith("zh")) return /^zh-(tw|hant|hk|mo)/.test(lower) ? "zh-TW" : "zh-CN"
+  const primary = lower.split("-")[0]!
+  return UI_LOCALE_TAGS.find((t) => t.toLowerCase() === primary) ?? null
+}
+
+export interface UiLocaleDetection { locale: string; via: "LC_ALL" | "LANG" | "default" }
+
+/** Detect the UI locale for localizing the ask questions (sync, cheap, fail-open; never throws; unknown → "en").
+ *  Chain: env LC_ALL → env LANG (env-style "zh_CN.UTF-8" normalized) → "en"; an unrecognized value at any step
+ *  falls through to the next one. Locale is read at ask time — no config. */
+export function detectUiLocale(env: Record<string, string | undefined> = process.env): UiLocaleDetection {
+  try {
+    for (const key of ["LC_ALL", "LANG"] as const) {
+      const tag = normalizeUiLocale(env[key])
+      if (tag) return { locale: tag, via: key }
+    }
+  } catch { /* fail-open */ }
+  return { locale: "en", via: "default" }
+}
+
+/** Builds a table entry so the `switchman-lang n/3: ` prefix is byte-stable across every locale (capture anchor) */
+const askQ = (n: 1 | 2 | 3, text: string) => `${askTag(n)}: ${text}`
+
+/** Localized question texts per UI locale tag (the only user-visible strings of the ask; options stay the native labels) */
+export const UI_LOCALE_ASK_TEXT: Readonly<Record<string, readonly [string, string, string]>> = Object.freeze({
+  en: [
+    askQ(1, "Conversation language for this project (your replies and reasoning)?"),
+    askQ(2, "Language for code comments and commit messages?"),
+    askQ(3, "Language for generated documents (plans, PRD, design docs, reports)?"),
+  ],
+  "zh-CN": [
+    askQ(1, "本项目的对话语言（你的回复与推理）？"),
+    askQ(2, "代码注释与提交信息用什么语言？"),
+    askQ(3, "生成的文档（计划、PRD、设计文档、报告）用什么语言？"),
+  ],
+  "zh-TW": [
+    askQ(1, "本專案的對話語言（回覆與推理）？"),
+    askQ(2, "程式碼註解與提交訊息使用什麼語言？"),
+    askQ(3, "產生的文件（計畫、PRD、設計文件、報告）使用什麼語言？"),
+  ],
+  ja: [
+    askQ(1, "このプロジェクトの会話言語（返答と推論）は？"),
+    askQ(2, "コードコメントとコミットメッセージの言語は？"),
+    askQ(3, "生成されるドキュメント（計画、PRD、設計書、レポート）の言語は？"),
+  ],
+  ko: [
+    askQ(1, "이 프로젝트의 대화 언어(응답과 추론)는 무엇인가요?"),
+    askQ(2, "코드 주석과 커밋 메시지에 사용할 언어는 무엇인가요?"),
+    askQ(3, "생성되는 문서(계획, PRD, 설계 문서, 보고서)의 언어는 무엇인가요?"),
+  ],
+  es: [
+    askQ(1, "¿Idioma de conversación para este proyecto (tus respuestas y razonamiento)?"),
+    askQ(2, "¿Idioma para los comentarios de código y los mensajes de commit?"),
+    askQ(3, "¿Idioma para los documentos generados (planes, PRD, documentos de diseño, informes)?"),
+  ],
+  fr: [
+    askQ(1, "Langue de conversation pour ce projet (réponses et raisonnement) ?"),
+    askQ(2, "Langue des commentaires de code et des messages de commit ?"),
+    askQ(3, "Langue des documents générés (plans, PRD, documents de conception, rapports) ?"),
+  ],
+  de: [
+    askQ(1, "Gesprächssprache für dieses Projekt (deine Antworten und Gedankengänge)?"),
+    askQ(2, "Sprache für Codekommentare und Commit-Meldungen?"),
+    askQ(3, "Sprache für generierte Dokumente (Pläne, PRD, Design-Dokumente, Berichte)?"),
+  ],
+  it: [
+    askQ(1, "Lingua di conversazione per questo progetto (le tue risposte e il tuo ragionamento)?"),
+    askQ(2, "Lingua per i commenti al codice e i messaggi di commit?"),
+    askQ(3, "Lingua per i documenti generati (piani, PRD, documenti di progettazione, report)?"),
+  ],
+  pt: [
+    askQ(1, "Idioma de conversa para este projeto (suas respostas e raciocínio)?"),
+    askQ(2, "Idioma para comentários de código e mensagens de commit?"),
+    askQ(3, "Idioma para documentos gerados (planos, PRD, documentos de design, relatórios)?"),
+  ],
+  ru: [
+    askQ(1, "Язык общения для этого проекта (ваши ответы и рассуждения)?"),
+    askQ(2, "Язык комментариев к коду и сообщений коммитов?"),
+    askQ(3, "Язык создаваемых документов (планы, PRD, проектные документы, отчёты)?"),
+  ],
+})
+
+/** First-run ask directive: one question-tool call, three marker questions, plugin-side capture. Question texts follow
+ *  the detected UI locale (normalized, English fallback); the directive body stays English (model-facing). */
+export function renderAskDirective(candidates: readonly string[], locale = "en"): string {
+  const asks = UI_LOCALE_ASK_TEXT[normalizeUiLocale(locale) ?? "en"] ?? UI_LOCALE_ASK_TEXT.en!
   const opts = candidates.join(" / ")
   return [
     `[opencode-switchman] Project language preference is not yet configured for this project. Before starting`,
     `the user's task, call the question tool ONCE with exactly these three questions (question texts verbatim, marker`,
     `included — the plugin captures the answers itself and persists the config; never write the settings file yourself):`,
-    `1. question "${askTag(1)}: Conversation language for this project (your replies and reasoning)?", single-choice, options: ${opts}`,
-    `2. question "${askTag(2)}: Language for code comments and commit messages?", single-choice, options: ${opts}`,
-    `3. question "${askTag(3)}: Language for generated documents (plans, PRD, design docs, reports)?", single-choice, options: ${opts}`,
+    `1. question "${asks[0]}", single-choice, options: ${opts}`,
+    `2. question "${asks[1]}", single-choice, options: ${opts}`,
+    `3. question "${asks[2]}", single-choice, options: ${opts}`,
     `The user may also type any other language (custom answer) — relay it verbatim as the option text.`,
     `HARD GATE: the plugin denies every write / edit / bash / task call in this project until the answers are captured`,
     `and the config is saved — asking first is not optional. After the tool returns: confirm the saved preferences in`,

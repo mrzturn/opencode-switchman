@@ -40,8 +40,8 @@ test("auto-handover: backup leg bounded, compaction fired detached, cooldown gua
   const hooks = await SwitchmanPlugin({ client: fakeClient, directory: "/w" } as any, undefined as any)
   const output = { message: async () => {} } as any
 
-  // seed a force-tier measured watermark via message.updated (input+output+reasoning+cache.read)
-  await hooks.event!({ event: { type: "message.updated", properties: { sessionID: "ses_auto_main", info: { role: "assistant", tokens: { input: 120_000, output: 1_000, reasoning: 1_000, cache: { read: 2_000 } } } } } as any })
+  // seed a force-tier measured watermark via message.updated (input+output+reasoning+cache.read; 126k input → 130k measured = the 130k force line)
+  await hooks.event!({ event: { type: "message.updated", properties: { sessionID: "ses_auto_main", info: { role: "assistant", tokens: { input: 126_000, output: 1_000, reasoning: 1_000, cache: { read: 2_000 } } } } } as any })
   // seed the session model face the summarize payload needs (chat.params: input.model is a Model object {providerID, id})
   await hooks["chat.params"]!({ sessionID: "ses_auto_main", model: { providerID: "copilot", id: "glm-5.3" } } as any, output)
 

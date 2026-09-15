@@ -33,13 +33,52 @@ function laneForCheck(shellName: string, meta: Meta | null, lanes: Record<string
   return ROLE_LANE[meta?.role ?? ""] ?? laneOfShell(shellName, lanes) ?? "main"
 }
 
+// [2026-09-14]-[D5: lane-default role table for the gate-6 synthesizer — the five non-review entries are exactly the
+//  table hardcoded at index.ts's former synthesis sites; review → reviewer (the review lane's own role, so gate 7's
+//  reviewer branch runs with producer_family absent = the cross-family preference is unenforced)]
+const LANE_DEFAULT_ROLE: Record<string, string> = {
+  hard: "planner", main: "programmer", mechanical: "tester", economy: "scouter", vision: "observer", review: "reviewer",
+}
+
+// [2026-09-14]-[D5: the gate-6 ROUTE_META disposition — MISSING (no parseable line) / MALFORMED (line present but
+//  unparseable) no longer deny: gate 6 synthesizes the lane-default META (the former index.ts synthesis table) and
+//  continues into gate 7 with an observe note. Only ABSENCE is synthesized: a PRESENT-but-wrong META (invalid field
+//  value, or a parseable line missing required fields) stays a producer-error deny with the sample hint. Gate 7
+//  semantics on the synthesized meta: producer_family absent → review cross-family preference unenforced (the
+//  same-family DOWNGRADED note path still applies); source "auto" → fallback-eligibility checks apply unchanged.
+//  Review lane synthesizes capability "ro" (review is an ro lane) so the synthesized meta does not structurally
+//  deny every ro review shell at the rw/ro check — that would contradict the downgrade for the exact corner
+//  (autoRedirect off / review lane) that motivated it]-
+function synthesizeMeta(agent: string, lanes: Record<string, string[]>): Meta {
+  const lane = (laneOfShell(agent, lanes) ?? "main") as import("./types").Lane
+  return {
+    lane,
+    role: LANE_DEFAULT_ROLE[lane] ?? "programmer",
+    capability: lane === "economy" || lane === "review" ? "ro" : "rw",
+    modality: lane === "vision" ? "image" : "text",
+    source: "auto",
+  }
+}
+
+const ROUTE_META_SYNTH_NOTE = "[opencode-switchman] ROUTE_META missing/malformed — synthesized from lane; declare it to enable review cross-family / source=user semantics"
+
 export function checkShell(
   agent: string,
   shell: ShellRegEntry,
   prompt: unknown,
   snap: GateSnapshot & { lanes: Record<string, string[]> },
 ): GateResult {
-  const [meta, metaErr] = parseRouteMeta(prompt)
+  const [parsedMeta, metaErr] = parseRouteMeta(prompt)
+  let meta = parsedMeta
+  let metaSynthNote: string | null = null
+  // [2026-09-14]-[D5 downgrade-to-observe: a MISSING (no parseable line) or MALFORMED (line present but unparseable)
+  //  META no longer denies — gate 6 synthesizes the lane-default META and continues into gate 7 with an observe note
+  //  (see synthesizeMeta). Only ABSENCE is synthesized; a PRESENT-but-wrong META (invalid field value / missing
+  //  required field on a parseable line) keeps the gate-6 deny below — a producer error the delegator must fix]-
+  if (metaErr === "missing" || metaErr === "malformed") {
+    meta = synthesizeMeta(agent, snap.lanes)
+    metaSynthNote = ROUTE_META_SYNTH_NOTE
+  }
   const lane = laneForCheck(agent, meta, snap.lanes)
   const base = snap.lanes[lane] ?? []
   const regOk = snap.registry !== null
@@ -172,8 +211,10 @@ export function checkShell(
     }
   }
 
-  // Gate 6 ROUTE_META hard gate: missing line / malformed / invalid field / missing required field all deny with a sample + live candidate
-  if (metaErr !== null) {
+  // Gate 6 ROUTE_META hard gate [2026-09-14]-[D5: only PRESENT-but-wrong META denies now — an invalid field value, or
+  //  a parseable line missing required fields (a producer error worth surfacing with the sample + live candidate);
+  //  missing/malformed was already synthesized above and never reaches this branch]
+  if (metaErr !== null && metaErr !== "missing" && metaErr !== "malformed") {
     const fallbackLane = laneForCheck(agent, null, snap.lanes)
     let fallback: string
     try {
@@ -185,7 +226,7 @@ export function checkShell(
     return {
       deny: `${agent} dispatched to a shell name, invalid ROUTE_META: ${metaErrorHint(metaErr)}${fallback}`,
       note: null,
-      // redirection happens in index.ts (the prompt must be rewritten to synthesize META); stays null here
+      // a present-but-wrong META must be corrected by the delegator (rewriting it plugin-side would mask the error); stays null here
       redirect: null,
     }
   }
@@ -248,7 +289,8 @@ export function checkShell(
       const rc = reviewChainOf()
       const onChain = Boolean(rc?.chain.some((c) => c.shell === agent))
       const noPrimary = Boolean(rc && !rc.chain.some((c) => isPrimaryCandidate("review" as import("./types").Lane, baseScoreDynamic(snap.registry?.[c.shell]?.modelId ?? ""))))
-      if (onChain && noPrimary) return { deny: null, note: REVIEW_SELF_REVIEW_NOTE, redirect: null }
+      // [2026-09-14]-[D5: the gate-6 synth note rides along when the META was synthesized for this dispatch]
+      if (onChain && noPrimary) return { deny: null, note: [metaSynthNote, REVIEW_SELF_REVIEW_NOTE].filter(Boolean).join(" ") || null, redirect: null }
     }
     return { deny: `${agent} capability level too low to take ${lane} tasks${hint()}`, note: null, redirect: candidateOf() }
   }
@@ -272,7 +314,8 @@ export function checkShell(
   //  candidate exists on the review chain)]
   // [2026-09-05]-[review same-family self-review: the last-resort exemption note (no cross-family reviewer on the chain)
   //  is emitted here after every structural gate passed]
-  return { deny: null, note: reviewSelfReviewNote, redirect: null }
+  // [2026-09-14]-[D5: a synthesized META rides as an observe note (a deny always supersedes it); both notes joined when they co-occur]
+  return { deny: null, note: [metaSynthNote, reviewSelfReviewNote].filter(Boolean).join(" ") || null, redirect: null }
 }
 
 /** Unregistered / non-shell name → fail-open (unknown built-in agents are not governed by routing) */

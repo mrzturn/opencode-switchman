@@ -20,8 +20,9 @@ writeFileSync(join(projectDir, ".switchman", "settings.json"), JSON.stringify({ 
 
 import { SwitchmanPlugin } from "../src/index"
 import {
-  DEFAULT_SUBAGENT_CAP_TOKENS, MAX_SUBAGENT_CAP_TOKENS, MIN_SUBAGENT_CAP_TOKENS,
+  MAX_SUBAGENT_CAP_TOKENS, MIN_SUBAGENT_CAP_TOKENS,
   subagentCapOf, capByWindow, subagentCapDenyMessage, subagentResumeDenyMessage,
+  subagentSoftTiersOf, shellSoftTier, shellSoftTierMessage, shellSoftTierDecision,
 } from "../src/context-watch"
 
 type Hooks = Awaited<ReturnType<typeof SwitchmanPlugin>>
@@ -58,9 +59,11 @@ async function seedShellSession(hooks: Hooks, sessionId: string, agent = "glm-mx
 }
 
 describe("subagent cap: pure decision layer", () => {
-  test("subagentCapOf: default 100k, clamped, disabled → null", () => {
-    expect(subagentCapOf(undefined)).toBe(DEFAULT_SUBAGENT_CAP_TOKENS)
-    expect(subagentCapOf({})).toBe(DEFAULT_SUBAGENT_CAP_TOKENS)
+  // [2026-09-15]-[subagentForceTokens optional: absent follows forceTokens (shared hard line); present values keep the clamp]
+  test("subagentCapOf: absent → follows forceTokens (130k default), clamped override, disabled → null", () => {
+    expect(subagentCapOf(undefined)).toBe(130_000)
+    expect(subagentCapOf({})).toBe(130_000)
+    expect(subagentCapOf({ forceTokens: 90_000 })).toBe(90_000)
     expect(subagentCapOf({ subagentForceTokens: 250_000 })).toBe(250_000)
     expect(subagentCapOf({ subagentForceTokens: 1 })).toBe(MIN_SUBAGENT_CAP_TOKENS)
     expect(subagentCapOf({ subagentForceTokens: 99_999_999 })).toBe(MAX_SUBAGENT_CAP_TOKENS)
@@ -85,15 +88,101 @@ describe("subagent cap: pure decision layer", () => {
   })
 })
 
+// [2026-09-14]-[subagent soft tiers (D1): two graceful advisories precede the hard termination backstop; delivered at
+//  most once per tier via system.transform's shell branch, ending with the inline HANDOFF marker the dispatcher relays
+//  per agents-md §2 item 5]
+// [2026-09-15]-[tiers switch from fraction coefficients to the MAIN session's ABSOLUTE soft/hard thresholds expressed
+//  against the force anchor (subagentForceTokens when valid, else forceTokens); the window-clamped effective cap still
+//  pulls them down proportionally — a tier never exceeds the real termination line]
+describe("subagent soft tiers: pure decision layer", () => {
+  test("tier derivation: shared absolute thresholds against the force anchor, fail-open defaults", () => {
+    // default config (no overrides): main-session 50k soft / 90k hard against the 130k force anchor
+    expect(subagentSoftTiersOf(undefined)).toEqual([50_000 / 130_000, 90_000 / 130_000])
+    expect(subagentSoftTiersOf({})).toEqual([50_000 / 130_000, 90_000 / 130_000])
+    // subagentForceTokens override: the absolute 50k/90k lines preserved against the 100k anchor
+    expect(subagentSoftTiersOf({ subagentForceTokens: 100_000 })).toEqual([0.5, 0.9])
+    // custom main-session thresholds ride along
+    expect(subagentSoftTiersOf({ softTokens: 30_000, hardTokens: 60_000, forceTokens: 120_000 })).toEqual([0.25, 0.5])
+    // invalid anchor → forceTokens
+    expect(subagentSoftTiersOf({ subagentForceTokens: Number.NaN, forceTokens: 200_000 })).toEqual([0.25, 0.45])
+    // misconfigured thresholds (soft ≥ force, or f-ordering violated) → fail-open pure-defaults derivation
+    expect(subagentSoftTiersOf({ softTokens: 130_000, hardTokens: 140_000, forceTokens: 120_000 })).toEqual([50_000 / 130_000, 90_000 / 130_000])
+    expect(subagentSoftTiersOf({ softTokens: 90_000, hardTokens: 80_000, forceTokens: 120_000 })).toEqual([50_000 / 130_000, 90_000 / 130_000])
+    expect(subagentSoftTiersOf({ softTokens: 120_000, hardTokens: 125_000, forceTokens: 120_000 })).toEqual([50_000 / 130_000, 90_000 / 130_000])
+  })
+  test("tier firing at the shared absolute lines: ≈50k conserve / ≈90k hand-off against a 130k effective cap", () => {
+    const tiers = subagentSoftTiersOf(undefined)
+    const cap = 130_000
+    expect(shellSoftTier(49_999, cap, tiers)).toBe(0)
+    expect(shellSoftTier(50_000, cap, tiers)).toBe(1)
+    expect(shellSoftTier(89_999, cap, tiers)).toBe(1)
+    expect(shellSoftTier(90_000, cap, tiers)).toBe(2)
+  })
+  test("subagentForceTokens override keeps the absolute 50k/90k lines against a 100k cap", () => {
+    const tiers = subagentSoftTiersOf({ subagentForceTokens: 100_000 })
+    const cap = subagentCapOf({ subagentForceTokens: 100_000 })!
+    expect(tiers).toEqual([0.5, 0.9])
+    expect(shellSoftTier(49_999, cap, tiers)).toBe(0)
+    expect(shellSoftTier(50_000, cap, tiers)).toBe(1)
+    expect(shellSoftTier(89_999, cap, tiers)).toBe(1)
+    expect(shellSoftTier(90_000, cap, tiers)).toBe(2)
+  })
+  test("small window-clamped cap pulls the tiers down proportionally (a tier never exceeds the termination line)", () => {
+    const tiers = subagentSoftTiersOf(undefined)
+    // 90% of a ~26.7k window → 24k effective cap
+    const clamped = capByWindow(120_000, 26_667)
+    expect(clamped).toBe(24_000)
+    // ≈9.2k conserve / ≈16.6k hand-off (default 50k/90k tiers against the 130k anchor, pulled down with the cap)
+    expect(shellSoftTier(9_229, clamped, tiers)).toBe(0)
+    expect(shellSoftTier(9_230, clamped, tiers)).toBe(1)
+    expect(shellSoftTier(16_614, clamped, tiers)).toBe(1)
+    expect(shellSoftTier(16_615, clamped, tiers)).toBe(2)
+    expect(shellSoftTier(24_000, clamped, tiers)).toBe(2)
+    for (const f of tiers) expect(Math.floor(f * clamped)).toBeLessThanOrEqual(clamped)
+  })
+  test("tier copy verbatim pins (absolute k rendered from the effective cap, HANDOFF inline-only)", () => {
+    expect(shellSoftTierMessage(1, 62_400, 100_000)).toBe(
+      "[SHELL-CONTEXT] measured shell context ≈ 62k/100k (conserve): stop batch reads and long pastes — switch to targeted grep and cite only the needed excerpts; finish the current work unit before starting anything new; keep outputs compact.",
+    )
+    expect(shellSoftTierMessage(2, 80_000, 100_000)).toBe(
+      "[SHELL-CONTEXT] measured shell context ≈ 80k/100k (hand-off): open no new files or edits; finish the current unit, then end your FINAL message with a compact handover block (completed; key findings with file:line; remaining; next steps) followed by the marker line `HANDOFF: inline · progress: n/m · next: <one sentence>` (m = the delegation's work units, n = completed). Your final message is returned to the delegating session as the task result.",
+    )
+  })
+  test("once-per-tier dedup, subagentCap:false and terminated sessions stay silent (pure semantics)", () => {
+    const tiers = subagentSoftTiersOf(undefined)
+    // below tier 1: quiet, delivered state unchanged
+    expect(shellSoftTierDecision({ terminated: false, tokens: 30_000, cap: 100_000, tiers, delivered: 0 })).toEqual({ line: null, delivered: 0 })
+    // tier 1 fires once; a second request at the same tier is suppressed
+    const t1 = shellSoftTierDecision({ terminated: false, tokens: 50_000, cap: 100_000, tiers, delivered: 0 })
+    expect(t1.delivered).toBe(1)
+    expect(t1.line).toContain("[SHELL-CONTEXT]")
+    expect(t1.line).toContain("(conserve)")
+    expect(shellSoftTierDecision({ terminated: false, tokens: 50_000, cap: 100_000, tiers, delivered: 1 }).line).toBeNull()
+    // the higher tier fires exactly one more line (never re-delivers tier 1's copy)
+    const t2 = shellSoftTierDecision({ terminated: false, tokens: 90_000, cap: 100_000, tiers, delivered: 1 })
+    expect(t2.delivered).toBe(2)
+    expect(t2.line).toContain("(hand-off)")
+    expect(t2.line).toContain("HANDOFF: inline")
+    expect(shellSoftTierDecision({ terminated: false, tokens: 90_000, cap: 100_000, tiers, delivered: 2 }).line).toBeNull()
+    // subagentCap: false → advisories off (they exist to make the cap graceful)
+    expect(shellSoftTierDecision({ terminated: false, tokens: 90_000, cap: null, tiers, delivered: 0 })).toEqual({ line: null, delivered: 0 })
+    // no measurement yet → quiet
+    expect(shellSoftTierDecision({ terminated: false, tokens: undefined, cap: 100_000, tiers, delivered: 0 })).toEqual({ line: null, delivered: 0 })
+    // terminated session → no advisory (the hard cap's deny message governs from here)
+    expect(shellSoftTierDecision({ terminated: true, tokens: 90_000, cap: 100_000, tiers, delivered: 0 })).toEqual({ line: null, delivered: 0 })
+  })
+})
+
 describe("subagent cap: plugin wiring", () => {
-  test("shell session crossing 100k → tools denied, task_id resume denied, registry persisted", async () => {
+  // [2026-09-15]-[default cap now follows forceTokens (130k): crossing values shifted to the shared 130k line]
+  test("shell session crossing the shared 130k line → tools denied, task_id resume denied, registry persisted", async () => {
     const hooks = await bootPlugin()
     await seedShellSession(hooks, "ses_shell_cap")
     // sub-cap watermark (94k measured): tools still allowed
     await mark(hooks, "ses_shell_cap", 90_000)
     await hooks["tool.execute.before"]!({ tool: "read", sessionID: "ses_shell_cap", callID: "call_pre" } as any, { args: {} } as any)
-    // crossing: measured context = 105_000 + 4_000 = 109k ≥ cap
-    await mark(hooks, "ses_shell_cap", 105_000)
+    // crossing: measured context = 126_000 + 4_000 = 130k ≥ cap
+    await mark(hooks, "ses_shell_cap", 126_000)
     expect(readStatusLog()).toContain("subagent context cap: session ses_shell_cap (glm-mx-53f-low)")
     expect(readStatusLog()).toContain("session terminated")
     await expect(hooks["tool.execute.before"]!({ tool: "read", sessionID: "ses_shell_cap", callID: "call_1" } as any, { args: {} } as any)).rejects.toThrow("SUBAGENT CONTEXT CAP REACHED")
@@ -109,7 +198,7 @@ describe("subagent cap: plugin wiring", () => {
     // let the fire-and-forget registry write land, then assert persistence
     await new Promise((r) => setTimeout(r, 150))
     const reg = JSON.parse(readFileSync(join(stateDir, "subagent-cap.json"), "utf8"))
-    expect(reg.ses_shell_cap.tokens).toBe(109_000)
+    expect(reg.ses_shell_cap.tokens).toBe(130_000)
     expect(reg.ses_shell_cap.agent).toBe("glm-mx-53f-low")
   }, 30_000)
 

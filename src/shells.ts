@@ -58,18 +58,90 @@ export const SHELL_BODY = [
   "6. Context cap: your shell session is hard-capped (~100k tokens). If a tool call is rejected with a context-cap error, stop calling tools immediately and output your detailed work-progress summary (completed work, key findings with file:line evidence, remaining work, next steps) as your final text answer — it is returned to the delegating session as the task result. Never repeat a denied call.",
 ].join("\n")
 
+// [2026-09-15]-[ro shells gain a read-only bash allowlist: bare `bash: "deny"` blocked even `git diff` for review/observe
+//  shells. permission.bash becomes an object — opencode semantics: wildcard "*" = zero-or-more chars, LAST matching rule
+//  wins (so the catch-all deny sits first, specific allows after), and compound commands are judged per segment (each
+//  segment must pass the rules on its own)]-[impact: ro shells can inspect (git view subcommands + search/inspect
+//  utilities) while edits and every other command stay denied; rw shells unchanged (no permission key)]
+// One-line prompt suffix for ro shells only: pre-arm the restriction so review shells report findings instead of attempting writes.
+export const RO_SHELL_NOTE = "Bash is limited to view/search commands (git diff/log/show/status, rg, grep, cat, ls, etc.); file edits and state-changing commands are denied — report findings, never attempt writes."
+
+/** [2026-09-15]-[read-only bash allowlist (opencode permission object; see header note above). Order matters: catch-all
+ *  "*" deny FIRST, specific "allow" entries after (last matching rule wins). Deliberately NOT allowed: find / sed / awk /
+ *  echo — all carry mutation forms (find -delete/-exec, sed -i, `echo … > file` redirection writes). Residual caveat: a
+ *  parsed `git diff … > out` redirect may pass the pattern — accepted, `edit: "deny"` still covers the edit/write/patch
+ *  tools. Compound commands are judged per segment by opencode, so `git diff && rm …` still falls to the catch-all deny] */
+export const RO_BASH_PERMISSION: Record<string, "allow" | "deny"> = {
+  "*": "deny",
+  // git read-only subcommands with arbitrary (non-mutating) arguments
+  "git status*": "allow",
+  "git diff*": "allow",
+  "git log*": "allow",
+  "git show*": "allow",
+  "git blame*": "allow",
+  "git rev-parse*": "allow",
+  "git ls-files*": "allow",
+  "git grep*": "allow",
+  "git shortlog*": "allow",
+  "git describe*": "allow",
+  "git merge-base*": "allow",
+  "git stash list*": "allow",
+  // git listing forms only — bare/arg variants mutate (branch -d/-m, tag -d, remote add/rm), so allow ONLY the listing shapes
+  "git branch": "allow",
+  "git branch -a*": "allow",
+  "git branch -v*": "allow",
+  "git branch --list*": "allow",
+  "git branch --show-current": "allow",
+  "git tag": "allow",
+  "git tag -l*": "allow",
+  "git tag --list*": "allow",
+  "git tag -n *": "allow",
+  "git remote": "allow",
+  "git remote -v": "allow",
+  "git worktree list*": "allow",
+  "git config --get*": "allow",
+  "git config --list*": "allow",
+  "git config -l*": "allow",
+  // search / inspect utilities (read-only by nature)
+  "rg*": "allow",
+  "grep*": "allow",
+  "ls*": "allow",
+  "fd*": "allow",
+  "cat*": "allow",
+  "head*": "allow",
+  "tail*": "allow",
+  "wc*": "allow",
+  "tree*": "allow",
+  "stat*": "allow",
+  "file*": "allow",
+  "du*": "allow",
+  "df*": "allow",
+  "pwd": "allow",
+  "which*": "allow",
+  "sort*": "allow",
+  "uniq*": "allow",
+  "basename*": "allow",
+  "dirname*": "allow",
+  "realpath*": "allow",
+  "date": "allow",
+  "whoami": "allow",
+}
+
 /** Single shell → opencode AgentConfig (for config-hook injection) */
 export function shellAgentConfig(s: ShellRegEntry): Record<string, unknown> {
+  const ro = s.capability === "ro"
   const cfg: Record<string, unknown> = {
     description: shellDescription(s),
     mode: "subagent",
     model: `${s.provider}/${s.modelId}`,
-    prompt: SHELL_BODY,
+    // [2026-09-15]-[ro shells append the one-line bash-restriction note so the model pre-empts denied write attempts]-
+    prompt: ro ? `${SHELL_BODY}\n${RO_SHELL_NOTE}` : SHELL_BODY,
   }
   const options = effortOptions(s.family, s.effort, s.modelId, s.provider)
   if (options) cfg.options = options
-  if (s.capability === "ro") {
-    cfg.permission = { edit: "deny", bash: "deny" }
+  if (ro) {
+    // fresh copy per config: opencode owns the injected object, shared references would couple agent entries
+    cfg.permission = { edit: "deny", bash: { ...RO_BASH_PERMISSION } }
   }
   return cfg
 }
@@ -110,6 +182,10 @@ export function injectShellDefs(
 export interface InjectableSelectOpts {
   /** User-defined lane overrides (baseChainFor returns their array directly); referenced shells are force-kept in the injection face */
   customLanes?: Record<string, readonly string[]> | null
+  /** [2026-09-11]-[injection mode "configured": skip the six-lane laneBaseChain picks — the face becomes keepModels ∪ keepModelIds ∪
+   *  custom-lane references only (custom lanes stay force-kept: explicit user routing config, same spirit as the pool-config
+   *  force-keep; dispatch is still gated at runtime by activation ∩ pool selection) */
+  skipChainPicks?: boolean
   /** [2026-09-02]-[available models force-kept (provider/modelId key): injection face = available superset ∪ six-lane
    *  chain selection ∪ custom lanes. When the caller passes all currently available models (provider connected and
    *  chat-capable), no capability-competition pruning happens — favorites / named models never lose their seat to chain
@@ -158,17 +234,22 @@ export function selectInjectableDefs(
   const keep = new Set<string>()
   for (const lane of LANE_ORDER as readonly Lane[]) {
     const custom = opts.customLanes?.[lane]
-    const chain = Array.isArray(custom) && custom.length > 0
-      ? custom
-      : laneBaseChain(lane, {
-        builtin: [],
-        activeShells: new Set(attrs.keys()),
-        shells: attrs,
-        capabilityOf: opts.capabilityOf,
-        billingBoostOf: opts.billingBoostOf,
-        unknownOf: opts.unknownOf,
-        preferredModels: opts.preferredModels,
-      })
+    if (Array.isArray(custom) && custom.length > 0) {
+      for (const name of custom) if (byName.has(name)) keep.add(name)
+      continue
+    }
+    // [2026-09-11]-[skipChainPicks: "configured" injection mode drops algorithmic chain picks (off-configured picks can never
+    //  dispatch past the activation gate and only bloat the per-request task tool description); custom lanes above stay force-kept]
+    if (opts.skipChainPicks) continue
+    const chain = laneBaseChain(lane, {
+      builtin: [],
+      activeShells: new Set(attrs.keys()),
+      shells: attrs,
+      capabilityOf: opts.capabilityOf,
+      billingBoostOf: opts.billingBoostOf,
+      unknownOf: opts.unknownOf,
+      preferredModels: opts.preferredModels,
+    })
     for (const name of chain) if (byName.has(name)) keep.add(name)
   }
   // [2026-09-02]-[available models force-kept: available models that lost chain competition (favorites / named targets / vision shells) are not pruned]-

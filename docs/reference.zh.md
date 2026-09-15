@@ -125,13 +125,14 @@ bun run build   # 生成 dist/opencode-switchman.js
 | `matrix.mode / watch` | `auto / true` | 激活矩阵：`auto` 按宿主自动（desktop=可见模型 / CLI/TUI=favorites），`app`/`tui` 强制指定，`legacy` 旧静态矩阵；`watch`=配置面变化即重算并全量刷新探针（mode/watch 为启动级，重启生效） |
 | `banner.enabled` | `true` | 四行横幅注入开关 |
 | `rules.enabled / delegationFloor` | `true / 3000` | 调度员规程（AGENTS.md）随包注入开关；`delegationFloor`＝自做底价（token），注入规程时插值 |
-| `context.gates / softTokens / hardTokens / forceTokens / readBudgetTokens / autoHandover` | `true / 60000 / 80000 / 120000 / 1500 / true` | **会话上下文水位实测＋自读预算闸**：插件从消息 token usage 实测主会话上下文并每轮注入 `[WATERMARK:SESSION]` 行（附每轮增速与距硬水位剩余轮数估算）。自读从第 1 轮起按 `readBudgetTokens` 计费：预估超限的读取自动追加 `limit` 有界放行，或以精确的有界重试参数拒绝；每轮另有 2× 上限阻断连续读取，无法预估的工具输出事后记账。验证/交付类 bash（git、测试/lint、构建）全水位放行；无界历史翻查（如不带 `-n` 的 `git log -p`）任何水位一律拦截并附收窄提示；超硬水位读取类关闭（收尾模式）；超压水位横幅强制立即压缩，且 `autoHandover: true`（默认）时自动触发 `/handover`：完整分叉备份＋压缩，未完成的任务在摘要上下文上继续。壳子代理会话不适用本水位，改走自身的单道硬顶（见 `context.subagentForceTokens` / `context.subagentCap`）；三档水位在可知时额外以当前会话模型上下文窗口（models.dev）的 90% 封顶 |
-| `context.subagentForceTokens / subagentCap` | `100000 / true` | **子代理上下文硬顶**：壳子代理会话只有一道硬顶（实测＝最新 assistant 消息的 input + output + reasoning + cache.read，与会话水位同口径），钳制 20k..1M 并额外以壳模型上下文窗口的 90% 封顶。触顶即拒绝该会话所有后续工具调用并下达收尾指令，子代理的下一份纯文本答复（详细的工作进度总结）直接作为任务结果返回委派方，会话永久终止；此后带 `task_id` 恢复该会话的 `task` 调用一律永久拒绝（持久登记 `~/.config/opencode/opencode-switchman/subagent-cap.json`，重启不失效），不带 `task_id` 的全新派发不受影响；`subagentCap: false` 只阻止新的终止——已终止的会话不复活 |
+| `context.gates / softTokens / hardTokens / forceTokens / readBudgetTokens / autoHandover` | `true / 50000 / 90000 / 130000 / 1500 / true` | **会话上下文水位实测＋自读预算闸**：插件从消息 token usage 实测主会话上下文并每轮注入 `[WATERMARK:SESSION]` 行（附每轮增速与距硬水位剩余轮数估算）。自读从第 1 轮起按 `readBudgetTokens` 计费：预估超限的读取自动追加 `limit` 有界放行，或以精确的有界重试参数拒绝；每轮另有 2× 上限阻断连续读取，无法预估的工具输出事后记账。验证/交付类 bash（git、测试/lint、构建）全水位放行；无界历史翻查（如不带 `-n` 的 `git log -p`）任何水位一律拦截并附收窄提示；超硬水位读取类关闭（收尾模式）；超压水位横幅强制立即压缩，且 `autoHandover: true`（默认）时自动触发 `/handover`：完整分叉备份＋压缩，未完成的任务在摘要上下文上继续。壳子代理会话不适用本水位，改走自身的单道硬顶（见 `context.subagentForceTokens` / `context.subagentCap`）；三档水位在可知时额外以当前会话模型上下文窗口（models.dev）的 90% 封顶 |
+| `context.subagentForceTokens / subagentCap` | `跟随 forceTokens（130000）/ true` | **子代理上下文硬顶＋软档提醒**：壳子代理会话只有一道硬顶（实测＝最新 assistant 消息的 input + output + reasoning + cache.read，与会话水位同口径），显式覆盖时钳制 20k..1M，并额外以壳模型上下文窗口的 90% 封顶；缺省跟随主会话 `forceTokens`，默认共享同一条绝对终止线。硬顶终止之前有两档柔性提醒，直接复用主会话的绝对软/硬阈值（`softTokens`＝省着用，`hardTokens`＝收尾交接——子代理上下文与主会话上下文同等昂贵）；有效上限（含窗口封顶）按比例下拉两档，档位永不超过真实终止线。触顶即拒绝该会话所有后续工具调用并下达收尾指令，子代理的下一份纯文本答复（详细的工作进度总结）直接作为任务结果返回委派方，会话永久终止。每档每次会话最多触发一次（进程内去重，会话删除即清除；重启后重新武装）；调度规程的交接转发规则把该交接块视为剩余工作的权威状态（全新派发、只注入所需上下文，绝不续接已耗尽的会话）。此后带 `task_id` 恢复该会话的 `task` 调用一律永久拒绝（持久登记 `~/.config/opencode/opencode-switchman/subagent-cap.json`，重启不失效），不带 `task_id` 的全新派发不受影响；`subagentCap: false` 既阻止新的终止也一并关闭提醒。`subagentForceTokens` 覆盖值非法（非有限数 / 超出 20k..1M）时删除该覆盖并报 SWM037 诊断，回退跟随 `forceTokens`（fail-open） |
 | `builtinAgents.mode` | `deny` | 内置 explore/general 与壳路由抢任务且此前放行；`deny`＝拦截附 economy/main 改派建议，`allow`＝恢复放行 |
-| `injection.mode` | `chain` | 壳注入面：`chain`＝六档链精选∪favorites/可见集（task 工具描述每会话省约 6-10k token，链外模型点名走 denyUninjected 提示）；`all`＝可用全集（旧行为）。启动级，重启生效 |
+| `injection.mode` | `chain` | 壳注入面：`chain`＝六档链精选∪favorites/可见集（task 工具描述每会话省约 6-10k token，链外模型点名走 denyUninjected 提示）；`all`＝可用全集（旧行为）；`configured`＝[2026-09-11] 配置了 favorites/可见集时仅注入这些模型的壳（自定义泳道/pool-config 强制保留照旧）——链外精选本就过不了运行时 activation 门，删掉纯死的每请求上下文；未配置时与 `chain` 行为一致。启动级，重启生效 |
 | `dispatch.autoRedirect` | `true` | 派发被拒时在途改写 `subagent_type` 到拒绝消息已点名的链首候选（单跳、同快照守卫复检）——首次派发直接落在最优可用壳上，不再烧「拒绝-重试」轮次；`false` 恢复拒绝-重试 |
+| `dispatch: "off"`（`.switchman/settings.json`） | 缺省（fleet） | 项目级派发退出：`.switchman/settings.json` 顶层 `"dispatch": "off"` 让所有派发治理对该项目的 task 调用停摆——整条 task 路径跳过（未注入/内置代理拒绝及其自动改写、全部六闸含熔断拒绝），调用不受治理直接放行。只有精确的字符串 `"off"` 生效，其他任何值保持 fleet 行为（存在但不同的值会记一条一次性状态日志）。刻意不停摆：子代理硬上限、语言闸、读取/水位闸、自动交接、熔断失败记账，以及横幅/水位/TODO/`[LANG]` 行——每轮 `[ROUTE]` 行是唯一隐藏的 prompt 表面。逐调用读取，切换无需重启；settings.json 完全不是合法 JSON 时按进程一次性写入状态日志警告 |
 | `relay.image` | `true` | 无视觉主模型：用户附带图片自动落盘并替换为路径文本＋阅读指引（委托 vision 壳或交给 MCP 视觉工具）；本地路径 / http URL 原样透传；全程 fail-open |
-| `lang.enabled / ask / candidates` | `true / true / 出厂清单` | 项目级语言偏好：每轮 `[LANG]` 铁律行（会话 / 注释与提交 / 文档），首次询问未完成配置则每轮用户输入重新询问，未配置期间写入/编辑/bash/派发被硬闸门拒绝（拒绝问卷则本会话豁免），落盘 `.switchman/settings.json`（AGENTS.md 标记为只读回退），`/switchman-lang` 重新询问 |
+| `lang.enabled / ask / candidates` | `true / true / 出厂清单` | 项目级语言偏好：每轮 `[LANG]` 铁律行（会话 / 注释与提交 / 文档），首次询问未完成配置则每轮用户输入重新询问，未配置期间写入/编辑/bash/派发被硬闸门拒绝（拒绝问卷则本会话豁免），落盘 `.switchman/settings.json`（AGENTS.md 标记为只读回退），`/switchman-lang` 重新询问。问卷题文跟随检测到的界面语言（env `LC_ALL` → `LANG`，归一化——`zh_CN.UTF-8` → `zh-CN`——无匹配回退英文；仅题文本地化，标记前缀与指令正文保持稳定英文） |
 | `lanes` | 内置六档链 | 自定义各档壳链（覆盖内置偏好序）；键=economy/mechanical/main/hard/vision/review |
 | `workspace.enabled / dirname` | `true / ".switchman"` | 工件工作区：每个主会话自动创建 `<project-root>/.switchman/<yyyy-mm-dd>/<sessionId>-<title>/` 目录，路径每轮注入调度员规程；目录内含 `SESSION.md` / `dispatches.jsonl` / `media/`。关闭后不再创建目录，规程段落同步失效 |
 | `tmux.enabled / rightPct / maxPanes / mini` | `true / 60 / 3 / false` | tmux 窗格镜像（仅当 opencode 服务器自身运行在 tmux 中时生效）：每条被委派的子代理在主 tmux 窗口右侧列实时打开一个 `opencode attach` 窗格；`rightPct`＝右列宽度百分比（10..90，主窗格占其余），`maxPanes`＝可见子代理窗格上限（1..4；超出的派发在 FIFO 队列等待），`mini`＝用极简 attach 界面取代完整 TUI |
@@ -145,7 +146,7 @@ bun run build   # 生成 dist/opencode-switchman.js
 ```
 [ROUTES] economy: glm-53f-low→glm-47-off→glm-5t-off | mechanical: glm-53f-high→glm-47-off | main: glm-53f-high | hard: glm-53-high | vision: glm-53f-high | review: glm-53-high-ro
 [WATERMARK] GLM 5h 10% weekly 38% (refreshed 09-11 10:00) | Copilot credits 0% left (refreshes 2026-10-01) | DeepSeek balance exhausted | advice: ...
-[WATERMARK:SESSION] measured session context ~37k (soft 60k/hard 80k/force 100k) | growth ~5k/turn, ~8 turns to hard | self-read this turn 178/3000
+[WATERMARK:SESSION] measured session context ~37k (soft 50k/hard 90k/force 130k) | growth ~5k/turn, ~8 turns to hard | self-read this turn 178/3000
 [LIMITS] down: none | reviewer prefers cross-family (same-family self-review = DOWNGRADED, allowed only when no cross-family reviewer exists) | api-billed & unknown models sink by coefficient (explicit billing=subscription wins) | matrix: cli·watch/ok | manual capability rank: 9 models, task-pool selection: 6 pools active (/modelRank /poolConfig to adjust)
 [TODO] 0/6 done · in_progress: 撰写 README 章节 — keep todowrite current (update as each item starts/finishes)
 [LANG] conversation=zh-CN comments=en docs=en (source: project settings) — 用会话语言回复与推理；代码注释、提交信息与生成文档各随其设置
@@ -223,7 +224,7 @@ opencode-switchman 把编排拆成三层，各司其职：
 |---|---|---|
 | **认知层** | 主模型（调度员）+ 随包注入的调度员规程 | 任务四维画像（认知强度×机械度×上下文×紧急度）、决定自做还是委派、选档选壳、写 DELEGATION_V1 委派 prompt |
 | **执行层** | 「模型×档位」空壳子代理（如 `glm-mx-53-high`） | 只绑定模型与思考档位，角色由委派 prompt 动态赋予（programmer/tester/reviewer 等 14 角色） |
-| **确定性层** | 插件本体 | 六闸拦截、ROUTE_META 硬校验、加权模型评分、配额/成本感知选链、探针 / 熔断 / 实调隔离自愈、四行横幅实时注入 |
+| **确定性层** | 插件本体 | 六闸拦截、ROUTE_META 校验（缺失→按 lane 合成、非法→拒绝）、加权模型评分、配额/成本感知选链、探针 / 熔断 / 实调隔离自愈、四行横幅实时注入 |
 
 **Token 经济学为第一性原则**：返工是最贵的 token。由此派生六档认知分层——
 
@@ -236,7 +237,7 @@ opencode-switchman 把编排拆成三层，各司其职：
 | vision | observer 看图 | 视觉模型，medium→high→xhigh→max 档 |
 | review | reviewer / 专家席 审案 | **强制异模型族**（防同族盲区），high→xhigh→max 档 |
 
-思考档位偏好是独立的一层路由算法：每档按上表偏好序选思考档（首个被支持的档位即默认档）；`off` 档只作 lane 级兜底——仅当该档没有思考档候选可用时（如只支持开/关的模型）才进链，绝不排到思考档候选之前。壳在排序前还按能力面划池：review 只从 `ro`（只读）壳池选，其余 lane 只从 `rw` 壳池选，仅当本池为空才跨池兜底。
+思考档位偏好是独立的一层路由算法：每档按上表偏好序选思考档（首个被支持的档位即默认档）；`off` 档只作 lane 级兜底——仅当该档没有思考档候选可用时（如只支持开/关的模型）才进链，绝不排到思考档候选之前。壳在排序前还按能力面划池：review 只从 `ro`（只读）壳池选，其余 lane 只从 `rw` 壳池选，仅当本池为空才跨池兜底。只读壳以 `edit: "deny"` 运行，并配**只读 bash 白名单**（git 查看类子命令——`git status/diff/log/show/blame/rev-parse/ls-files/grep/shortlog/describe/merge-base`、`git stash list`，以及 `git branch/tag/remote/worktree/config` 的仅列表形态——加上 `rg`、`grep`、`cat`、`ls`、`head`、`tail`、`stat`、`tree` 等检索/查看工具）；其余命令（含带变异形态的 `find`/`sed`/`awk`/`echo`）全部落到兜底 deny，ro 提示词末尾附一行说明，要求只汇报结论、绝不尝试写入。
 
 水位只影响排序（用满不浪费），唯一硬拦是「调用必失败」（额度确定耗尽或硬门命中）；按量计费（`billing: "api"`）provider 在自动路由中不会被 deny——它们经 0.85 系数在同能力档内沉底，未知 provider 模型经 0.75 惩罚沉底，无需任何厂商专属的链尾席位或 deny 规则。
 
@@ -274,7 +275,7 @@ flowchart TD
 | 2 探针矩阵 | 组合实测 down / retired | 拦明确不可用；连续 404 下线消失模型 |
 | 3 熔断 / 隔离 | 600s 窗内 ≥2 败或实调隔离中 | 「连续失败熔断中，约 10 分钟自动恢复」/「实调失败后隔离中」 |
 | 4 池耗尽 | 配额判定必失败 | 附人读原因（GLM 100% / Copilot 确定耗尽 / DS 欠费） |
-| 5 协议 | ROUTE_META 缺失/非法 | deny 附样例与合法值表 |
+| 5 协议 | ROUTE_META 缺失/非法 | 缺失或无法解析的行 → 按壳所在 lane 合成 META 后放行并记状态日志；存在但错误（非法值 / 缺必填字段）→ deny 附样例与合法值表 |
 | 6 语义 | 同族复审 / rw→ro 壳 / 图像→非视觉壳 | 「复审须异族视角」等 |
 
 ROUTE_META 是嵌在委派 prompt 内的单行协议，六键六值，插件逐字段校验：
@@ -320,11 +321,11 @@ ROUTE_META {"lane":"main","role":"programmer","producer_family":"glm","capabilit
 
 ## 子代理上下文硬顶
 
-主会话享有软/硬/压三档水位＋自动交接；被委派的壳子代理会话此前完全没有上下文控制，一路跑过 18 万 token 也无人拦截。现在每个壳子代理会话只有一道硬顶（`context.subagentForceTokens`，默认 100,000 token，钳制 20k..1M，并在可知时额外以壳模型上下文窗口的 90% 封顶），实测口径与会话水位相同：最新 assistant 消息的 input + output + reasoning + cache.read。触顶后，插件拒绝该子代理会话内的所有后续工具调用并下达收尾指令；子代理随后给出的纯文本答复——一份详细的工作进度总结（已完成 / 关键发现含 file:line 证据 / 未完成 / 下一步）——即作为任务结果返回给委派方，会话随即永久终止（终止事件写入状态日志）。合规两侧预先约定：子代理系统提示的壳规则第 6 条（首次触顶拒绝即停止、交回总结），随包调度员规程第 2 节约定编排侧契约（绝不重试已终止的会话；重新派发、只注入所需上下文）。
+主会话享有软/硬/压三档水位＋自动交接；被委派的壳子代理会话此前完全没有上下文控制，一路跑过 18 万 token 也无人拦截。现在每个壳子代理会话只有一道硬顶（`context.subagentForceTokens`，可选——缺省跟随主会话 `forceTokens`，即默认 130,000 token，与主会话共享同一条绝对终止线；显式覆盖时钳制 20k..1M，并在可知时额外以壳模型上下文窗口的 90% 封顶），实测口径与会话水位相同：最新 assistant 消息的 input + output + reasoning + cache.read。硬顶终止之前有两档柔性提醒，直接复用主会话的绝对软/硬阈值（`softTokens` 省着用 / `hardTokens` 收尾交接——子代理上下文与主会话上下文同等昂贵），有效上限按比例下拉两档。触顶后，插件拒绝该子代理会话内的所有后续工具调用并下达收尾指令；子代理随后给出的纯文本答复——一份详细的工作进度总结（已完成 / 关键发现含 file:line 证据 / 未完成 / 下一步）——即作为任务结果返回给委派方，会话随即永久终止（终止事件写入状态日志）。合规两侧预先约定：子代理系统提示的壳规则第 6 条（首次触顶拒绝即停止、交回总结），随包调度员规程第 2 节约定编排侧契约（绝不重试已终止的会话；重新派发、只注入所需上下文）。
 
 终止是永久且有意的：此后任何通过 `task_id` 恢复该会话的 `task` 调用都会被永久拒绝（持久登记 `~/.config/opencode/opencode-switchman/subagent-cap.json`，重启不失效），不带 `task_id` 的全新派发不受影响。理由：子代理是可复现的工人（其规格写在委派 prompt 里），「终止并交回」优于「压缩后续跑」。`context.subagentCap: false` 只阻止新的终止——已终止的会话不复活。
 
-由 `opencode-switchman.jsonc` 的 `context.subagentForceTokens`（默认 `100000`）/ `context.subagentCap`（默认 `true`）配置（详见配置项表）。
+由 `opencode-switchman.jsonc` 的 `context.subagentForceTokens`（可选——缺省跟随 `forceTokens`）/ `context.subagentCap`（默认 `true`）配置（详见配置项表）。
 
 ## 工件工作区（.switchman）
 
