@@ -1,2 +1,2 @@
 // Generated at build time: run bun scripts/gen-version.ts
-export const PLUGIN_VERSION = "1.1.0"
+export const PLUGIN_VERSION = "1.1.1"
