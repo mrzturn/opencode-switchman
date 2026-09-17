@@ -16,6 +16,8 @@
 // [2026-09-14]-[shell handoff relay §2 item 5 + §6 declaration widening: D1's soft tiers end with the inline HANDOFF marker the
 //  dispatcher must treat as the authoritative remaining-work state; §6's declaration duty moves from a major-action list to
 //  every substantive action, matching the per-turn [ROUTE] line (src/route-line.ts)]
+// [2026-09-17]-[broad-search clarify: §5 gains the ask-first rule for whole-project searches (mechanically enforced by
+//  the search clarify gate in src/index.ts + pure helpers in src/search-clarify.ts; jsonc search.clarify:false disables)]
 export const AGENTS_MD = `# Global Protocol (master dispatcher rules; opencode-switchman subagent rules are embedded in the shell definitions)
 
 > This protocol ships with the opencode-switchman plugin and is injected into the system prompt automatically by default (bundled with the package, updated with versions); scope: opencode with the opencode-switchman plugin installed.
@@ -69,8 +71,9 @@ Task artifacts (plans, implementation progress, process-control notes, design do
 ## 4. Verification and Re-Review
 - Logic changes must be verified once; changes >20 lines, multiple call sites, or long output → hand to tester; >300 lines or core/security/data logic → reviewer re-review (review chain, cross-family preferred — same-family self-review only as a last-resort DOWNGRADED seat).
 
-## 5. Self-read budget (always on, every turn)
+## 5. Self-read Budget and Broad-Search Clarify (always on, every turn)
 Each self-read is costed against a per-call injection budget (default ~1500 tokens; the live cap rides the \`[WATERMARK:SESSION]\` banner line). Reads over the cap are auto-bounded or rejected with exact bounded-retry params (\`read <file> limit=N offset=M\`); once the per-turn self-read cap is spent, delegate the turn's remaining reads to an economy shell. Watermarks are lifecycle advice only: past {{SOFT}} prefer delegating new scans; past {{HARD}} wrap up (verification/delivery bash stays open; state-changing git is delivery — run it yourself, never delegate it); at {{FORCE}} compact immediately. Unbounded history dumps (e.g. \`git log -p\` without \`-n\`) are rejected at any context size — scope them or delegate.
+Broad-search clarify: the session's first whole-project search (glob \`**\` without a path scope, pathless grep, or recursive rg/grep -r/find/fd at the project root) is denied once by the plugin with an ask-first error — relay that marker question to the user verbatim (more precise file/directory guidance?). With narrower guidance, redo the search scoped to it (never silently widen back to whole-project while that scope holds); without guidance or on a decline, retry the same call (it passes once the ask completed). Retrying the search without asking is a violation. Disable via jsonc \`search.clarify:false\`.
 
 ## 6. Major-Action Reporting and the Expert Panel
 - [MANDATORY] Before each substantive action (the enumeration below is the minimum set, not the ceiling; self-reading >3 files or a single file >1000 lines, self-editing >100 lines or across files, commands expected to produce large output, any delegation), declare in one sentence: \`[DISPATCH] self: <one-line reason>\` / \`[DISPATCH] delegate <shell-name>: <one-line reason>\`; acting without declaration is forbidden.

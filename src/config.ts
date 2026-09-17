@@ -39,6 +39,8 @@ export interface UserConfig {
   workspace: { enabled: boolean; dirname: string }
   // [2026-09-05]-[project language preference: conversation/comments/docs language — first-run ask + per-turn [LANG] iron-rule line]
   lang: { enabled: boolean; ask: boolean; candidates: string[] }
+  // [2026-09-17]-[broad-search clarify: whole-project searches ask the user for narrower guidance once per session]
+  search: { clarify: boolean }
   // [2026-09-06]-[tmux pane mirroring: live subagent attach panes in the home tmux window's right column]
   tmux: { enabled: boolean; rightPct: number; maxPanes: number; mini: boolean }
   lanes: Partial<Record<Lane, string[]>>
@@ -52,7 +54,7 @@ export const DEFAULT_CONTEXT_TOKENS = { soft: 50_000, hard: 90_000, force: 130_0
 export const DEFAULT_DELEGATION_FLOOR = 3_000
 
 /** Factory defaults for behavior sections (fillMissing baseline; only bad-typed values fall back and report SWM037) */
-export function defaultBehaviorConfig(): Pick<UserConfig, "quota" | "cost" | "capability" | "matrix" | "banner" | "rules" | "context" | "builtinAgents" | "injection" | "dispatch" | "relay" | "workspace" | "lang" | "tmux" | "lanes"> {
+export function defaultBehaviorConfig(): Pick<UserConfig, "quota" | "cost" | "capability" | "matrix" | "banner" | "rules" | "context" | "builtinAgents" | "injection" | "dispatch" | "relay" | "workspace" | "lang" | "search" | "tmux" | "lanes"> {
   return {
     quota: { glmFiveHourReservePct: 90, deepseekLowBalanceWarnCny: 10 },
     cost: { enabled: true },
@@ -68,6 +70,7 @@ export function defaultBehaviorConfig(): Pick<UserConfig, "quota" | "cost" | "ca
     relay: { image: true },
     workspace: { enabled: true, dirname: ".switchman" },
     lang: { enabled: true, ask: true, candidates: [...DEFAULT_LANG_CANDIDATES] },
+    search: { clarify: true },
     tmux: { enabled: true, rightPct: 60, maxPanes: 3, mini: false },
     lanes: {},
   }
@@ -205,6 +208,8 @@ export function validateUserConfig(value: unknown): { config: UserConfig; diagno
   if (typeof filled.lang.enabled !== "boolean") bad("lang.enabled", () => { filled.lang.enabled = defaults.lang.enabled })
   if (typeof filled.lang.ask !== "boolean") bad("lang.ask", () => { filled.lang.ask = defaults.lang.ask })
   if (!Array.isArray(filled.lang.candidates) || filled.lang.candidates.length === 0 || !filled.lang.candidates.every((c: unknown) => typeof c === "string" && c.trim() === c && !!c.trim() && c.length <= 48)) bad("lang.candidates", () => { filled.lang.candidates = structuredClone(defaults.lang.candidates) })
+  // [2026-09-17]-[broad-search clarify switch]
+  if (typeof filled.search.clarify !== "boolean") bad("search.clarify", () => { filled.search.clarify = defaults.search.clarify })
   // [2026-09-06]-[tmux pane mirroring: enabled/mini booleans; rightPct integer 10..90; maxPanes integer 1..4]
   if (typeof filled.tmux.enabled !== "boolean") bad("tmux.enabled", () => { filled.tmux.enabled = defaults.tmux.enabled })
   if (!Number.isInteger(filled.tmux.rightPct) || filled.tmux.rightPct < 10 || filled.tmux.rightPct > 90) bad("tmux.rightPct", () => { filled.tmux.rightPct = defaults.tmux.rightPct })
@@ -278,6 +283,8 @@ export function resolveEffectiveOptions(raw: unknown, cfg: UserConfig): { option
     workspace: has(o, "workspace") ? { ...cfg.workspace, ...o.workspace } : cfg.workspace,
     // [2026-09-05]-[project language preference switch: same merge pattern (jsonc baseline, tuple explicit keys override)]
     lang: has(o, "lang") ? { ...cfg.lang, ...o.lang } : cfg.lang,
+    // [2026-09-17]-[broad-search clarify switch: same merge pattern]
+    search: has(o, "search") ? { ...cfg.search, ...o.search } : cfg.search,
     // [2026-09-06]-[tmux pane mirroring switches: same merge pattern]
     tmux: has(o, "tmux") ? { ...cfg.tmux, ...o.tmux } : cfg.tmux,
     lanes: has(o, "lanes") ? o.lanes : cfg.lanes,
@@ -293,7 +300,7 @@ export function resolveEffectiveOptions(raw: unknown, cfg: UserConfig): { option
       lmarenaCheck: has(o.capability, "lmarenaCheck") ? o.capability!.lmarenaCheck! : cfg.capability.lmarenaCheck,
     },
   }
-  for (const section of ["cost", "banner", "rules", "lanes", "matrix", "capability", "context", "builtinAgents", "injection", "dispatch", "relay", "workspace", "lang", "tmux"] as const) if (has(o, section)) legacySections.push(section)
+  for (const section of ["cost", "banner", "rules", "lanes", "matrix", "capability", "context", "builtinAgents", "injection", "dispatch", "relay", "workspace", "lang", "search", "tmux"] as const) if (has(o, section)) legacySections.push(section)
   return { options, legacySections }
 }
 export function routePolicy(config: UserConfig, legacy?: Partial<Record<Pool, boolean>>): RoutePolicy {

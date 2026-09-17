@@ -62,6 +62,7 @@ import type { SwitchmanOptions, Lane, LaneResult, Pool, ShellRegEntry, ModelKey 
 import { WorkspaceTracker, DEFAULT_WORKSPACE_DIRNAME, type EnsuredWorkspace } from "./workspace"
 import { TmuxPaneManager, serverOriginOf } from "./tmux"
 import { loadLangConfig, renderLangLine, renderAskDirective, saveLangFromQuestion, langGateDecision, LANG_GATE_TOOLS, hasLangMarkerQuestions, detectUiLocale } from "./lang-config"
+import { SEARCH_CLARIFY_TOOLS, SEARCH_CLARIFY_MAX_DENIES, isBroadSearchCall, describeSearchCall, searchClarifyDenyMessage, hasSearchMarkerQuestion } from "./search-clarify"
 import { renderRouteLine, routeLineEnabled } from "./route-line"
 import { loadDispatchMode } from "./dispatch-mode"
 import { detectMode, readConfigured, normalizeProviderListResponse } from "./activation"
@@ -213,6 +214,12 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   // [2026-09-07]-[lang hard gate: per-session waiver set — a completed marker question call that did NOT persist a
   //  config (user declined / unparsable output) opens the gate for this session so a decline never deadlocks writes]
   const langGateWaived = new Set<string>()
+  // [2026-09-17]-[broad-search clarify gate: searchScopeAsked = sessions whose scope ask already completed (marker
+  //  question captured, or anti-deadlock fail-open after repeated denies) — broad searches pass from then on;
+  //  searchDenyCount = per-session deny counter backing the fail-open (a broken/unavailable question tool must
+  //  never wedge a session on its own broad search)]
+  const searchScopeAsked = new Set<string>()
+  const searchDenyCount = new Map<string, number>()
   // [2026-09-06]-[tmux pane mirroring: dispatched subagent sessions open as live `opencode attach` panes in the home
   //  tmux window — main pane left / subagent column right (max 3 visible, FIFO replacement on completion); inert
   //  outside tmux, fail-open everywhere. pendingTask = dispatch intents recorded per main session, consumed by the
@@ -1694,6 +1701,34 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         if (denySkip.has(input.callID)) throw e
         // internal error on our side (never one of our own denies) → fail-open, do not break the tool path
       }
+      // [2026-09-17]-[broad-search clarify gate: a main session's first whole-project search (glob '**' unscoped /
+      //  pathless grep / recursive rg|grep -r|find|fd at the project root) is denied with an ask-first error — the
+      //  user is asked ONCE for more precise file guidance (marker question); narrower guidance re-scopes the retry,
+      //  no guidance (or a decline) re-runs it (the latch opens on marker-question completion; after 2 denies without
+      //  an ask the gate fail-opens for the session — anti-deadlock). Shell/internal sessions exempt (a delegated
+      //  scouter IS the sanctioned broad-search path); detection is conservative (uncertain shapes pass); not ctx
+      //  control — /ctx-pause does not suspend it; search.clarify:false disables entirely]
+      try {
+        const scSid = (input as any).sessionID as string | undefined
+        if (scSid && SEARCH_CLARIFY_TOOLS.has(input.tool) && !isShellOrInternalSession(scSid)
+          && options.search!.clarify && !searchScopeAsked.has(scSid)) {
+          if (isBroadSearchCall(input.tool, output.args)) {
+            const n = (searchDenyCount.get(scSid) ?? 0) + 1
+            searchDenyCount.set(scSid, n)
+            if (n > SEARCH_CLARIFY_MAX_DENIES) {
+              searchScopeAsked.add(scSid)
+              appendStatusLog(`search clarify gate: fail-open after ${SEARCH_CLARIFY_MAX_DENIES} denies without an ask — gate open for session ${scSid}`)
+            } else {
+              denySkip.add(input.callID)
+              appendStatusLog(`search clarify gate: tool '${input.tool}' denied (broad search, ask-first) in session ${scSid} (${n}/${SEARCH_CLARIFY_MAX_DENIES})`)
+              throw new Error(searchClarifyDenyMessage(describeSearchCall(input.tool, output.args)))
+            }
+          }
+        }
+      } catch (e) {
+        if (denySkip.has(input.callID)) throw e
+        // internal error on our side (never one of our own denies) → fail-open, do not break the tool path
+      }
       // [2026-09-14]-[D3 dispatch:"off" opt-out: a project that set the top-level "dispatch":"off" in
       //  <workspace-dirname>/settings.json stands down ALL dispatch governance for task calls — the entire task path
       //  below is skipped (uninjected-shell deny + its autoRedirect, built-in agent deny + its autoRedirect,
@@ -1869,6 +1904,12 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           } else if (hasLangMarkerQuestions(hookInput.args)) {
             langGateWaived.add(hookInput.sessionID)
             appendStatusLog(`lang gate: marker question completed without a saved config — gate waived for session ${hookInput.sessionID}`)
+          }
+          // [2026-09-17]-[broad-search clarify latch: our marker question completed (answered or declined — either
+          //  way the user was asked) → broad searches pass for the rest of the session]
+          if (hasSearchMarkerQuestion(hookInput.args)) {
+            searchScopeAsked.add(hookInput.sessionID)
+            appendStatusLog(`search clarify: scope ask completed — gate open for session ${hookInput.sessionID}`)
           }
         } catch { /* fail-open */ }
       }
@@ -2060,6 +2101,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             workspace.forget(sid)
             langAsked.delete(sid)
             langGateWaived.delete(sid)
+            searchScopeAsked.delete(sid)
+            searchDenyCount.delete(sid)
             // [2026-09-06]-[tmux pane mirroring: deleted child frees its pane; deleted main drops its dispatch intents]
             if (tmuxPanes.tracking(sid)) void tmuxPanes.noteChildEnd(sid)
             pendingTask.delete(sid)

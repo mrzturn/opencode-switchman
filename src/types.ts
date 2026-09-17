@@ -343,6 +343,12 @@ export interface LangOptions {
   /** Candidate language labels offered in the ask (custom free input always allowed besides these) */
   candidates?: string[]
 }
+// [2026-09-17]-[broad-search clarify: the first whole-project search per main session is denied once with an ask-first
+//  error (more precise file guidance? — narrower scope re-targets the search, no guidance re-runs it); see src/search-clarify.ts]
+export interface SearchOptions {
+  /** Master switch (default true): broad-search ask-first gate on glob/grep/bash */
+  clarify?: boolean
+}
 // [2026-09-06]-[tmux pane mirroring: dispatched subagent sessions open as live `opencode attach` panes in a
 //  right-hand column of the home tmux window (main pane left, subagent panes right; status line untouched);
 //  inert outside tmux — see src/tmux.ts]
@@ -377,5 +383,6 @@ export interface SwitchmanOptions {
   relay?: RelayOptions
   workspace?: WorkspaceOptions
   lang?: LangOptions
+  search?: SearchOptions
   tmux?: TmuxOptions
 }

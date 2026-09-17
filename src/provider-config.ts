@@ -148,6 +148,11 @@ export function renderDefaultConfigJsonc(): string {
   //   "maxPanes": 3,       // max visible subagent panes (1..4; extra dispatches wait in a FIFO queue and take over freed panes)
   //   "mini": false        // true = minimal attach interface instead of the full TUI
   // },
+  // Broad-search clarify: the first whole-project search per main session (glob '**' unscoped / pathless grep /
+  // recursive rg|grep -r|find|fd) is denied once with an ask-first error — the user is asked for narrower file guidance.
+  // "search": {
+  //   "clarify": true      // master switch; false = broad searches run without the ask
+  // },
   // Third-party/future extension data goes under namespace keys, not into providers.
   "extensions": {}
 }
