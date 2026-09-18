@@ -286,6 +286,42 @@ describe("gates: GateResult.redirect (autoRedirect)", () => {
   })
 })
 
+// [2026-09-18]-[pool-config membership = qualification at the dispatch gate: a model explicitly selected into the
+//  lane's task pool passes the capability-level floor gate (deny null; the allow note records the "pool-config
+//  override"), while the same below-floor model with no pool selection is still denied "capability level too low".
+//  Fixture uses a C-tier (L2) model on the hard lane (minimum L4): C/L2 is neither primary nor fallback there, so the
+//  plain capability gate (not the cross-level top-2 check) carries both verdicts. Synthetic registry, matrix=null —
+//  zero state dependencies, same pattern as the redirect fixtures above]-[impact: pins gates.ts poolMember exemption]
+describe("gates: capability-level floor vs pool-config override (hard lane)", () => {
+  const airShell: ShellRegEntry = {
+    name: "glm-mx-air-high", pool: "glm", provider: "zhipuai-coding-plan", modelId: "glm-4.5-air",
+    effort: "high", family: "glm", capability: "rw", vision: false,
+    matrixKey: "zhipuai-coding-plan|glm-4.5-air|high", comboKey: "zhipuai-coding-plan|glm-4.5-air|high",
+    status: "enabled",
+  }
+  const HARD_META = 'ROUTE_META {"lane":"hard","role":"planner","producer_family":"claude","capability":"rw","modality":"text","source":"auto"}'
+  const snap = (over: Partial<GateSnapshot> = {}): GateSnapshot & { lanes: Record<string, string[]> } => ({
+    registry: { [airShell.name]: airShell },
+    matrix: null,
+    routing: { down_agents: {}, down_expiry: {} },
+    quotaExhausted: {},
+    lanes: { hard: [airShell.name] },
+    ...over,
+  })
+
+  test("a below-floor model selected into the lane's task pool passes the capability gate (note records the override)", () => {
+    const r = checkShell(airShell.name, airShell, HARD_META, snap({ poolConfig: { hard: new Set(["glm-4.5-air"]) } }))
+    expect(r.deny).toBeNull()
+    expect(r.note).toContain("pool-config override")
+  })
+
+  test("the same below-floor model without a pool selection is still denied (capability level too low)", () => {
+    const r = checkShell(airShell.name, airShell, HARD_META, snap({ poolConfig: {} }))
+    expect(r.deny).toContain("capability level too low")
+    expect(r.note).toBeNull()
+  })
+})
+
 // [2026-09-14]-[D3 dispatch:"off" stand-down fixtures: a project that set the top-level "dispatch":"off" in
 //  .switchman/settings.json gets its task calls allowed UNGOVERNED — every task deny class (breaker, gate 7 rw/ro,
 //  built-in blocking, dynamic uninjected deny) stands down, while the non-dispatch surfaces stay on: the subagent cap

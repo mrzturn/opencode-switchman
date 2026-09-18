@@ -21,7 +21,7 @@ import { join, relative, isAbsolute, sep, dirname } from "node:path"
 // [2026-09-03]-[/poolConfig //modelRank interactive dialogs: task-pool pick lists and capability ranking read/write the
 //  user override layer (pool-config.json / capability-rank.json) directly, taking effect in sync with the plugin main
 //  process mtime hot reload]
-import { loadPoolConfig, writePoolConfig, resetPoolConfig, loadCapabilityRank, writeCapabilityRank, applyRankMove } from "./user-overrides"
+import { loadPoolConfig, writePoolConfig, resetPoolConfig, loadCapabilityRank, writeCapabilityRank, applyRankMove, poolUniverse } from "./user-overrides"
 // [2026-09-07]-[version line next to the marquee: reuse the selfupdate state/flag readers so the sidebar shares the
 //  exact same sources and TTL semantics as the update banner]
 import { readSelfUpdateState, flagSemantics, installedPluginVersion, versionBrief } from "./selfupdate"
@@ -521,7 +521,30 @@ function PoolModelsDialog(props: { api: TuiPluginApi; lane: Lane }) {
 }
 
 function openModelRankDialog(api: TuiPluginApi): void {
-  api.ui.dialog.replace(() => <RankPickerDialog api={api} />)
+  // [2026-09-18]-[rank universe = pool selection: with no task pool configured there is nothing to rank — guide to
+  //  /poolConfig instead of offering a full-superset ranking list (the config flow is poolConfig → modelRank)]
+  api.ui.dialog.replace(() =>
+    poolUniverse().size === 0
+      ? <RankUniverseEmptyDialog api={api} />
+      : <RankPickerDialog api={api} />
+  )
+}
+
+// ---- [2026-09-18]-[/modelRank empty state: no task-pool selection yet — one action jumps straight into the pool
+//  picker so the two-step config flow (poolConfig → modelRank) stays a single round trip]----
+
+function RankUniverseEmptyDialog(props: { api: TuiPluginApi }) {
+  const options = createMemo(() => [
+    { title: "→ Open task-pool selection (pick the models each pool may use, then rank them)", value: "__pools", onSelect: () => props.api.ui.dialog.replace(() => <PoolPickerDialog api={props.api} />) },
+    { title: "✕ Close", value: "__close", onSelect: () => props.api.ui.dialog.clear() },
+  ])
+  return (
+    <props.api.ui.DialogSelect
+      title="Model ranking is disabled until task pools are configured — only models selected into task pools are rankable, so you never rank models you cannot dispatch"
+      options={options()}
+      flat
+    />
+  )
 }
 
 // ---- [2026-09-10]-[interleaved move plumbing: one shared path for the list hotkeys and the per-model actions dialog —
@@ -601,12 +624,12 @@ function RankPickerDialog(props: { api: TuiPluginApi }) {
   })
   return (
     <props.api.ui.DialogSelect
-      title="Model capability ranking — merged order (#1 strongest; manual entries interleave with base-score models; ctrl+up/ctrl+down move one spot; enter = per-model actions)"
+      title="Model capability ranking — merged order (#1 strongest; scoped to the task-pool selection; manual entries interleave with base-score models; ctrl+up/ctrl+down move one spot; enter = per-model actions)"
       placeholder="Search · alt+up/alt+down mirror ctrl+up/ctrl+down (also work)"
       options={rows().map((r, i) => ({
         title: `#${String(i + 1).padStart(2, "0")} ${r.modelId}`,
         value: r.key,
-        description: `${r.tier}-tier · ${r.source === "manual" ? `manual${r.raw !== null ? ` ${r.raw}` : ""}` : "base capability score"}`,
+        description: `${r.tier}-tier · ${r.source === "manual" ? `manual${r.raw !== null ? ` ${r.raw}` : ""}` : "base capability score"}${r.poolMember === false ? " · not in any task pool" : ""}`,
         onSelect: () => props.api.ui.dialog.replace(() => <RankActionsDialog api={props.api} model={r.modelId} modelKey={r.key} />),
       }))}
       current={cursor() ?? undefined}

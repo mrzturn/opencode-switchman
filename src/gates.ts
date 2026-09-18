@@ -280,7 +280,14 @@ export function checkShell(
     return { deny: `${agent} lane=vision requires declaring an image/vision modality${hint("vision")}`, note: null, redirect: candidateOf("vision") }
   }
   const capability = baseScoreDynamic(shell.modelId)
-  if (!isPrimaryCandidate(lane as import("./types").Lane, capability) && !isFallbackCandidate(lane as import("./types").Lane, capability)) {
+  // [2026-09-18]-[pool-config membership = qualification: a model explicitly selected into this lane's task pool is
+  //  exempt from the capability level floor and the cross-level fallback top-2 checks — explicit user config wins over
+  //  score judgment; the allow note records the override for the decision log]
+  const poolMember = snap.poolConfig?.[lane]?.has(normalizeModelKey(shell.modelId)) === true
+  const poolOverrideNote = poolMember
+    ? "pool-config override: explicitly selected into this task pool (capability level floor waived)"
+    : null
+  if (!poolMember && !isPrimaryCandidate(lane as import("./types").Lane, capability) && !isFallbackCandidate(lane as import("./types").Lane, capability)) {
     // [2026-09-05]-[review last-resort seat exemption: a below-fallback shell (e.g. B-tier/L3) holding a last-resort
     //  review seat — on the chain while the chain carries no L5 primary candidate — is allowed with the DOWNGRADED
     //  note instead of denying "capability level too low", keeping the review lane dispatchable when only B-tier
@@ -294,7 +301,7 @@ export function checkShell(
     }
     return { deny: `${agent} capability level too low to take ${lane} tasks${hint()}`, note: null, redirect: candidateOf() }
   }
-  if (isFallbackCandidate(lane as import("./types").Lane, capability) && meta!.source !== "user") {
+  if (!poolMember && isFallbackCandidate(lane as import("./types").Lane, capability) && meta!.source !== "user") {
     let current
     try {
       current = computeLane(lane as import("./types").Lane, snap.lanes[lane] ?? base, buildParams() as any)
@@ -315,7 +322,8 @@ export function checkShell(
   // [2026-09-05]-[review same-family self-review: the last-resort exemption note (no cross-family reviewer on the chain)
   //  is emitted here after every structural gate passed]
   // [2026-09-14]-[D5: a synthesized META rides as an observe note (a deny always supersedes it); both notes joined when they co-occur]
-  return { deny: null, note: [metaSynthNote, reviewSelfReviewNote].filter(Boolean).join(" ") || null, redirect: null }
+  // [2026-09-18]-[pool-config override note rides along on the allow path (deny branches above already carried the exemption)]
+  return { deny: null, note: [metaSynthNote, reviewSelfReviewNote, poolOverrideNote].filter(Boolean).join(" ") || null, redirect: null }
 }
 
 /** Unregistered / non-shell name → fail-open (unknown built-in agents are not governed by routing) */

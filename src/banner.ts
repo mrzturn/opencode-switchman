@@ -305,6 +305,9 @@ function limitLine(down: Set<string> | string[] | Map<string, string>, unknownCo
     const parts: string[] = []
     if (overrides.rankModels > 0) parts.push(`manual capability rank: ${overrides.rankModels} models`)
     if (overrides.poolLanes > 0) parts.push(`task-pool selection: ${overrides.poolLanes} pools`)
+    // [2026-09-18]-[rank universe = pool selection: surface the scoping so users see /modelRank only ranks pool-selected models
+    const universe = (overrides as { universeModels?: number }).universeModels
+    if (universe !== undefined && universe > 0) parts.push(`rankable universe: ${universe} models`)
     line += ` | ${parts.join(", ")} active (/modelRank /poolConfig to adjust)`
   }
   return line

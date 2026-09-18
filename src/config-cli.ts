@@ -6,14 +6,14 @@
 import { baseScoreDynamic, normalizeModelKey } from "./capability"
 import { loadSupersetShells, loadManifest, paths } from "./state"
 import {
-  loadCapabilityRank, loadPoolConfig, poolAllowlist,
+  loadCapabilityRank, loadPoolConfig, poolAllowlist, poolUniverse,
   writeCapabilityRank, clearCapabilityRank, writePoolConfig, resetPoolConfig,
   type RankScoreOverride,
 } from "./user-overrides"
 import { LANE_ORDER, type Lane } from "./types"
 import { TIER_RANK } from "./model-ranks"
 
-interface ModelRow { key: string; modelId: string; tier: string; source: string; raw: number | null; manualIdx?: number }
+interface ModelRow { key: string; modelId: string; tier: string; source: string; raw: number | null; manualIdx?: number; poolMember?: boolean }
 
 // [2026-09-10]-[manual-first tie-break: on exact (tier, raw) ties manual entries sort above base entries, ordered by
 //  their models-array slot — lets anchored moves win ties without touching base-vs-base ordering]
@@ -150,15 +150,28 @@ function cmdPool(args: string[]): number {
 
 /** [2026-09-10]-[merged interleaved view: manual entries no longer float as a block on top — every model (manual + base)
  *  is sorted by effective capability (tier, raw; manual wins exact ties), so /modelRank moves and rank CLI indices act
- *  on one global ordering. Manual keys missing from the model universe keep a row (dead-key tolerance)] */
+ *  on one global ordering. Manual keys missing from the model universe keep a row (dead-key tolerance)]
+ *  [2026-09-18]-[rank universe = pool selection: with at least one task pool configured the view shows EXACTLY the
+ *  pool-selected universe — dead manual keys (rank entries absent from every pool) are no longer listed; the next
+ *  rank write prunes them from capability-rank.json instead (see writeCapabilityRank). With NO pool configured the
+ *  view degenerates to the manual entries alone (cleanup-only) while the CLI/TUI guide the user to /poolConfig first] */
 export function rankViewRows(): ModelRow[] {
   const rank = loadCapabilityRank()
-  const rows = allModelRows()
-  const seen = new Set(rows.map((r) => r.key))
-  for (const k of rank?.models ?? []) {
-    if (seen.has(k)) continue
-    seen.add(k)
-    rows.push(toRow(k))
+  const universe = poolUniverse()
+  let rows: ModelRow[]
+  if (universe.size === 0) {
+    // cleanup-only degeneration: the manual entries alone (base rows filtered out entirely)
+    const seen = new Set<string>()
+    rows = []
+    for (const k of rank?.models ?? []) {
+      if (seen.has(k)) continue
+      seen.add(k)
+      rows.push(toRow(k))
+    }
+  } else {
+    rows = allModelRows()
+      .filter((r) => universe.has(r.key))
+      .map((r) => ({ ...r, poolMember: true }))
   }
   rows.sort(capabilityCompare)
   return rows
@@ -167,20 +180,35 @@ export function rankViewRows(): ModelRow[] {
 function cmdRank(args: string[]): number {
   const [sub, ...rest] = args
   const rank = loadCapabilityRank()
+  const universe = poolUniverse()
   if (!sub || sub === "list") {
+    if (universe.size === 0) {
+      console.log(`Manual capability ranking (config file ${paths().capabilityRank}) is disabled until task pools are configured: only models selected into task pools are rankable.`)
+      console.log(`Run /poolConfig (TUI dialog) or pool set <task-pool> <index|model...> here first, then rank only the models you actually use.`)
+      const legacy = rank?.models ?? []
+      if (legacy.length > 0) {
+        console.log("== Legacy manual entries (cleanup only; rank remove/clear still work, or select the models into a task pool to rank them) ==")
+        legacy.forEach((k, i) => console.log(` #${String(i + 1).padStart(2, "0")} ${k}`))
+      }
+      return 0
+    }
     const view = rankViewRows()
     const manualCount = rank?.models.length ?? 0
-    console.log(`Model capability ranking (config file ${paths().capabilityRank}; one merged ordering — manual entries interleave with base-score models by effective score; higher up = stronger)`)
+    console.log(`Model capability ranking (config file ${paths().capabilityRank}; scoped to the ${universe.size} models selected into task pools via /poolConfig — one merged ordering, manual entries interleave with base-score models by effective score; higher up = stronger)`)
     console.log(`== Merged ordering (${manualCount} manual${manualCount > 0 ? "" : "; none = all use the base capability score"}; CLI set/add order entries by the legacy ladder, TUI moves anchor scores between neighbors) ==`)
     view.forEach((row, i) => {
       const manualTag = row.source === "manual"
         ? `·manual${row.raw !== null ? ` ${row.raw}` : ""}`
         : ""
-      console.log(` #${String(i + 1).padStart(2, "0")} ${row.modelId} (${row.tier}-tier${manualTag})`)
+      const poolTag = row.poolMember === false ? " ·not in any task pool" : ""
+      console.log(` #${String(i + 1).padStart(2, "0")} ${row.modelId} (${row.tier}-tier${manualTag}${poolTag})`)
     })
     return 0
   }
   if (sub === "add" || sub === "remove" || sub === "set") {
+    if (sub !== "remove" && universe.size === 0) {
+      throw new Error("no task-pool selection yet — ranking follows the pool selection; run /poolConfig (or pool set) first")
+    }
     if (rest.length === 0) throw new Error(`rank ${sub} requires an index or model name`)
     const refs = resolveRefs(rest, rankViewRows())
     const current = [...(rank?.models ?? [])]
@@ -229,9 +257,9 @@ export function runCli(argv: string[]): number {
     console.log("  pool remove <task-pool> <index|model...> Uncheck participation")
     console.log("  pool set <task-pool> <index|model...>    Fully replace that pool's participation list (the same model may join multiple pools)")
     console.log("  pool clear <task-pool>                Clear that pool's config (back to the system default candidate set)")
-    console.log("  rank list                      View the manual capability ranking and the reference ordering of available models")
-    console.log("  rank set <index|model...>         Fully reorder (in the given order, #1 is strongest)")
-    console.log("  rank add <index|model...>         Append to the end of the ranking")
+    console.log("  rank list                      View the manual capability ranking (scoped to the task-pool selection; guides to /poolConfig when no pool is configured)")
+    console.log("  rank set <index|model...>         Fully reorder (in the given order, #1 is strongest; only pool-selected models)")
+    console.log("  rank add <index|model...>         Append to the end of the ranking (pool-selected models only)")
     console.log("  rank remove <index|model...>      Remove from the ranking")
     console.log("  rank clear                     Clear the ranking (fall back to the base capability score)")
     return group ? 1 : 0

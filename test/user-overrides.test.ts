@@ -243,3 +243,39 @@ describe("pool-config.json (task-pool selection)", () => {
     expect(paths().capabilityRank.endsWith("capability-rank.json")).toBe(true)
   })
 })
+
+// [2026-09-18]-[pool lane manual ordering wiring: computeLane builds manualOrder from capability-rank.json (prefix-
+//  matched via manualRankIndexOf) for a lane with an explicit task-pool selection and hands poolOrdered+manualOrder to
+//  rankCandidates — the manual order becomes the dispatch priority (beats tier grouping); with nothing ranked the lane
+//  keeps the existing comparator (and the level-floor exemption keeps below-floor members seated). Empty matrix {}
+//  keeps the scoring path active (missing combos fail-open as health 1.0); all fixtures cleaned up at the end]-
+// [impact: pins the computeLane → rankCandidates contract]
+describe("computeLane pool lane manual ordering ([2026-09-18])", () => {
+  test("ranked pool members follow the manual order (lower tier first); unranked pool lanes keep the baseline comparator + floor exemption", () => {
+    // leg 1 — manual rank: flash (#1) above glm-5.3 (#2): explicit order wins over the A>B tier grouping on main
+    writePoolConfig("main", ["glm-5.3", "glm-5.3-flash"])
+    writeCapabilityRank(["glm-5.3-flash", "glm-5.3"])
+    const ordered = computeLane("main", BASE, { registry: REGISTRY, matrix: {}, routing: null, poolConfig: loadPoolConfig() })
+    expect(ordered.dropped).toEqual([])
+    expect(ordered.chain.map((c) => c.shell)).toEqual(["glm-mx-glm-53-flash-high", "glm-mx-glm-53-high"])
+    // leg 2 — no manual rank on a pool lane: existing comparator applies (level distance = tier grouping here) and
+    // the below-floor C(L2) member stays seated (poolOrdered floor exemption)
+    const air = shellReg({
+      name: "glm-mx-air-high", modelId: "glm-4.5-air",
+      matrixKey: "zhipuai-coding-plan|glm-4.5-air|high", comboKey: "zhipuai-coding-plan|glm-4.5-air|high",
+    })
+    const hardReg = { ...REGISTRY, "glm-mx-air-high": air }
+    writePoolConfig("hard", ["glm-5.3", "glm-4.5-air"])
+    clearCapabilityRank()
+    const hardPool = computeLane("hard", ["glm-mx-glm-53-high", "glm-mx-air-high"], { registry: hardReg, matrix: {}, routing: null, poolConfig: loadPoolConfig() })
+    expect(hardPool.dropped).toEqual([])
+    expect(hardPool.chain.map((c) => c.shell)).toEqual(["glm-mx-glm-53-high", "glm-mx-air-high"])
+    // leg 3 — control, same lane without the pool selection: the level floor filters the below-floor shell again
+    resetPoolConfig("hard")
+    const hardDefault = computeLane("hard", ["glm-mx-glm-53-high", "glm-mx-air-high"], { registry: hardReg, matrix: {}, routing: null, poolConfig: loadPoolConfig() })
+    expect(hardDefault.chain.map((c) => c.shell)).toEqual(["glm-mx-glm-53-high"])
+    // cleanup: restore the default (unconfigured) state for any later fixture
+    resetPoolConfig("main")
+    expect(loadPoolConfig()).toEqual({})
+  })
+})

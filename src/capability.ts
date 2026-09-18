@@ -482,3 +482,13 @@ export function manualRankResult(modelId: string): DynamicBaseResult | null {
     matchedAs: entryKey,
   }
 }
+
+/** [2026-09-18]-[pool lane manual ordering: normalized modelId → manual rank index (0 = strongest). Prefix-matched like
+ *  manualRankResult so hand-edited family entries cover their variants; null = unranked (sorts after ranked members).
+ *  Feeds the pool-lane absolute ordering key in scoring.rankCandidates] */
+export function manualRankIndexOf(modelId: string): number | null {
+  const norm = normalizeModelKey(modelId)
+  if (!norm) return null
+  const hit = manualRankMatch(norm)
+  return hit ? hit.index : null
+}
