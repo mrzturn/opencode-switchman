@@ -34,8 +34,9 @@ import {
   capThresholdsByWindow, subagentCapOf, capByWindow,
   subagentCapDenyMessage, subagentResumeDenyMessage, ctxControlMarkerOf, pausedWindowWarning,
   subagentSoftTiersOf, shellSoftTierDecision,
+  matchContinuation, DENY_RETRY_OVERHEAD_TOKENS,
 } from "./context-watch"
-import type { CtxControlAction, ReadEstimate, FileSample, ContextThresholds } from "./context-watch"
+import type { CtxControlAction, ReadEstimate, FileSample, ContextThresholds, ReadContinuation } from "./context-watch"
 import { backupSession, compactSession, v1HandoverPort, type HandoverResult } from "./handover-core"
 import { logDecision, BILLING_API_BOOST } from "./scoring"
 import type { WaterFactor, DecisionRecord } from "./scoring"
@@ -174,6 +175,10 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   // [2026-09-05]-[v1 read budget: per-turn self-read spend (resets each user turn), watermark sample history for
   //  pace estimation, and last-seen user message id for turn-boundary detection (assistant parentID comparison)]
   const turnReadUsage = new Map<string, { used: number; at: number }>()
+  // [2026-09-18]-[v1.1 continuation merge: last granted-but-not-completed read window per main session (same logical
+  //  read = same file + follow-up offset resuming near the granted end); a bounded continuation completes the original
+  //  want in one shot. Reset with the turn (turnReadUsage spots) and on session.deleted]
+  const readContinuation = new Map<string, ReadContinuation>()
   const wmHistory = new Map<string, number[]>()
   const lastUserMsg = new Map<string, string>()
   // [2026-09-11]-[/ctx-pause //ctx-resume: per-session context-control suspension — the commands inject a fixed marker
@@ -1213,12 +1218,36 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         const filePath = typeof output.args?.filePath === "string" ? output.args.filePath : ""
         if (filePath && BINARY_EXT.test(filePath)) return
         const sample = await fileSample(filePath)
-        est = sample ? estimateReadRange(sample, output.args, readBudget) : null
+        // [2026-09-18]-[v1.1 need-aware sizing: the per-call grant ceiling rides the remaining turn headroom (max R*
+        //  on a spent turn, up to 2×R* fresh) — a demonstrated-range read lands one-shot instead of deny → partial →
+        //  continuation fragments; post-hoc charging keeps the per-turn top intact]
+        const grantTokens = Math.max(readBudget, Math.max(0, turnBudgetOf(readBudget) - turnUsed))
+        est = sample ? estimateReadRange(sample, output.args, readBudget, grantTokens) : null
       }
-      const action = budgetGateDecision({ tool: input.tool, level, readBudget, turnUsed, bashCommand: cmd, est })
-      if (action === "allow") return
+      // [2026-09-18]-[v1.1 continuation merge: a follow-up read resuming at/near the last granted window's end is the
+      //  same logical read continuing — its bounded remainder completes in one shot (see budgetGateDecision)]
+      const cont = input.tool === "read" && est ? matchContinuation(readContinuation.get(sid), output.args, est.tokensPerLine) : null
+      const action = budgetGateDecision({ tool: input.tool, level, readBudget, turnUsed, bashCommand: cmd, est, cont })
+      if (action === "allow") {
+        // [2026-09-18]-[v1.1: an in-band continuation is bounded to the remaining want (never grows past the ask);
+        //  a smaller explicit ask keeps the un-granted tail pending, otherwise the want is closed]
+        if (cont && cont.wantRemainderTokens <= readBudget + DENY_RETRY_OVERHEAD_TOKENS) {
+          const callLimit = typeof output.args?.limit === "number" && output.args.limit > 0 ? Math.floor(output.args.limit) : Number.POSITIVE_INFINITY
+          const granted = Math.max(1, Math.min(callLimit, cont.wantRemainderLines))
+          output.args.limit = granted
+          const prev = readContinuation.get(sid)
+          if (prev && granted < cont.wantRemainderLines) readContinuation.set(sid, { ...prev, grantedEndLine: cont.offset + granted - 1 })
+          else readContinuation.delete(sid)
+          appendStatusLog(`read budget continuation completion (file ${basename(String(output.args.filePath))}, +${granted} lines from ${cont.offset}, turn ${turnUsed}/${turnBudgetOf(readBudget)})`)
+        } else if (input.tool === "read") {
+          readContinuation.delete(sid) // the ask is fully served in one shot — the want is closed
+        }
+        return
+      }
       if (action === "cap" && est) {
         output.args.limit = est.suggestedLimit
+        // [2026-09-18]-[v1.1: remember the granted window + the demonstrated want so the model's own continuation completes in one shot]
+        readContinuation.set(sid, { filePath: String(output.args?.filePath ?? ""), grantedEndLine: (est.offset ?? 1) + est.suggestedLimit - 1, wantEndLine: est.requestedEndLine })
         appendStatusLog(`read budget gate cap (tool read, file ${basename(String(output.args.filePath))}, est ~${est.totalTokens} -> limit ${est.suggestedLimit}, turn ${turnUsed}/${turnBudgetOf(readBudget)})`)
         return
       }
@@ -1227,10 +1256,12 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       const cand = hint ? ` (e.g. ${hint}, ROUTE_META role=scouter)` : ""
       const candPlain = hint ? ` (e.g. ${hint})` : ""
       const pace = watermarkPace(sid)
-      const denyLog = `read budget gate ${action} (tool ${input.tool}, est ~${est ? est.totalTokens : "-"}, C~${kk(wm.tokens)}, T_est≈${pace ? pace.turnsToHard : "-"}, turn ${turnUsed}/${turnBudgetOf(readBudget)})`
+      const denyLog = `read budget gate ${action} (tool ${input.tool}, est ~${est ? est.totalTokens : "-"}${cont ? `, cont rem ~${cont.wantRemainderTokens}` : ""}, C~${kk(wm.tokens)}, T_est≈${pace ? pace.turnsToHard : "-"}, turn ${turnUsed}/${turnBudgetOf(readBudget)})`
       let msg: string
       if (action === "deny-budget" && est) {
-        msg = `[opencode-switchman] read ${output.args.filePath} would inject ~${est.totalTokens} tok (self-read budget ${readBudget}): retry bounded as \`read ${output.args.filePath} limit=${est.suggestedLimit} offset=${est.offset ?? 1}\` or delegate to an economy shell${cand}`
+        // [2026-09-18]-[v1.1: record the grant the retry params promise, so the model's bounded retry and its continuation merge]
+        readContinuation.set(sid, { filePath: String(output.args?.filePath ?? ""), grantedEndLine: (est.offset ?? 1) + est.suggestedLimit - 1, wantEndLine: est.requestedEndLine })
+        msg = `[opencode-switchman] read ${output.args.filePath} would inject ~${est.totalTokens} tok (self-read budget ${readBudget}, turn headroom ${Math.max(0, turnBudgetOf(readBudget) - turnUsed)}): retry bounded as \`read ${output.args.filePath} limit=${est.suggestedLimit} offset=${est.offset ?? 1}\` or delegate to an economy shell${cand}`
       } else if (action === "deny-turn") {
         msg = `[opencode-switchman] per-turn self-read budget spent (${turnUsed}/${turnBudgetOf(readBudget)}; resets on your next user message): delegate this read to an economy shell${cand}`
       } else if (action === "deny-archaeology") {
@@ -1951,6 +1982,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         // compaction leg: NEVER awaited here (see the 2026-09-05 header note) — fired detached
         if (result.ok) {
           turnReadUsage.delete(sid)
+          readContinuation.delete(sid)
           wmHistory.delete(sid)
           lastUserMsg.delete(sid)
           sessionMsgModel.delete(sid)
@@ -2026,9 +2058,10 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           const sid = props?.sessionID
           const info = props?.info
           if (typeof sid === "string" && !isShellOrInternalSession(sid)) {
-             if (info?.role === "user") {
-               lastUserMsg.set(sid, info.id)
-               turnReadUsage.delete(sid)
+              if (info?.role === "user") {
+                lastUserMsg.set(sid, info.id)
+                turnReadUsage.delete(sid)
+                readContinuation.delete(sid) // [2026-09-18]-[v1.1: a pending read want does not survive the user turn]
                 // [2026-09-11]-[opportunistic first-try: if the host ever ships parts on the event's info this fires
                 //  before the transform pass; in the real host info carries no parts so this no-ops and the reliable
                 //  capture lives in experimental.chat.messages.transform (see applyCtxControlAction)]
@@ -2058,6 +2091,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
               if (pid && known !== undefined && pid !== known) {
                 lastUserMsg.set(sid, pid)
                 turnReadUsage.delete(sid)
+                readContinuation.delete(sid) // [2026-09-18]-[v1.1: a pending read want does not survive the user turn]
               }
             }
           } else if (typeof sid === "string" && isShellAgentSession(sid) && info?.role === "assistant") {
@@ -2092,6 +2126,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             shellWatermark.delete(sid) // [2026-09-06]-[subagent cap watermark follows the same cleanup; terminatedSessions is intentionally NOT cleaned — termination is permanent]
             shellSoftTierDelivered.delete(sid) // [2026-09-14]-[subagent soft-tier dedup follows the session out (re-arm on a fresh same-id session is impossible; keeps the map bounded)]
             turnReadUsage.delete(sid)
+            readContinuation.delete(sid) // [2026-09-18]-[v1.1: pending read want follows the session out]
             wmHistory.delete(sid)
             lastUserMsg.delete(sid)
             sessionMsgModel.delete(sid)

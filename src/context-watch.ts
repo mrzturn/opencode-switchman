@@ -3,6 +3,13 @@
 //  deliberate probe-retry loops. Reads are now judged from turn 1 by estimated injection size (context is sunk cost;
 //  only the marginal injection compounds), watermarks keep lifecycle duties only (soft=advice, hard=wrap-up deny,
 //  force=auto-handover). v2 (dynamic R*) is parked in docs/Pending-Confirmation-and-Implementation/.]
+// [2026-09-18]-[v1.1 anti-fragmentation: deny→partial-read→continuation cycles proved the fixed per-call R* fragments
+//  reads the model demonstrably needs (it re-reads the rest anyway, plus one wasted deny round trip per fragment).
+//  Three additions: a tolerance band (R* + deny-retry overhead ≈ 400 tok passes outright), need-aware grant sizing
+//  (reads up to the remaining turn headroom, max 2×R*, land one-shot), and continuation merge (a follow-up read
+//  resuming at the granted window's end completes the original want in one bounded shot, even past the spent turn
+//  budget — delegating a ≤band fragment costs more than the fragment). Per-turn self-read injection stays bounded
+//  (≈2×R* + band + one bounded completion); the parked dynamic-R* v2 is unaffected and remains a separate idea.]
 // [2026-09-04]-[English localization: translate runtime messages and comments; no logic change]
 // Pure-function layer: token estimation, watermark tiering, read-gate decisions; state (Maps) is held by index.ts, no IO here.
 import type { ContextOptions } from "./types"
@@ -150,6 +157,10 @@ export function isArchaeologyBash(command: string): boolean {
 export const DEFAULT_READ_BUDGET_TOKENS = 1500
 export const MIN_READ_BUDGET_TOKENS = 200
 export const MAX_READ_BUDGET_TOKENS = 20_000
+/** [2026-09-18]-[v1.1 read budget: fixed cost of one deny→retry round trip (deny error text + re-issued call + model
+ *  re-reasoning ≈ 400 tok). Reads estimated within R* + this band are allowed outright: denying a barely-over-budget
+ *  read costs more than the overshoot it saves, and the model reads the rest anyway in fragments] */
+export const DENY_RETRY_OVERHEAD_TOKENS = 400
 /** Used when a file sample yields no usable line structure (empty/one-line files) */
 const FALLBACK_TOKENS_PER_LINE = 7.5
 
@@ -274,19 +285,27 @@ export interface ReadEstimate {
   /** estimated tokens the requested range would inject */
   totalTokens: number
   tokensPerLine: number
-  /** bounded-retry line count that fits the budget (clamped 50..500) */
+  /** bounded-retry line count that fits the grant ceiling (clamped 50..500) */
   suggestedLimit: number
   hasLimit: boolean
   requestedLimit?: number
   offset?: number
+  /** [2026-09-18]-[v1.1 need-aware sizing: effective per-call grant ceiling in tokens the suggestion was sized from —
+   *  the remaining turn headroom at the call site (max R* fresh-turn, up to 2×R*), so a demonstrated-range read
+   *  lands one-shot instead of deny → partial read → continuation fragments] */
+  grantTokens: number
+  /** [2026-09-18]-[v1.1 continuation merge: 1-based inclusive end line of the effective requested range (the demonstrated want)] */
+  requestedEndLine: number
 }
 
 /** Estimate the injection cost of a read call from a 64KB head sample: bytes/line → tokens/line (clamped 3..20 to
- *  absorb minified/verbose outliers), then tokens/line × effective lines (honoring limit/offset). Pure. */
+ *  absorb minified/verbose outliers), then tokens/line × effective lines (honoring limit/offset). Pure. The optional
+ *  grantTokens ceiling sizes suggestedLimit (defaults to readBudget — callers riding the turn headroom pass it). */
 export function estimateReadRange(
   sample: FileSample,
   args: { limit?: unknown; offset?: unknown } | undefined,
   readBudget: number,
+  grantTokens?: number,
 ): ReadEstimate {
   const sampleLines = sample.newlines + 1
   const coversFile = sample.sampleBytes >= sample.bytes
@@ -297,14 +316,55 @@ export function estimateReadRange(
   const offset = typeof args?.offset === "number" && args.offset > 0 ? Math.floor(args.offset) : 1
   const effectiveLines =
     limit !== undefined ? Math.max(1, Math.min(limit, Math.max(1, totalLines - offset + 1))) : totalLines
+  const grant = grantTokens ?? readBudget
   return {
     totalTokens: Math.ceil(tokensPerLine * effectiveLines),
     tokensPerLine,
-    suggestedLimit: Math.min(500, Math.max(50, Math.floor(readBudget / tokensPerLine))),
+    suggestedLimit: Math.min(500, Math.max(50, Math.floor(grant / tokensPerLine))),
     hasLimit: limit !== undefined,
     requestedLimit: limit,
     offset,
+    grantTokens: grant,
+    requestedEndLine: offset + effectiveLines - 1,
   }
+}
+
+// [2026-09-18]-[v1.1 continuation merge: the last window granted by a cap/deny-budget is remembered per session; a
+//  follow-up read of the same file resuming at/near the granted window's end is the SAME logical read continuing —
+//  its bounded remainder (≤ R* + overhead band) completes in one shot instead of re-fragmenting]
+/** Per-session memory of the last granted-but-not-completed read window (held by index.ts; pure matching lives here) */
+export interface ReadContinuation {
+  filePath: string
+  /** 1-based inclusive end line of the window granted last time (cap rewrite or deny-budget retry params) */
+  grantedEndLine: number
+  /** 1-based inclusive end line of the originally requested range (the demonstrated want) */
+  wantEndLine: number
+}
+
+/** Offset slack when matching a follow-up read to the granted window's end (models resume exactly at, or a few
+ *  lines before/after, the boundary for context) */
+export const CONTINUATION_OFFSET_SLACK = 10
+
+export interface ReadContinuationMatch {
+  offset: number
+  /** lines of the original want not yet granted past this offset */
+  wantRemainderLines: number
+  wantRemainderTokens: number
+}
+
+/** Match a follow-up read against the last grant: same file + offset resuming within slack of the granted window's
+ *  end; null when not a continuation (different file, offset elsewhere, or want already exhausted) */
+export function matchContinuation(
+  prev: ReadContinuation | undefined,
+  args: { filePath?: unknown; offset?: unknown } | undefined,
+  tokensPerLine: number,
+): ReadContinuationMatch | null {
+  if (!prev || typeof args?.filePath !== "string" || args.filePath !== prev.filePath) return null
+  const offset = typeof args.offset === "number" && args.offset > 0 ? Math.floor(args.offset) : 1
+  if (offset < prev.grantedEndLine - CONTINUATION_OFFSET_SLACK || offset > prev.grantedEndLine + CONTINUATION_OFFSET_SLACK) return null
+  const wantRemainderLines = prev.wantEndLine - offset + 1
+  if (wantRemainderLines <= 0) return null
+  return { offset, wantRemainderLines, wantRemainderTokens: Math.ceil(tokensPerLine * wantRemainderLines) }
 }
 
 export interface BudgetGateInput {
@@ -315,6 +375,9 @@ export interface BudgetGateInput {
   bashCommand?: string
   /** read-range estimate (read tool only; glob/grep/list and unsampleable paths pass null → fail-open) */
   est?: ReadEstimate | null
+  /** [2026-09-18]-[v1.1 continuation merge: recognized continuation of the last granted window (matchContinuation hit);
+   *  null/undefined = not a continuation */
+  cont?: ReadContinuationMatch | null
 }
 
 export type BudgetGateAction =
@@ -332,12 +395,17 @@ export type BudgetGateAction =
  *    context bomb at 10k or 90k
  *  - other bash passes at ok/soft (charged post-hoc in tool.execute.after) and is denied at hard/force (wrap-up mode)
  *  - read-class is denied at hard/force (wrap-up mode); once the per-turn cap (2×R*) is spent, denied until the next
- *    user turn
- *  - read with an estimate over R*: auto-bounded ("cap") when no explicit limit was set; denied with exact
- *    bounded-retry params ("deny-budget") when the caller's own limit still overshoots
+ *    user turn — EXCEPT a recognized continuation whose remaining want fits the per-call band (R* + deny-retry
+ *    overhead): it completes the demonstrated need in one bounded shot, because delegating a ≤band fragment costs
+ *    more than the fragment itself (the only read path allowed past the turn wall; hard/force wrap-up still wins)
+ *  - read with an estimate within R* + the deny-retry overhead band passes outright (the deny round trip costs ≈ the
+ *    overshoot it saves); up to the grant ceiling (turn headroom, est.grantTokens) it passes one-shot (need-aware —
+ *    a demonstrated range lands in one request instead of deny → partial → continuation fragments); above that it is
+ *    auto-bounded ("cap") when no explicit limit was set, or denied with exact bounded-retry params ("deny-budget")
+ *    when the caller's own limit still overshoots
  *  - everything else (un-estimable read-class included) is fail-open "allow" — post-hoc charging still applies */
 export function budgetGateDecision(input: BudgetGateInput): BudgetGateAction {
-  const { tool, level, readBudget, turnUsed, bashCommand, est } = input
+  const { tool, level, readBudget, turnUsed, bashCommand, est, cont } = input
   if (tool === "bash") {
     if (bashCommand !== undefined && isVerificationBash(bashCommand)) return "allow"
     if (bashCommand !== undefined && isArchaeologyBash(bashCommand)) return "deny-archaeology"
@@ -345,8 +413,10 @@ export function budgetGateDecision(input: BudgetGateInput): BudgetGateAction {
   }
   if (!READ_CLASS_TOOLS.has(tool)) return "allow"
   if (level === "hard" || level === "force") return "deny-hard"
+  if (tool === "read" && cont && cont.wantRemainderTokens <= readBudget + DENY_RETRY_OVERHEAD_TOKENS) return "allow"
   if (turnUsed >= turnBudgetOf(readBudget)) return "deny-turn"
   if (tool !== "read" || !est) return "allow"
-  if (est.totalTokens <= readBudget) return "allow"
+  if (est.totalTokens <= readBudget + DENY_RETRY_OVERHEAD_TOKENS) return "allow"
+  if (est.totalTokens <= est.grantTokens) return "allow"
   return est.hasLimit ? "deny-budget" : "cap"
 }
