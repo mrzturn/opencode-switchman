@@ -43,12 +43,15 @@ export interface LanePolicyInput {
 
 // [2026-08-29]-[scoring-engine reuse: LANE_SPEC ordinals exported for scoring.effortFit to compute lane affinity]-
 // [2026-09-02]-[thinking-level preference layer: efforts keeps only the thinking-level preference order
-//  (hard/review default high→xhigh→max, main/mechanical/vision default medium→high→xhigh→max, economy default
-//  low→medium→high); off no longer enters any lane preference order — off shells are always lane-level fallback
-//  (when the lane has thinking-level candidates they rank after all thinking levels, see the computeLaneChain
-//  thinking-level partition), serving only models that support just on/off or scenarios where other levels are unavailable]
+//  (hard/review default high→xhigh→max, main/mechanical/vision default medium→high→xhigh→max); off no longer enters
+//  any lane preference order — off shells are always lane-level fallback (when the lane has thinking-level candidates
+//  they rank after all thinking levels, see the computeLaneChain thinking-level partition), serving only models that
+//  support just on/off or scenarios where other levels are unavailable]-
+// [2026-09-18]-[economy order inverted to medium→high→low→minimal: economy models (cheap flash tier) may also run
+//  high thinking — the first effort the model supports wins, so a low/medium-less flash (e.g. glm-5.3-flash) takes
+//  its high face as the economy chain head instead of being pinned to low; cheap tiers stay as fallback, not default]
 export const LANE_SPEC: Record<Lane, { efforts: string[]; vision: boolean; ro: boolean; minimumLevel: CapabilityLevel | null }> = {
-  economy: { efforts: ["low", "minimal", "medium", "high"], vision: false, ro: false, minimumLevel: "L1" },
+  economy: { efforts: ["medium", "high", "low", "minimal"], vision: false, ro: false, minimumLevel: "L1" },
   mechanical: { efforts: ["medium", "high", "xhigh", "max"], vision: false, ro: false, minimumLevel: "L2" },
   main: { efforts: ["medium", "high", "xhigh", "max"], vision: false, ro: false, minimumLevel: "L3" },
   hard: { efforts: ["high", "xhigh", "max", "medium"], vision: false, ro: false, minimumLevel: "L4" },

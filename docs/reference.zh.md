@@ -230,7 +230,7 @@ opencode-switchman 把编排拆成三层，各司其职：
 
 | 档位 | 典型角色 | 用什么 |
 |---|---|---|
-| economy | clerk / scouter 扫描清点 | 最便宜的轻量模型，low→medium→high 档 |
+| economy | clerk / scouter 扫描清点 | 最便宜的轻量模型，medium→high→low→minimal 档（先支持哪个用哪个） |
 | mechanical | tester / ops 回归与脚本 | 轻量模型，medium→high→xhigh→max 档 |
 | main | programmer / uiux / data-analyst | 主力模型，medium→high→xhigh→max 档 |
 | hard | planner 架构核心 | 最强模型，high→xhigh→max 档 |

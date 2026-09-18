@@ -230,7 +230,7 @@ opencode-switchman splits orchestration into three layers:
 
 | Lane | Typical roles | Uses |
 |---|---|---|
-| economy | clerk / scouter scanning | cheapest lightweight model, low→medium→high effort |
+| economy | clerk / scouter scanning | cheapest lightweight model, medium→high→low→minimal effort (first supported wins) |
 | mechanical | tester / ops regression & scripts | lightweight model, medium→high→xhigh→max effort |
 | main | programmer / uiux / data-analyst | workhorse model, medium→high→xhigh→max effort |
 | hard | planner, core architecture | strongest model, high→xhigh→max effort |
