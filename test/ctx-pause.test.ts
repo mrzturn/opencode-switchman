@@ -16,6 +16,9 @@ process.env.SWITCHMAN_STATE = stateDir
 // catalog entry present from module load (the model-catalog index is cached at first read; a mid-file rewrite would
 // never be seen) — harmless for the other tests: their sessions carry no model face, so no threshold clamping occurs
 writeFileSync(join(stateDir, "model-catalog.json"), JSON.stringify({ fetched_at: Date.now(), etag: null, index: { "copilot/glm-5.3": { contextWindow: 128_000 } } }))
+// [2026-09-19]-[hermetic capability seed: see test/index-options.test.ts — prevents the startup refresh's async write-back
+//  from landing in a later file's sandbox after SWITCHMAN_STATE switches mid-flight (CI-only flake on fast networks)]
+writeFileSync(join(stateDir, "capability.json"), JSON.stringify({ source: "artificial-analysis", version: "fixed-empty", fetched_at: Date.now() / 1000, thresholds: { S: 62, A: 55, B: 45 }, models: {} }))
 
 import { SwitchmanPlugin } from "../src/index"
 import { CTX_PAUSE_MARKER, CTX_RESUME_MARKER, ctxControlMarkerOf, pausedWindowWarning } from "../src/context-watch"

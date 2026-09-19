@@ -15,6 +15,9 @@ const projectDir = mkdtempSync(join(tmpdir(), "switchman-shelladv-project-"))
 process.env.OPENCODE_CONFIG_DIR = configDir
 process.env.SWITCHMAN_STATE = stateDir
 writeFileSync(join(stateDir, "model-catalog.json"), JSON.stringify({ fetched_at: Date.now(), etag: null, index: {} }))
+// [2026-09-19]-[hermetic capability seed: see test/index-options.test.ts — prevents the startup refresh's async write-back
+//  from landing in a later file's sandbox after SWITCHMAN_STATE switches mid-flight (CI-only flake on fast networks)]
+writeFileSync(join(stateDir, "capability.json"), JSON.stringify({ source: "artificial-analysis", version: "fixed-empty", fetched_at: Date.now() / 1000, thresholds: { S: 62, A: 55, B: 45 }, models: {} }))
 
 import { SwitchmanPlugin } from "../src/index"
 
