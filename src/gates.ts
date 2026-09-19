@@ -203,9 +203,9 @@ export function checkShell(
     return { deny: `${agent} unavailable (model retired: consecutive 404s, redirect to another candidate)${hint()}`, note: null, notes: null, redirect: candidateOf() }
   }
 
-  // Gate 3: in-process isolation for probe-ok but real-call failures (not persisted; recovers after 30 minutes or on restart)
+  // Gate 3: in-process isolation for probe-ok but real-call failures (not persisted; recovers after 5 minutes or on restart)
   if (shell.comboKey && snap.realFailedCombos?.has(shell.comboKey)) {
-    return { deny: `${agent} temporarily unavailable (probe ok but actual delegation failed; auto-unlocks after 30 minutes or restart opencode)${hint()}`, note: null, notes: null, redirect: candidateOf() }
+    return { deny: `${agent} temporarily unavailable (probe ok but actual delegation failed; auto-unlocks after 5 minutes or restart opencode)${hint()}`, note: null, notes: null, redirect: candidateOf() }
   }
 
   // Gate 4 breaker: down_agents hit by shell name or comboKey (600s window × 2 failures)

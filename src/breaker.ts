@@ -13,10 +13,13 @@ const TAIL_BYTES = 262144
 // NOTE: the Chinese hints below match inbound error text emitted by external systems (providers/opencode core),
 // not copy produced by this plugin; they are kept as-is on purpose during localization.
 const NOT_FOUND_HINTS = ["not found", "not_found", "未找到", "无法找到"]
-export const REAL_FAIL_TTL_MS = 1_800_000
-// [2026-08-29]-[failure classification: transient 429 gets a short TTL vs the long TTL for real failures -- avoids rate-limit false positives lasting 30 minutes]
+// [2026-09-19]-[real-fail isolation window 30m -> 5m: probe-ok-but-real-call-failed states are usually transient vendor
+//  blips and 30 minutes of head-of-chain lockout starved lanes far too long]-[isolation now lifts after 5 minutes;
+//  note RATE_LIMIT_TTL_MS stays 10m (longer than the default now) — 429 self-heal has its own explicit TTL path]
+export const REAL_FAIL_TTL_MS = 300_000
+// [2026-08-29]-[failure classification: transient 429 gets a dedicated short-TTL path vs the default TTL for real failures -- avoids rate-limit false positives polluting the default isolation]
 export const RATE_LIMIT_TTL_MS = 600_000
-// [2026-09-01]-[endpoint-class permanent config-layer errors: retrying after 30 minutes is pointless, isolate with a 6h long TTL]
+// [2026-09-01]-[endpoint-class permanent config-layer errors: retrying soon is pointless, isolate with a 6h long TTL]
 export const ENDPOINT_TTL_MS = 21_600_000
 const realFailedCombos = new Map<string, number>()
 

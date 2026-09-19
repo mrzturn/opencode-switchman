@@ -75,25 +75,27 @@ describe("failure classification classifyFailure", () => {
   })
 })
 
-// ================= 2. rate_limit short TTL vs default long TTL =================
+// ================= 2. rate_limit TTL vs default TTL =================
+// [2026-09-19]-[REAL_FAIL_TTL_MS 30m -> 5m: the default mark now expires BEFORE the 10-min rate-limit mark;
+//  test rewritten for the inverted hierarchy (each TTL path stays independently correct)]
 describe("real-call failure TTL separation", () => {
-  test("rate-limit short mark expires after 10 minutes, real-failure long mark persists", () => {
+  test("real-failure default mark expires after 5 minutes, rate-limit mark holds to its 10-min TTL", () => {
     const now = Date.now()
     markRealFailure("rl|combo", now, RATE_LIMIT_TTL_MS)
     markRealFailure("lf|combo", now)
     expect(isRealFailedCombo("rl|combo", now)).toBe(true)
     expect(isRealFailedCombo("lf|combo", now)).toBe(true)
-    // After the short TTL: the rate-limit mark expired, the long-lived mark still holds
-    expect(isRealFailedCombo("rl|combo", now + RATE_LIMIT_TTL_MS + 1)).toBe(false)
-    expect(isRealFailedCombo("lf|combo", now + RATE_LIMIT_TTL_MS + 1)).toBe(true)
-    // After the long TTL: both expired
+    // After the default 5-min TTL: the real-failure mark expired, the 10-min rate-limit mark still holds
     expect(isRealFailedCombo("lf|combo", now + REAL_FAIL_TTL_MS + 1)).toBe(false)
+    expect(isRealFailedCombo("rl|combo", now + REAL_FAIL_TTL_MS + 1)).toBe(true)
+    // After the rate-limit TTL: both expired
+    expect(isRealFailedCombo("rl|combo", now + RATE_LIMIT_TTL_MS + 1)).toBe(false)
   })
   // [2026-09-01]-[endpoint 6h long TTL; remaining-ms query (banner TTL display)]
   test("endpoint long TTL and realFailedRemainingMs", () => {
     const now = Date.now()
     markRealFailure("ep|combo", now, ENDPOINT_TTL_MS)
-    expect(isRealFailedCombo("ep|combo", now + REAL_FAIL_TTL_MS + 1)).toBe(true) // still held after 30m
+    expect(isRealFailedCombo("ep|combo", now + REAL_FAIL_TTL_MS + 1)).toBe(true) // still held after 5m
     expect(isRealFailedCombo("ep|combo", now + ENDPOINT_TTL_MS + 1)).toBe(false) // expired after 6h
     markRealFailure("rem|combo", now, 60_000)
     expect(realFailedRemainingMs("rem|combo", now + 20_000)).toBe(40_000)

@@ -615,7 +615,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     // [2026-08-29]-[re-review P2-5: legacy in-memory marks are always empty yet still guarded, matching the new gate's write point against future non-dynamic write paths]-
     if (!dynamic) return routing
     const down = { ...routing.down_agents }
-    for (const combo of realFailedComboKeys()) down[combo] = "probe ok but real delegation failed (30-min in-memory isolation)"
+    for (const combo of realFailedComboKeys()) down[combo] = "probe ok but real delegation failed (5-min in-memory isolation)"
     return { ...routing, down_agents: down }
   }
 
@@ -2292,7 +2292,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         // [2026-08-29]-[feature 1 dynamic matrix only: legacy keeps the original recordFailure breaker path (tester regression found the missing gate)]-
         const realFailed = dynamic && Boolean(combo && ctx.matrix?.combos[combo]?.status === "ok")
         if (realFailed) {
-          // rate limit uses a short TTL (10-min self-heal); endpoint uses 6h (retrying a permanent config error is pointless); others default to 30 minutes
+          // rate limit uses a short TTL (10-min self-heal); endpoint uses 6h (retrying a permanent config error is pointless); others default to 5 minutes
           const ttlMs = category === "rate_limit" ? RATE_LIMIT_TTL_MS : category === "endpoint" ? ENDPOINT_TTL_MS : undefined
           markRealFailure(combo!, undefined, ttlMs)
           // [2026-09-01]-[isolation events persisted: previously purely in-memory with zero audit — the banner reported down but no record existed]
@@ -2302,7 +2302,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         const rec = realFailed ? null : recordFailure(agent, reason, registry)
         // Copilot gateway quota-class errors → second truth source marks the pool exhausted (trusted until reset_date)
         // [2026-08-29]-[failure classification: only a real quota marks pool exhaustion, transient 429s never do; quota on non-copilot pools gets no
-        //  pool-level handling — the 10min probe keeps reporting down, the banner degrades naturally, and the 30-min in-memory mark already covers it]
+        //  pool-level handling — the 10min probe keeps reporting down, the banner degrades naturally, and the 5-min in-memory mark already covers it]
         if (category === "quota") {
           const shell = registry[agent]
           if (shell?.pool === "copilot") markCopilotGatewayExhausted(reason)
