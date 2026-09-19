@@ -1,6 +1,6 @@
 # opencode-switchman
 
-[English](./README.md) | **中文**
+[English](./README.md) | **简体中文** | [繁體中文](./README.zh-TW.md) | [日本語](./README.ja.md) | [한국어](./README.ko.md) | [Español](./README.es.md) | [Français](./README.fr.md) | [Deutsch](./README.de.md) | [Italiano](./README.it.md) | [Português](./README.pt.md) | [Русский](./README.ru.md)
 
 > **也在用 zcode？** 看看 [zcode-switchman](https://github.com/mrzturn/zcode-switchman)——同作者的开源兄弟项目，为 zcode 玩家带来同样的编排能力。
 
@@ -74,8 +74,8 @@ bunx opencode-switchman@latest
 
 1. **连接 provider** —— TUI 里运行 `/connect`：Copilot 走 OAuth、DeepSeek 粘 API key；GLM Coding Plan 在 `opencode.json` 里加 `zhipuai-coding-plan` 自定义 provider。
 2. **挑选参与编排的模型** —— `/models` 后按 `ctrl+f` 收藏（桌面端：「管理模型」开关）。
-3. **`/modelRank`** *（推荐）* —— 优先在 TUI 弹窗里手动调整能力排名，人工条目在所有决策面覆盖初始默认。
-4. **`/poolConfig`** *（推荐）* —— 优先在 TUI 弹窗里为六个任务池手工定制候选清单，覆盖初始默认。
+3. **`/switchman-setup`** *（首次必做）* —— 引导式向导一次跑通整个矩阵：为六个任务池（economy / mechanical / main / hard / vision / review）各多选至少一个模型，再把入选模型按能力强到弱排出名次。没有 TUI？`/switchman-setup-chat` 在对话里走同样的引导流程。配置完成前任务派发会被硬性拦截——未配置的池不再默认「全部模型参与」。配置保存即热加载；只有选到 opencode 尚未注册的全新 provider 时才需要重启。
+4. **微调** *（可选）* —— **`/modelRank`** 手工调整能力排名，**`/poolConfig`** 为各任务池定制候选清单（TUI 弹窗，`-chat` 后缀走对话）；人工条目在所有决策面覆盖初始默认。
 5. **三个上下文命令**
    - **`/handover`** —— 手动备份并压缩当前会话。`[WATERMARK:SESSION]` 行的数字偏大、或任务告一段落时用，不必等自动交接。
    - **`/ctx-pause`** —— 临时关掉本会话的读取限制和自动交接。需要一次性读大量大文件、不在乎多花 token 时用；测量不受影响。
@@ -92,7 +92,7 @@ bunx opencode-switchman@latest
 **辅助**
 
 - **多订阅编排** —— Copilot / GLM / DeepSeek 跨池配额感知路由（任意供应商均可参与）、高峰避让、计费加权、跨家族评审强制。
-- **手动覆盖** —— `/poolConfig`、`/modelRank`、`/expert`、`/handover`、`/ctx-pause`、`/ctx-resume`、`/switchman-doctor`、`/switchman-update`。
+- **手动覆盖** —— `/switchman-setup`、`/poolConfig`、`/modelRank`、`/expert`、`/handover`、`/ctx-pause`、`/ctx-resume`、`/switchman-doctor`、`/switchman-update`。
 - **看得见** —— 每轮系统提示注入实时四行横幅、TUI 侧栏状态面板、tmux 窗格镜像、按会话归档的工件工作区、路由决策审计日志。
 
 完整配置项表、架构与内部机制：[docs/reference.zh.md](./docs/reference.zh.md)（English: [docs/reference.md](./docs/reference.md)）。

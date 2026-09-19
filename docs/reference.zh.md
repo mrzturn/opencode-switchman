@@ -175,7 +175,14 @@ TUI 插件没有目录自动发现机制，需要在 **`tui.jsonc`/`tui.json`** 
 
 ## 手动覆盖层
 
-两个手动配置命令让你用配置压过系统默认决策，全部状态落盘、可手改、保存即热加载（mtime 感知，即时生效，侧栏同步刷新）。会话式（AI 交互换算 CLI）版本为同名的 `-chat` 后缀命令。v0.2.5 新增。
+手动配置命令让你用配置压过系统默认决策，全部状态落盘、可手改、保存即热加载（mtime 感知，即时生效，侧栏同步刷新）。会话式（AI 交互换算 CLI）版本为同名的 `-chat` 后缀命令。/poolConfig 与 /modelRank 于 v0.2.5 引入；/switchman-setup 于 v1.2.0 引入。
+
+### /switchman-setup —— 引导式首次配置（手动向导；会话式用 /switchman-setup-chat）
+
+- **TUI（/switchman-setup）**：可续跑的一站式向导——首页展示实时完成状态（「开始」直达第一个未完成步骤），按车道序逐池弹出多选框（Enter 切换 `[x]`/`[ ]`，每行标注能力档，含全选/全部取消/返回，每池确认即刻落盘、每池至少一个模型），随后在入选模型并集上按能力强到弱逐个点选排名（至少一个），完成页汇总各池选配、排名次序与仍需重启的 provider。
+- **非 TUI / 会话内（/switchman-setup-chat）**：同流程会话式——agent 展示当前池/排名状态，逐池多选提问，询问能力强到弱的排名，经内置 CLI 落盘，校验六池加排名齐备后收尾。
+- **语义——配置硬门槛**：未配置的任务池不再默认「全部模型参与」。六池各有 ≥1 模型且排名 ≥1 条之前，主会话的任务派发被拒并附向导指引；未完成期间主会话每轮携带 `[SETUP]` 指令。壳/内部会话豁免，且无豁免开关。门槛叠加于语言闸：项目语言偏好未配置前，语言询问保持唯一拦截声音。配置 mtime 热加载——最后一个文件保存的瞬间门槛即开，无需重启（重启只为注册全新 provider）。
+- **配置文件**：与下方 /poolConfig、/modelRank 相同的 `pool-config.json` + `capability-rank.json`。
 
 ### /poolConfig —— 任务池选配（手动弹窗；会话式用 /poolConfig-chat）
 
@@ -203,7 +210,7 @@ TUI 插件没有目录自动发现机制，需要在 **`tui.jsonc`/`tui.json`** 
 - 行为：把需求派发给当前最强的可用专家——优先 **review** 链头（跨家族专家席位，只读壳）；review 池无可用候选时降级到 **hard** 链头的只读（`-ro`）壳，并声明 `DOWNGRADED`。
 - 专家结论完整转述，末尾注明所用壳与车道（如 `expert: <shell> (review)`）。
 
-两命令亦可用随包 CLI 直操作：`node <包目录>/dist/switchman-config.js pool list|add|remove|set|clear`（池名=economy/mechanical/main/hard/vision/review）/ `rank list|set|add|remove|clear`（编号引用 `list` 输出）。横幅 `[LIMITS]` 行会标注当前生效的手动覆盖（「manual capability rank: N models / task-pool selection: M pools」）。
+上述命令亦可用随包 CLI 直操作：`node <包目录>/dist/switchman-config.js pool list|add|remove|set|clear`（池名=economy/mechanical/main/hard/vision/review）/ `rank list|set|add|remove|clear`（编号引用 `list` 输出）。横幅 `[LIMITS]` 行会标注当前生效的手动覆盖（「manual capability rank: N models / task-pool selection: M pools」）。
 
 ## 核心思想
 

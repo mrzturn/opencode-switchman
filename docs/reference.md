@@ -175,7 +175,14 @@ Since TUI plugins have no directory auto-discovery, add the same package spec to
 
 ## Manual overrides
 
-Two manual commands let your configuration beat system defaults. All state is persisted to editable files with mtime hot-reload and instant effect — edits trigger an immediate banner/sidebar refresh via a directory watcher. The conversational (AI-driven) variants are the same names with a `-chat` suffix. Introduced in v0.2.5.
+Manual commands let your configuration beat system defaults. All state is persisted to editable files with mtime hot-reload and instant effect — edits trigger an immediate banner/sidebar refresh via a directory watcher. The conversational (AI-driven) variants are the same names with a `-chat` suffix. /poolConfig and /modelRank arrived in v0.2.5; /switchman-setup in v1.2.0.
+
+### /switchman-setup — guided first-run setup (manual wizard; conversational: /switchman-setup-chat)
+
+- **TUI (/switchman-setup)**: a resumable one-pass wizard — an intro with the live completion state (Start jumps to the first unfinished step), one multi-select dialog per task pool in lane order (Enter toggles `[x]`/`[ ]`, capability tier per row, select-all/clear-all/back, the per-pool confirm persists immediately with a minimum of one model), then a sequential strongest-first ranking pick over exactly the union of the selected models (minimum one), then a done screen with the per-pool summary, the ranking order, and any providers still flagged restartRequired.
+- **Non-TUI / in-session (/switchman-setup-chat)**: the same flow conversationally — the agent shows the current pool/rank state, asks multi-select questions pool by pool, asks for the strongest-first ranking, persists via the bundled CLI, and verifies completion before closing.
+- **Semantics — the setup hard gate**: unconfigured task pools no longer default to "all models". Until all six pools have ≥1 selected model and the ranking has ≥1 entry, task dispatch is denied in main sessions with guidance toward the wizard; main sessions also carry a `[SETUP]` directive each turn while incomplete. Shells/internal sessions are exempt and there is no waiver flag. The gate rides on the language gate: before the project language preference is configured, the language ask stays the single blocking voice. Config is mtime hot-reloaded — the gate opens the moment the last file is saved, no restart (a restart only registers brand-new providers).
+- **Config files**: the same `pool-config.json` + `capability-rank.json` as /poolConfig and /modelRank below.
 
 ### /poolConfig — per-lane model assignment (manual dialog; conversational: /poolConfig-chat)
 
@@ -203,7 +210,7 @@ Two manual commands let your configuration beat system defaults. All state is pe
 - Behavior: dispatches the requirement to the strongest available expert — the head of the **review** chain (cross-family expert seat, read-only shell); when the review pool has no available candidate, it falls back to the head of the **hard** chain on its read-only (`-ro`) shell and declares `DOWNGRADED`.
 - The expert's conclusions are relayed in full, ending with one line naming the shell and lane used (e.g. `expert: <shell> (review)`).
 
-Both commands can also be driven directly via the bundled CLI: `node <pkg>/dist/switchman-config.js pool list|add|remove|set|clear` (pool name = economy/mechanical/main/hard/vision/review) / `rank list|set|add|remove|clear` (numbers refer to the `list` output). The `[LIMITS]` banner line reports active overrides ("manual rank: N models / task-pool assignment: M pools").
+All of these can also be driven directly via the bundled CLI: `node <pkg>/dist/switchman-config.js pool list|add|remove|set|clear` (pool name = economy/mechanical/main/hard/vision/review) / `rank list|set|add|remove|clear` (numbers refer to the `list` output). The `[LIMITS]` banner line reports active overrides ("manual rank: N models / task-pool assignment: M pools").
 
 ## Core ideas
 
