@@ -41,7 +41,8 @@ export async function refreshCosts(): Promise<void> {
     cached = { scores, fetched_at: Date.now() / 1000 }
     writeJsonAtomic(paths().costs, cached)
   } catch (exc) {
-    appendStatusLog(`cost snapshot refresh failed (keeping stale data): ${exc}`)
+    // [2026-09-19]-[i18n: status-log notices now keyed (en.ts catalog renders at sidebar display time)]
+    appendStatusLog("notice.cost.refreshFailed", { exc: String(exc) })
   }
 }
 

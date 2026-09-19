@@ -129,7 +129,7 @@ export function renderDefaultConfigJsonc(): string {
   "rules": { "enabled": true },
   // Measured session-context budget (optional; the whole section may be omitted — factory defaults apply).
   // "context": {
-  //   "readBudgetTokens": 1500, // per-call self-read budget in tokens (200..20000): oversized reads get auto-bounded or denied with bounded-retry params
+  //   "readBudgetTokens": 1500, // per-call self-read budget in tokens (200..20000): reads within the turn headroom (~2x) are granted one-shot; oversized reads get auto-bounded or denied with bounded-retry params
   // },
   // Custom six-lane candidate chains (override builtin preference order); keys=economy/mechanical/main/hard/vision/review, values are arrays of shell names.
   "lanes": {},

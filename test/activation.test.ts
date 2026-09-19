@@ -536,9 +536,9 @@ describe("lane completion policy", () => {
     }
     const visionChain = laneBaseChain("vision", { builtin: [], activeShells: active, shells: attrs })
     expect(visionChain.every((n) => attrs.get(n)!.vision)).toBe(true)
-    // economy prefers low tiers, hard prefers high tiers
+    // [2026-09-18]-[economy order medium→high→low→minimal: glm-5.3-flash (low/high/max, no medium) takes its high face as the economy head]
     const eco = laneBaseChain("economy", { builtin: [], activeShells: active, shells: attrs })
-    expect(eco[0]).toBe("glm-mx-53f-low")
+    expect(eco[0]).toBe("glm-mx-53f-high")
     const hard = laneBaseChain("hard", { builtin: [], activeShells: active, shells: attrs })
     expect(hard[0]).toBe("glm-mx-53f-high") // the model's highest tier
     // review prefers the -ro alias

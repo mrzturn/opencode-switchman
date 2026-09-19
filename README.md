@@ -1,6 +1,6 @@
 # opencode-switchman
 
-**English** | [中文](./README.zh.md)
+**English** | [简体中文](./README.zh.md) | [繁體中文](./README.zh-TW.md) | [日本語](./README.ja.md) | [한국어](./README.ko.md) | [Español](./README.es.md) | [Français](./README.fr.md) | [Deutsch](./README.de.md) | [Italiano](./README.it.md) | [Português](./README.pt.md) | [Русский](./README.ru.md)
 
 > **Also using zcode?** Check out [zcode-switchman](https://github.com/mrzturn/zcode-switchman) — a sibling open-source project by the same author that brings the same orchestration to zcode users.
 
@@ -74,8 +74,8 @@ Six steps. Full walkthrough with screenshots: **[docs/quick-start.md](./docs/qui
 
 1. **Connect providers** — `/connect` in the TUI: Copilot OAuth, DeepSeek API key; GLM Coding Plan goes into `opencode.json` as the `zhipuai-coding-plan` custom provider.
 2. **Pick the models that join orchestration** — `/models` then `ctrl+f` to favorite (desktop app: "Manage models" toggles).
-3. **`/modelRank`** *(recommended)* — open the TUI dialog and hand-tune your own capability ranking; manual entries override the initial defaults everywhere.
-4. **`/poolConfig`** *(recommended)* — curate per-pool candidate lists in the TUI dialog, overriding the initial defaults for the six task pools.
+3. **`/switchman-setup`** *(required once)* — the guided wizard covers the whole matrix in one pass: multi-select at least one model for each of the six task pools (economy / mechanical / main / hard / vision / review), then rank the selected models strongest-first. No TUI? `/switchman-setup-chat` runs the same guided flow in chat. Until setup completes, task dispatch is hard-blocked — unconfigured pools no longer default to "all models". Saved config hot-reloads; a restart is only needed to register brand-new providers.
+4. **Fine-tune** *(optional)* — **`/modelRank`** hand-tunes the capability ranking and **`/poolConfig`** curates per-pool candidate lists in TUI dialogs (`-chat` variants in chat); manual entries override the initial defaults everywhere.
 5. **Context commands**
    - **`/handover`** — back up the session and compact it yourself. Use it when the `[WATERMARK:SESSION]` line is getting large or the task hits a good stopping point, instead of waiting for the automatic handover.
    - **`/ctx-pause`** — turn off this session's read limits and auto-handover. Use it when you need to read many large files at once and don't mind spending the tokens; measurement keeps running.
@@ -92,7 +92,7 @@ Six steps. Full walkthrough with screenshots: **[docs/quick-start.md](./docs/qui
 **Extras**
 
 - **Multi-subscription orchestration** — quota-aware routing across Copilot / GLM / DeepSeek (any provider participates), peak-window yield, billing-aware scoring, cross-family review enforcement.
-- **Manual overrides** — `/poolConfig`, `/modelRank`, `/expert`, `/handover`, `/ctx-pause`, `/ctx-resume`, `/switchman-doctor`, `/switchman-update`.
+- **Manual overrides** — `/switchman-setup`, `/poolConfig`, `/modelRank`, `/expert`, `/handover`, `/ctx-pause`, `/ctx-resume`, `/switchman-doctor`, `/switchman-update`.
 - **Visibility** — live four-line banner in every system prompt, TUI sidebar panel, tmux pane mirroring, per-session artifact workspace, and an audit log of every routing decision.
 
 Full options table, architecture, and internals: [docs/reference.md](./docs/reference.md) (中文: [docs/reference.zh.md](./docs/reference.zh.md)).

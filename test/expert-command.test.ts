@@ -9,6 +9,9 @@ import { join } from "node:path"
 process.env.OPENCODE_CONFIG_DIR = mkdtempSync(join(tmpdir(), "switchman-expert-config-"))
 process.env.SWITCHMAN_STATE = mkdtempSync(join(tmpdir(), "switchman-expert-state-"))
 writeFileSync(join(process.env.SWITCHMAN_STATE, "model-catalog.json"), JSON.stringify({ fetched_at: Date.now(), etag: null, index: {} }))
+// [2026-09-19]-[hermetic capability seed: see test/index-options.test.ts — prevents the startup refresh's async write-back
+//  from landing in a later file's sandbox after SWITCHMAN_STATE switches mid-flight (CI-only flake on fast networks)]
+writeFileSync(join(process.env.SWITCHMAN_STATE, "capability.json"), JSON.stringify({ source: "artificial-analysis", version: "fixed-empty", fetched_at: Date.now() / 1000, thresholds: { S: 62, A: 55, B: 45 }, models: {} }))
 
 import { expertCommandMd } from "../src/commands-md"
 import { SwitchmanPlugin } from "../src/index"

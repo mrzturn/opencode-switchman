@@ -4,16 +4,27 @@
 // [2026-09-03]-[Added with the task-pool selection/manual ranking features; [2026-09-03 semantics fix]-[pool = task-pool lane (not a provider pool);
 //  select the models joining each lane, the same model may join multiple lanes]; exit codes 0=success 1=failure]
 import { baseScoreDynamic, normalizeModelKey } from "./capability"
-import { loadSupersetShells, loadManifest, paths } from "./state"
+import { loadSupersetShells, loadManifest, paths, readUiLocale } from "./state"
 import {
-  loadCapabilityRank, loadPoolConfig, poolAllowlist,
+  loadCapabilityRank, loadPoolConfig, poolAllowlist, poolUniverse,
   writeCapabilityRank, clearCapabilityRank, writePoolConfig, resetPoolConfig,
   type RankScoreOverride,
 } from "./user-overrides"
 import { LANE_ORDER, type Lane } from "./types"
 import { TIER_RANK } from "./model-ranks"
+import { resolveDisplayLocale, t, type LocaleTag } from "./i18n"
 
-interface ModelRow { key: string; modelId: string; tier: string; source: string; raw: number | null; manualIdx?: number }
+// [2026-09-19]-[render-time CLI i18n: the CLI has no project context, so the display locale is resolved ONCE per
+//  process (global ui.lang snapshot → terminal env → "en"; see src/i18n.ts) and every user-visible console/error
+//  string with a `cli.config.*` key renders via t(locale, key, params); flags, subcommand names, model/tier text and
+//  path placeholders stay verbatim; exit codes and control flow unchanged]
+let cachedLocale: LocaleTag | null = null
+function cliLocale(): LocaleTag {
+  if (!cachedLocale) cachedLocale = resolveDisplayLocale({ uiLang: readUiLocale(), env: process.env })
+  return cachedLocale
+}
+
+interface ModelRow { key: string; modelId: string; tier: string; source: string; raw: number | null; manualIdx?: number; poolMember?: boolean }
 
 // [2026-09-10]-[manual-first tie-break: on exact (tier, raw) ties manual entries sort above base entries, ordered by
 //  their models-array slot — lets anchored moves win ties without touching base-vs-base ordering]
@@ -61,73 +72,87 @@ export function allModelRows(): ModelRow[] {
   return rows
 }
 
-function fmtRow(n: number, row: ModelRow, selected: boolean): string {
-  const mark = selected ? "[x]" : "[ ]"
+function fmtRow(n: number, row: ModelRow, selected: boolean, locale: LocaleTag): string {
+  const checkMark = selected ? "[x]" : "[ ]"
   const manualTag = row.source === "manual" ? "·manual rank" : ""
-  return ` #${String(n).padStart(2, "0")} ${mark} ${row.modelId} (${row.tier}-tier${manualTag})`
+  return t(locale, "cli.config.poolRow", {
+    rankPadded: String(n).padStart(2, "0"), checkMark, modelId: row.modelId, tier: row.tier, manualTag,
+  })
 }
 
-function laneOrThrow(lane?: string): Lane {
+function laneOrThrow(lane: string | undefined, locale: LocaleTag): Lane {
   const key = String(lane ?? "").trim().toLowerCase() as Lane
   if (!(LANE_ORDER as string[]).includes(key)) {
-    throw new Error(`unknown task pool: ${lane ?? "(missing)"} (six task pools: ${LANE_ORDER.join("/")})`)
+    throw new Error(t(locale, "cli.config.unknownPool", { lane: lane ?? "(missing)", laneList: LANE_ORDER.join("/") }))
   }
   return key
 }
 
 function printPoolList(filterLane?: string): void {
+  const locale = cliLocale()
   const rows = allModelRows()
   const allow = loadPoolConfig()
-  const head = `Task-pool selection (config file ${paths().poolConfig}; selection = the models joining that task pool; the same model may join multiple pools; unconfigured pools use the system default decision)`
+  const head = t(locale, "cli.config.poolHeader", { poolConfigPath: paths().poolConfig })
   if (filterLane) {
-    const lane = laneOrThrow(filterLane)
+    const lane = laneOrThrow(filterLane, locale)
     const sel = allow[lane]
     console.log(head)
-    console.log(`== ${lane} == (${sel ? `manually selected ${sel.size}/${rows.length} participating models` : "unconfigured: system default (all available models participate)"})`)
-    rows.forEach((row, i) => console.log(fmtRow(i + 1, row, sel ? sel.has(row.key) : true)))
+    console.log(t(locale, "cli.config.poolSection", {
+      lane,
+      selection: sel
+        ? `manually selected ${sel.size}/${rows.length} participating models`
+        : "unconfigured: system default (all available models participate)",
+    }))
+    rows.forEach((row, i) => console.log(fmtRow(i + 1, row, sel ? sel.has(row.key) : true, locale)))
     return
   }
   console.log(head)
   for (const lane of LANE_ORDER) {
     const sel = allow[lane]
-    console.log(`== ${lane} ==${sel ? ` manually selected ${sel.size} models: ${[...sel].join(", ")}` : " system default (all available models participate)"}`)
+    console.log(t(locale, "cli.config.poolSectionBrief", {
+      lane,
+      detail: sel
+        ? ` manually selected ${sel.size} models: ${[...sel].join(", ")}`
+        : " system default (all available models participate)",
+    }))
   }
-  console.log(`(view a single pool's full list with numbers: pool list <${LANE_ORDER.join("|")}>)`)
+  console.log(t(locale, "cli.config.poolListHint", { laneList: LANE_ORDER.join("|") }))
 }
 
-function resolveRefs(refs: string[], rows: ModelRow[]): string[] {
+function resolveRefs(refs: string[], rows: ModelRow[], locale: LocaleTag): string[] {
   // Dot-folding fallback: hand-typed args often give "glm-5-3-flash" ↔ manifest key "glm-5.3-flash" (normalizeModelKey keeps dots)
   const alt = new Map(rows.map((r) => [r.key.replace(/\./g, "-"), r.key]))
   const out: string[] = []
   for (const r of refs) {
     if (/^\d+$/.test(r)) {
       const hit = rows[Number(r) - 1]
-      if (!hit) throw new Error(`index out of range #${r} (list has ${rows.length} items)`)
+      if (!hit) throw new Error(t(locale, "cli.config.indexOutOfRange", { index: r, rowCount: rows.length }))
       out.push(hit.key)
       continue
     }
     const key = normalizeModelKey(r)
-    if (!key) throw new Error(`invalid model name: ${r}`)
+    if (!key) throw new Error(t(locale, "cli.config.invalidModel", { model: r }))
     out.push(alt.get(key.replace(/\./g, "-")) ?? key)
   }
   return out
 }
 
 function cmdPool(args: string[]): number {
+  const locale = cliLocale()
   const [sub, lane, ...rest] = args
   if (!sub || sub === "list") {
     printPoolList(lane)
     return 0
   }
-  const key = laneOrThrow(lane)
+  const key = laneOrThrow(lane, locale)
   const rows = allModelRows()
-  if (rows.length === 0) throw new Error("no available model manifest (check provider connections and the superset manifest)")
+  if (rows.length === 0) throw new Error(t(locale, "cli.config.noManifest"))
   // add/remove semantics operate on the "currently effective selection set": unconfigured lane = system default full set (the first operation materializes it into an explicit list, consistent with TUI checkboxes)
   const explicit = poolAllowlist(key)
   const current = [...(explicit ?? rows.map((r) => r.key))]
   if (sub === "add" || sub === "remove" || sub === "set") {
-    if (rest.length === 0) throw new Error(`pool ${sub} requires an index or model name`)
-    const refs = resolveRefs(rest, rows)
+    if (rest.length === 0) throw new Error(t(locale, "cli.config.poolRequiresArg", { sub }))
+    const refs = resolveRefs(rest, rows, locale)
     let next: string[]
     if (sub === "add") next = [...current, ...refs.filter((k) => !current.includes(k))]
     else if (sub === "remove") next = current.filter((k) => !refs.includes(k))
@@ -135,54 +160,89 @@ function cmdPool(args: string[]): number {
     const file = writePoolConfig(key, next)
     const n = file?.pools[key]?.length
     console.log(n === undefined
-      ? `${key} task-pool selection cleared (back to the system default candidate set, effective immediately, sidebar refreshes in sync)`
-      : `Updated ${key} task-pool selection (${n} models participating, effective immediately, sidebar refreshes in sync)`)
+      ? t(locale, "cli.config.poolSelectionCleared", { lane: key })
+      : t(locale, "cli.config.poolUpdated", { lane: key, modelCount: n }))
     printPoolList(key)
     return 0
   }
   if (sub === "clear") {
     resetPoolConfig(key)
-    console.log(`Cleared the ${key} task-pool selection config (that pool returns to the system default candidate set, effective immediately, sidebar refreshes in sync)`)
+    console.log(t(locale, "cli.config.poolConfigCleared", { lane: key }))
     return 0
   }
-  throw new Error(`unknown subcommand pool ${sub} (list/add/remove/set/clear)`)
+  throw new Error(t(locale, "cli.config.unknownPoolSub", { sub }))
 }
 
 /** [2026-09-10]-[merged interleaved view: manual entries no longer float as a block on top — every model (manual + base)
  *  is sorted by effective capability (tier, raw; manual wins exact ties), so /modelRank moves and rank CLI indices act
- *  on one global ordering. Manual keys missing from the model universe keep a row (dead-key tolerance)] */
+ *  on one global ordering. Manual keys missing from the model universe keep a row (dead-key tolerance)]
+ *  [2026-09-18]-[rank universe = pool selection: with at least one task pool configured the view shows EXACTLY the
+ *  pool-selected universe — dead manual keys (rank entries absent from every pool) are no longer listed; the next
+ *  rank write prunes them from capability-rank.json instead (see writeCapabilityRank). With NO pool configured the
+ *  view degenerates to the manual entries alone (cleanup-only) while the CLI/TUI guide the user to /poolConfig first] */
 export function rankViewRows(): ModelRow[] {
   const rank = loadCapabilityRank()
-  const rows = allModelRows()
-  const seen = new Set(rows.map((r) => r.key))
-  for (const k of rank?.models ?? []) {
-    if (seen.has(k)) continue
-    seen.add(k)
-    rows.push(toRow(k))
+  const universe = poolUniverse()
+  let rows: ModelRow[]
+  if (universe.size === 0) {
+    // cleanup-only degeneration: the manual entries alone (base rows filtered out entirely)
+    const seen = new Set<string>()
+    rows = []
+    for (const k of rank?.models ?? []) {
+      if (seen.has(k)) continue
+      seen.add(k)
+      rows.push(toRow(k))
+    }
+  } else {
+    rows = allModelRows()
+      .filter((r) => universe.has(r.key))
+      .map((r) => ({ ...r, poolMember: true }))
   }
   rows.sort(capabilityCompare)
   return rows
 }
 
 function cmdRank(args: string[]): number {
+  const locale = cliLocale()
   const [sub, ...rest] = args
   const rank = loadCapabilityRank()
+  const universe = poolUniverse()
   if (!sub || sub === "list") {
+    if (universe.size === 0) {
+      console.log(t(locale, "cli.config.rankDisabledUntilPools", { capabilityRankPath: paths().capabilityRank }))
+      console.log(t(locale, "cli.config.rankHowTo"))
+      const legacy = rank?.models ?? []
+      if (legacy.length > 0) {
+        console.log(t(locale, "cli.config.legacyHeader"))
+        legacy.forEach((k, i) => console.log(t(locale, "cli.config.legacyRow", {
+          rankPadded: String(i + 1).padStart(2, "0"), modelKey: k,
+        })))
+      }
+      return 0
+    }
     const view = rankViewRows()
     const manualCount = rank?.models.length ?? 0
-    console.log(`Model capability ranking (config file ${paths().capabilityRank}; one merged ordering — manual entries interleave with base-score models by effective score; higher up = stronger)`)
-    console.log(`== Merged ordering (${manualCount} manual${manualCount > 0 ? "" : "; none = all use the base capability score"}; CLI set/add order entries by the legacy ladder, TUI moves anchor scores between neighbors) ==`)
+    console.log(t(locale, "cli.config.rankHeader", { capabilityRankPath: paths().capabilityRank, universeCount: universe.size }))
+    console.log(t(locale, "cli.config.mergedHeader", {
+      manualCount, manualSuffix: manualCount > 0 ? "" : "; none = all use the base capability score",
+    }))
     view.forEach((row, i) => {
       const manualTag = row.source === "manual"
-        ? `·manual${row.raw !== null ? ` ${row.raw}` : ""}`
+        ? t(locale, "cli.config.manualTag", { score: row.raw !== null ? ` ${row.raw}` : "" })
         : ""
-      console.log(` #${String(i + 1).padStart(2, "0")} ${row.modelId} (${row.tier}-tier${manualTag})`)
+      const poolTag = row.poolMember === false ? ` ${t(locale, "cli.config.notInPoolTag")}` : ""
+      console.log(t(locale, "cli.config.rankRow", {
+        rankPadded: String(i + 1).padStart(2, "0"), modelId: row.modelId, tier: row.tier, manualTag, poolTag,
+      }))
     })
     return 0
   }
   if (sub === "add" || sub === "remove" || sub === "set") {
-    if (rest.length === 0) throw new Error(`rank ${sub} requires an index or model name`)
-    const refs = resolveRefs(rest, rankViewRows())
+    if (sub !== "remove" && universe.size === 0) {
+      throw new Error(t(locale, "cli.config.rankNoPools"))
+    }
+    if (rest.length === 0) throw new Error(t(locale, "cli.config.rankRequiresArg", { sub }))
+    const refs = resolveRefs(rest, rankViewRows(), locale)
     const current = [...(rank?.models ?? [])]
     // [2026-09-10]-[CLI writes must preserve anchored scores: add keeps every existing entry's score, remove/set drop
     //  only the keys leaving the list (ladder fallback covers the rest)]
@@ -206,37 +266,38 @@ function cmdRank(args: string[]): number {
       nextScores = keepScores(refs)
     }
     const file = writeCapabilityRank(next, nextScores)
-    console.log(`Updated the manual capability ranking (${file.models.length} models, effective immediately, sidebar refreshes in sync)`)
+    console.log(t(locale, "cli.config.rankUpdated", { modelCount: file.models.length }))
     return cmdRank(["list"])
   }
   if (sub === "clear") {
     clearCapabilityRank()
-    console.log("Cleared the manual capability ranking (everything falls back to the base capability score, effective immediately, sidebar refreshes in sync)")
+    console.log(t(locale, "cli.config.rankCleared"))
     return 0
   }
-  throw new Error(`unknown subcommand rank ${sub} (list/set/add/remove/clear)`)
+  throw new Error(t(locale, "cli.config.unknownRankSub", { sub }))
 }
 
 /** CLI entry (callable directly by tests); argv excludes node/self */
 export function runCli(argv: string[]): number {
+  const locale = cliLocale()
   const [group, ...args] = argv
   try {
     if (group === "pool") return cmdPool(args)
     if (group === "rank") return cmdRank(args)
-    console.log("Usage: switchman-config <pool|rank> ...")
-    console.log(`  pool list [task-pool]             Pool selection overview (economy/mechanical/main/hard/vision/review; with a pool name = full list with indices)`)
-    console.log("  pool add <task-pool> <index|model...>    Check models joining that task pool")
-    console.log("  pool remove <task-pool> <index|model...> Uncheck participation")
-    console.log("  pool set <task-pool> <index|model...>    Fully replace that pool's participation list (the same model may join multiple pools)")
-    console.log("  pool clear <task-pool>                Clear that pool's config (back to the system default candidate set)")
-    console.log("  rank list                      View the manual capability ranking and the reference ordering of available models")
-    console.log("  rank set <index|model...>         Fully reorder (in the given order, #1 is strongest)")
-    console.log("  rank add <index|model...>         Append to the end of the ranking")
-    console.log("  rank remove <index|model...>      Remove from the ranking")
-    console.log("  rank clear                     Clear the ranking (fall back to the base capability score)")
+    console.log(t(locale, "cli.config.usage"))
+    console.log(t(locale, "cli.config.usagePoolList"))
+    console.log(t(locale, "cli.config.usagePoolAdd"))
+    console.log(t(locale, "cli.config.usagePoolRemove"))
+    console.log(t(locale, "cli.config.usagePoolSet"))
+    console.log(t(locale, "cli.config.usagePoolClear"))
+    console.log(t(locale, "cli.config.usageRankList"))
+    console.log(t(locale, "cli.config.usageRankSet"))
+    console.log(t(locale, "cli.config.usageRankAdd"))
+    console.log(t(locale, "cli.config.usageRankRemove"))
+    console.log(t(locale, "cli.config.usageRankClear"))
     return group ? 1 : 0
   } catch (exc) {
-    console.error(`switchman-config: ${exc instanceof Error ? exc.message : exc}`)
+    console.error(t(locale, "cli.config.errorPrefix", { message: exc instanceof Error ? exc.message : String(exc) }))
     return 1
   }
 }

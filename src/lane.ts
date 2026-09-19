@@ -14,7 +14,7 @@ import type { WaterFactor } from "./scoring"
 import { evaluatePeakSchedules } from "./config"
 import { defaultProviderConfig } from "./provider-config"
 import { appendStatusLog } from "./state"
-import { normalizeModelKey } from "./capability"
+import { normalizeModelKey, manualRankIndexOf } from "./capability"
 
 // ---- Billing window (configurable) ----
 export interface BillingWindowCfg {
@@ -363,6 +363,20 @@ export function computeLane(lane: Lane, base: string[], p: ComputeLaneParams): L
       matrixStatus: matrixStatusOf(c),
       latencyMs: c.latency_ms,
     }))
+    // [2026-09-18]-[pool lane manual ordering: for a lane with an explicit task-pool selection the manual /modelRank
+    //  order becomes the dispatch priority — shell key → rank index (prefix-matched via manualRankIndexOf) is handed to
+    //  rankCandidates as the ABSOLUTE first comparator key, and poolOrdered lifts the capability level floor (explicit
+    //  membership = the user's qualification verdict; health hard gates are unchanged)]
+    const poolOrderedLane = Boolean(p.poolConfig?.[lane]?.size)
+    const manualOrder = new Map<string, number>()
+    if (poolOrderedLane && registry) {
+      for (const c of chain) {
+        const mid = registry[c.shell]?.modelId
+        if (!mid) continue
+        const idx = manualRankIndexOf(mid)
+        if (idx !== null) manualOrder.set(c.shell, idx)
+      }
+    }
     const { ranked, breakdowns } = rankCandidates(rankables, {
       lane,
       immediate,
@@ -381,6 +395,8 @@ export function computeLane(lane: Lane, base: string[], p: ComputeLaneParams): L
       billingBoostOf: p.billingBoostOf,
       peakOf: p.peakOf,
       preferredModels: p.preferredModels,
+      poolOrdered: poolOrderedLane,
+      manualOrder: manualOrder.size > 0 ? manualOrder : null,
     })
     const order = new Map(ranked.map((r, i) => [r.key, i]))
     // rankCandidates also drops non-pool models and cross-level fallbacks that missed the top-2; custom static chains must not bypass it.
@@ -391,7 +407,8 @@ export function computeLane(lane: Lane, base: string[], p: ComputeLaneParams): L
       if (bd) c.score = bd
     }
   } catch (exc) {
-    appendStatusLog(`scoring failed, fell back to rule-based ordering: ${exc}`)
+    // [2026-09-19]-[i18n: status-log notices now keyed (en.ts catalog renders at sidebar display time)]
+    appendStatusLog("notice.lane.scoringFallback", { exc: String(exc) })
     legacySort(chain, p, glmPeak, immediate)
   }
 
@@ -475,7 +492,7 @@ export function computeLane(lane: Lane, base: string[], p: ComputeLaneParams): L
         if (bd) c.score = bd
       }
     } catch (exc) {
-      appendStatusLog(`backfill ranking failed (lane stays empty): ${exc}`)
+      appendStatusLog("notice.lane.backfillFailed", { exc: String(exc) })
     }
   }
 

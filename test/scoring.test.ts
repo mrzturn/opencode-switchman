@@ -347,6 +347,72 @@ describe("rankCandidates", () => {
   })
 })
 
+// [2026-09-18]-[pool lane manual ordering: poolOrdered + manualOrder (new RankContext fields) make the manual
+// /modelRank order the ABSOLUTE first comparator key — explicit user order beats tier grouping, the thinking/off
+// partition and the product score; unranked pool members sink after all ranked ones; health hard gates are unchanged;
+// poolOrdered without manualOrder keeps only the level-floor exemption; the control case pins the baseline shape]-
+// [impact: pins rankCandidates/rankOrdered semantics; no production change in this file]
+describe("[2026-09-18] pool lane manual ordering (poolOrdered + manualOrder)", () => {
+  test("manual order beats tier grouping: the lower-tier shell holding manual rank 0 leads", () => {
+    const shells = [
+      rankable({ key: "a", modelId: "glm-5.3", latencyMs: 5 }), // A(L4) — higher tier
+      rankable({ key: "b", modelId: "glm-5.3-flash", latencyMs: 1 }), // B(L3) — lower tier
+    ]
+    const r = rankCandidates(shells, ctx({ poolOrdered: true, manualOrder: new Map([["a", 1], ["b", 0]]) }))
+    // manual rank is the first comparator key: b (rank 0) first although its tier/product score is worse
+    expect(r.ranked.map((s) => s.key)).toEqual(["b", "a"])
+  })
+
+  test("unranked pool member sorts after all ranked members despite a higher tier and better score", () => {
+    const shells = [
+      rankable({ key: "s-unranked", modelId: "gpt-5.6", pool: "copilot", family: "gpt", latencyMs: 1 }), // S, absent from manualOrder
+      rankable({ key: "b-rank0", modelId: "glm-5.3-flash", latencyMs: 500 }), // B, rank 0
+      rankable({ key: "a-rank1", modelId: "glm-5.3", latencyMs: 400 }), // A, rank 1
+    ]
+    const r = rankCandidates(shells, ctx({ poolOrdered: true, manualOrder: new Map([["b-rank0", 0], ["a-rank1", 1]]) }))
+    expect(r.ranked.map((s) => s.key)).toEqual(["b-rank0", "a-rank1", "s-unranked"])
+  })
+
+  test("health gates still apply: a matrix-down or breaker-down shell is eliminated even at manual rank 0", () => {
+    const shells = [
+      rankable({ key: "rank0-down", modelId: "glm-5.3", matrixStatus: "down" }),
+      rankable({ key: "rank0-breaker", modelId: "glm-5.3-flash" }),
+      rankable({ key: "rank1-ok", modelId: "glm-4.5-air", latencyMs: 900 }),
+    ]
+    const registry = {
+      "rank0-breaker": shellReg({ name: "rank0-breaker", modelId: "glm-5.3-flash", comboKey: "breaker-combo", matrixKey: "breaker-combo" }),
+    }
+    const r = rankCandidates(shells, ctx({
+      poolOrdered: true,
+      manualOrder: new Map([["rank0-down", 0], ["rank0-breaker", 0], ["rank1-ok", 1]]),
+      registry,
+      routing: { down_agents: { "breaker-combo": "consecutive failures" }, down_expiry: {} },
+    }))
+    expect(r.ranked.map((s) => s.key)).toEqual(["rank1-ok"])
+    expect(r.breakdowns.has("rank0-down")).toBe(false)
+    expect(r.breakdowns.has("rank0-breaker")).toBe(false)
+  })
+
+  test("poolOrdered without manualOrder: level-floor exemption holds (below-floor survivor kept) but tier/level ordering stays", () => {
+    const shells = [
+      rankable({ key: "a4", modelId: "glm-5.3", latencyMs: 50 }), // A(L4) — hard's minimum level
+      rankable({ key: "c-low", modelId: "glm-4.5-air", latencyMs: 1 }), // C(L2) — below the floor, not a hard fallback
+    ]
+    // with poolOrdered the whole survivor set forms the chain: the below-floor shell is NOT filtered out by selectGroup
+    const r = rankCandidates(shells, ctx({ lane: "hard", poolOrdered: true }))
+    expect(r.ranked.map((s) => s.key)).toEqual(["a4", "c-low"])
+  })
+
+  test("control: neither flag set — baseline behavior (below-floor non-fallback filtered by the level floor)", () => {
+    const shells = [
+      rankable({ key: "a4", modelId: "glm-5.3", latencyMs: 50 }),
+      rankable({ key: "c-low", modelId: "glm-4.5-air", latencyMs: 1 }),
+    ]
+    const r = rankCandidates(shells, ctx({ lane: "hard" }))
+    expect(r.ranked.map((s) => s.key)).toEqual(["a4"])
+  })
+})
+
 // ================= 4. Decision log =================
 describe("decision log logDecision", () => {
   beforeAll(() => {

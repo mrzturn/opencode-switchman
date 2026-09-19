@@ -1,4 +1,4 @@
-# Quick Start — from zero to a routed matrix in five steps
+# Quick Start — from zero to a routed matrix in six steps
 
 **English** | [Chinese](./quick-start.zh.md)
 
@@ -6,13 +6,14 @@ This walkthrough is for users who have just installed the plugin (or are about t
 
 > **Where to configure**: use the **CLI/TUI first** — dialogs, the sidebar panel, and live banners are richest there. The **desktop app** is an optional alternative afterwards; both share the same config and state, and every manual override below works in either surface.
 
-The five steps:
+The six steps:
 
 1. [Connect providers](#step-1--connect-providers) — give opencode credentials so models exist
 2. [Pick the models that join orchestration](#step-2--pick-the-models-that-join-orchestration-favorites--visible-set) — favorites in the TUI, toggles in the app
-3. [Rank models yourself (optional)](#step-3--optional-rank-models-yourself-modelrank-and-modelrank-chat) — `/modelRank` / `/modelRank-chat`
-4. [Curate task pools (optional)](#step-4--optional-curate-task-pools-poolconfig-and-poolconfig-chat) — `/poolConfig` / `/poolConfig-chat`
-5. [Restart, verify, and watch it route](#step-5--restart-verify-and-watch-it-route) — banners, sidebar, `/switchman-doctor`
+3. [Guided setup (required)](#step-3--required-guided-setup-switchman-setup-and-switchman-setup-chat) — `/switchman-setup` / `/switchman-setup-chat`
+4. [Adjust the ranking (optional)](#step-4--optional-adjust-the-ranking-modelrank-and-modelrank-chat) — `/modelRank` / `/modelRank-chat`
+5. [Curate task pools (optional)](#step-5--optional-curate-task-pools-poolconfig-and-poolconfig-chat) — `/poolConfig` / `/poolConfig-chat`
+6. [Restart, verify, and watch it route](#step-6--restart-verify-and-watch-it-route) — banners, sidebar, `/switchman-doctor`
 
 ---
 
@@ -72,9 +73,30 @@ Not every model a provider offers needs to join the matrix. You decide the **act
 > - Favorites also carry a routing hint: within the same capability tier, favorited models are preferred in lane chains.
 > - Surface changes (favorite added/removed, toggle flipped) trigger an immediate recomputation and probe refresh — no restart needed for this step.
 
-## Step 3 — (Optional) Rank models yourself: /modelRank and /modelRank-chat
+## Step 3 — (Required) Guided setup: /switchman-setup and /switchman-setup-chat
 
-By default, model capability comes from an automatic cascade (live third-party index → bundled snapshot → curated table). If you disagree — your workload, your ranking.
+Unconfigured task pools no longer fall back to "all models". Until setup completes — every one of the six task pools (`economy` / `mechanical` / `main` / `hard` / `vision` / `review`) has at least one selected model **and** the capability ranking has at least one entry — **task dispatch is hard-blocked**. The setup wizard gets you there in one guided pass.
+
+**TUI**: run `/switchman-setup`.
+
+1. **Intro** — shows the current state (pools configured n/6, ranking ok/missing); Start jumps straight to the first unfinished step, so the wizard is resumable at any time.
+2. **Six pool dialogs** (economy → mechanical → main → hard → vision → review) — multi-select the models for each pool: Enter toggles a `[x]`/`[ ]` mark in memory, a capability tier is shown per row, select-all / clear-all shortcuts and back navigation are built in; the per-pool confirm persists immediately (at least one model per pool), so every save hot-reloads the running plugin and the wizard stays resumable pool-by-pool.
+3. **Ranking** — pick your ranked models one by one, strongest first (at least one); the candidates are exactly the union of the models you selected across the pools. Finish persists the ranking.
+4. **Done** — a summary of every pool plus the ranking order. Setup takes effect immediately (hot-reload); the screen also names any selected providers that still need a restart (only brand-new providers opencode hasn't registered yet).
+
+**Conversational** (TUI or desktop app): run `/switchman-setup-chat` — the same guided flow in chat: the agent shows the current pool/rank state, asks pool by pool which models join (multi-select questions), asks for the strongest-first ranking, persists every answer through the bundled CLI, and verifies all six pools plus the ranking are set before closing.
+
+While setup is incomplete, main sessions carry a `[SETUP]` advisory telling the model to point you to the wizard, and each task dispatch is denied with the same guidance. This rides on the first-run language ask: until that is answered, the language gate is the single voice blocking task calls. The gate opens the moment the last config file is written — mtime hot-reload, no restart.
+
+> **Scope & conditions**
+> - Gate scope: main sessions only — dispatched shell subagents and internal sessions are never blocked. There is no waiver flag: the only way through is completing setup (or hand-editing the files below).
+> - Files: the wizard writes the same `~/.config/opencode/opencode-switchman/pool-config.json` + `capability-rank.json` as Steps 4–5 — safe to hand-edit, hot-reloaded on save (the `[LIMITS]` banner reports `task-pool selection: M pools` / `manual capability rank: N models`).
+> - Unsure what to pick? Sensible defaults: economy = cheap/fast models, mechanical = mid-tier workhorse, main = strongest generalist, hard = strongest reasoner, vision = image-capable models, review = a model family different from the main pool's head (cross-family review is preferred).
+> - CLI alternative: `node <pkg>/dist/switchman-config.js pool list|set …` + `rank list|set …` (same files, same hot-reload).
+
+## Step 4 — (Optional) Adjust the ranking: /modelRank and /modelRank-chat
+
+Step 3 already persisted a base ranking from your wizard picks; this step is for adjusting it later. By default, model capability comes from an automatic cascade (live third-party index → bundled snapshot → curated table). If you disagree — your workload, your ranking.
 
 **TUI**: run `/modelRank` — a dialog listing every model by effective capability, manual entries interleaved with base-score models; move a model up/down to anchor it a manual score between its new neighbors (one-spot nudges), or pin it to top / remove it from the ranking.
 
@@ -93,9 +115,9 @@ By default, model capability comes from an automatic cascade (live third-party i
 > - Persisted to `~/.config/opencode/opencode-switchman/capability-rank.json` (order = strongest first); the file is hot-reloaded on change (mtime), instant effect, sidebar refreshes immediately. The `[LIMITS]` banner reports it as `manual capability rank: N models`.
 > - CLI alternative: `node <pkg>/dist/switchman-config.js rank list|set|add|remove|clear`.
 
-## Step 4 — (Optional) Curate task pools: /poolConfig and /poolConfig-chat
+## Step 5 — (Optional) Curate task pools: /poolConfig and /poolConfig-chat
 
-Dispatches land in one of six task pools — `economy` / `mechanical` / `main` / `hard` / `vision` / `review`. By default each pool considers every activated model, sorted by capability. Curation makes each pool deliberately different (lightweights only for economy, heavy thinkers only for hard).
+Dispatches land in one of six task pools — `economy` / `mechanical` / `main` / `hard` / `vision` / `review`. Step 3 already configured them; this step is for later re-curation — replacing candidates after a provider change, or making each pool deliberately different (lightweights only for economy, heavy thinkers only for hard).
 
 **TUI**: run `/poolConfig` — pick a pool, then toggle models in/out of it.
 
@@ -114,7 +136,7 @@ Dispatches land in one of six task pools — `economy` / `mechanical` / `main` /
 > - Persisted to `~/.config/opencode/opencode-switchman/pool-config.json` (key = pool name, value = model array); hot-reloaded on change, instant effect. The `[LIMITS]` banner reports it as `task-pool selection: M pools`.
 > - CLI alternative: `node <pkg>/dist/switchman-config.js pool list|add|remove|set|clear` (pool name = economy/mechanical/main/hard/vision/review).
 
-## Step 5 — Restart, verify, and watch it route
+## Step 6 — Restart, verify, and watch it route
 
 1. **Restart opencode** (required after Step 1 config edits; harmless otherwise).
 2. **Check the banner** — every system prompt of your primary model now carries the live `[ROUTES]` / `[WATERMARK]` / `[LIMITS]` block. `[ROUTES]` shows the six lane chains; `[LIMITS]` reports your manual overrides (`manual capability rank: N models, task-pool selection: M pools`).
@@ -136,6 +158,8 @@ That's it — from here just use opencode normally. Your primary model is now a 
 | `/connect` | TUI & app | Provider credentials | Models of credentialed providers join the selectable surface (restart after `opencode.json` edits) | opencode auth layer (plugin reads it read-only) |
 | `ctrl+f` in the model picker (`/models`) | TUI | Favorites = CLI/TUI activation surface; same-tier preferred | Immediately (recompute + probe refresh) | opencode state (`model.json`), synced with the app |
 | Model-management toggles | Desktop app | Visible set = app activation surface; synced with TUI favorites | Immediately (recompute + probe refresh) | opencode state (`opencode.global.dat`), synced with the TUI |
+| `/switchman-setup` | TUI | Guided one-pass setup: all 6 task pools + capability ranking (required — dispatch blocked until complete) | Immediately (hot reload) | `~/.config/opencode/opencode-switchman/pool-config.json` + `capability-rank.json` |
+| `/switchman-setup-chat` | TUI & app | Same as `/switchman-setup`, conversational | Immediately (hot reload) | Same files as `/switchman-setup` |
 | `/modelRank` | TUI | Manual capability ranking, overrides base scores | Immediately (hot reload) | `~/.config/opencode/opencode-switchman/capability-rank.json` |
 | `/modelRank-chat` | TUI & app | Same as `/modelRank`, conversational | Immediately (hot reload) | Same file as `/modelRank` |
 | `/poolConfig` | TUI | Per-pool candidate lists, replace pool defaults | Immediately (hot reload) | `~/.config/opencode/opencode-switchman/pool-config.json` |

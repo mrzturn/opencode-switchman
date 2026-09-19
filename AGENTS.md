@@ -27,6 +27,7 @@
 - `src/workspace.ts` — artifact workspace: per-main-session `<project>/.switchman/<yyyy-mm-dd>/<sessionId>-<title>/` folders (SESSION.md / dispatches.jsonl / media/; config `workspace.*`).
 - `src/provider-config.ts`, `src/types.ts` — provider/model metadata, routing config, option types.
 - `src/lang-config.ts` — project language preference (settings.json + AGENTS.md marker, ask directive, [LANG] line, question capture).
+- `src/setup-gate.ts` — setup completion predicate + gate copy (all 6 task pools + capability rank must be configured; task dispatch denied until then); wired in index.ts (task deny, [SETUP] directive, banner segment), guided wizard in tui.tsx.
 - `scripts/` — codegen (`gen-shells`, `gen-capability-default`, `gen-version`), build helpers, mode switcher.
 - `test/` — bun test suites; treat as the behavioral contract (update together with behavior changes).
 

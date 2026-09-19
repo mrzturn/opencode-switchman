@@ -1,10 +1,16 @@
 // [2026-09-04]-[English localization: translate CLI messages and comments; no logic change]
+// [2026-09-19]-[render-time CLI i18n: report prose with a `cli.doctor.*` key renders via t(locale, key, params)
+//  (SWM codes, paths and level tokens stay verbatim; {pathPart}/{hintPart} are flattened variant params per
+//  i18n-keys.md); the locale is an optional second arg (omitted → English) so the plugin's background doctor call
+//  in src/index.ts and existing direct callers keep byte-identical output; only switchman-doctor passes the CLI
+//  display locale — no logic or exit-code changes]
 import { existsSync, statSync, readFileSync, accessSync, constants } from "node:fs"
 import { dirname, isAbsolute, join } from "node:path"
 import { parseJsonc, resolveOpencodeConfigDir, validateUserConfig } from "./config"
 import { canonicalKeyOf, PROVIDER_KEYS } from "./provider-config"
 import { loadManifest, paths } from "./state"
 import { baseScoreDynamic } from "./capability"
+import { t } from "./i18n"
 import type { ConfigDiagnostic } from "./config"
 
 export interface DoctorInput {
@@ -22,7 +28,7 @@ function suggestion(actual: string, expected: readonly string[]): string | undef
   }
   return expected.find((x) => norm(actual).includes(norm(x)) || norm(x).includes(norm(actual)) || distance(norm(actual), norm(x)) <= 2)
 }
-export function runDoctor(input: DoctorInput): DoctorResult {
+export function runDoctor(input: DoctorInput, locale?: unknown): DoctorResult {
   const out = [...(input.diagnostics ?? [])]
   let value: unknown = null
   try { const p = parseJsonc(input.configText ?? readFileSync(input.configPath, "utf8")); if ("error" in p) out.push({ code: "SWM001", level: "error", path: input.configPath }); else value = p.value } catch { out.push({ code: "SWM001", level: "error", path: input.configPath }) }
@@ -53,9 +59,9 @@ export function runDoctor(input: DoctorInput): DoctorResult {
     try {
       const shells = loadManifest().shells
       const unknown = shells.filter((s) => baseScoreDynamic(s.modelId).source === "global")
-      if (unknown.length > 0) out.push({ code: "SWM060", level: "info", path: "shells", hint: `${unknown.length} models not matched by the known system (unknown group, ranked to the bottom by coefficient)` })
+      if (unknown.length > 0) out.push({ code: "SWM060", level: "info", path: "shells", hint: t(locale, "cli.doctor.unknownModelsHint", { unknownCount: unknown.length }) })
       const approx = shells.filter((s) => ["prefix", "family"].includes(baseScoreDynamic(s.modelId).source))
-      if (approx.length > 0) out.push({ code: "SWM062", level: "info", path: "shells", hint: `${approx.length} models classified approximately by prefix/family` })
+      if (approx.length > 0) out.push({ code: "SWM062", level: "info", path: "shells", hint: t(locale, "cli.doctor.approxModelsHint", { approxCount: approx.length }) })
     } catch { /* fail-open */ }
   }
   try { statSync(dirname(input.configPath)); accessSync(dirname(input.configPath), constants.W_OK) } catch { out.push({ code: "SWM051", level: "error", path: dirname(input.configPath) }) }
@@ -69,7 +75,7 @@ export function runDoctor(input: DoctorInput): DoctorResult {
   if (input.legacy?.quotaEnabled && Object.keys(input.legacy.quotaEnabled).length) out.push({ code: "SWM042", level: "warn", path: "legacy.quota" })
   if (input.legacy?.billingWindow) out.push({ code: "SWM043", level: "warn", path: "legacy.billingWindow" })
   // [2026-09-01]-[Unified config surface: tuple explicit behavior sections prompt migration to opencode-switchman.jsonc (gen-1 compatible, explicit values still win)]
-  for (const section of input.legacy?.sections ?? []) out.push({ code: "SWM044", level: "warn", path: `legacy.${section}`, hint: "opencode-switchman.jsonc" })
+  for (const section of input.legacy?.sections ?? []) out.push({ code: "SWM044", level: "warn", path: `legacy.${section}`, hint: t(locale, "cli.doctor.configFileHint") })
   if (value !== null) {
     const providers = (value as any)?.providers
     if (providers && typeof providers === "object" && PROVIDER_KEYS.some((key) => (providers as any)[key]?.enabled === true && (providers as any)[key]?.observe === false)) out.push({ code: "SWM040", level: "warn", path: "providers" })
@@ -83,8 +89,11 @@ export function runDoctor(input: DoctorInput): DoctorResult {
     arr.findIndex((x) => x.code === d.code && x.path === d.path && x.level === d.level && (x.hint ?? "") === (d.hint ?? "")) === i)
   return { diagnostics: deduped.sort((a, b) => ({ error: 0, warn: 1, info: 2 }[a.level] - { error: 0, warn: 1, info: 2 }[b.level] || a.code.localeCompare(b.code))) }
 }
-export function formatDoctorReport(result: DoctorResult): string {
-  if (!result.diagnostics.length) return "opencode-switchman doctor: no issues found"
+export function formatDoctorReport(result: DoctorResult, locale?: unknown): string {
+  if (!result.diagnostics.length) return t(locale, "cli.doctor.noIssues")
   const rank = { error: 0, warn: 1, info: 2 }
-  return [...result.diagnostics].sort((a, b) => rank[a.level] - rank[b.level] || a.code.localeCompare(b.code)).map((d) => `${d.level.toUpperCase()} ${d.code}${d.path ? ` ${d.path}` : ""}${d.hint ? ` (hint: ${d.hint})` : ""}`).join("\n")
+  return [...result.diagnostics].sort((a, b) => rank[a.level] - rank[b.level] || a.code.localeCompare(b.code)).map((d) => t(locale, "cli.doctor.findingLine", {
+    level: d.level.toUpperCase(), code: d.code,
+    pathPart: d.path ? ` ${d.path}` : "", hintPart: d.hint ? ` (hint: ${d.hint})` : "",
+  })).join("\n")
 }

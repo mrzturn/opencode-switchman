@@ -16,13 +16,23 @@ process.env.SWITCHMAN_STATE = stateDir
 // catalog entry present from module load (the model-catalog index is cached at first read; a mid-file rewrite would
 // never be seen) — harmless for the other tests: their sessions carry no model face, so no threshold clamping occurs
 writeFileSync(join(stateDir, "model-catalog.json"), JSON.stringify({ fetched_at: Date.now(), etag: null, index: { "copilot/glm-5.3": { contextWindow: 128_000 } } }))
+// [2026-09-19]-[hermetic capability seed: see test/index-options.test.ts — prevents the startup refresh's async write-back
+//  from landing in a later file's sandbox after SWITCHMAN_STATE switches mid-flight (CI-only flake on fast networks)]
+writeFileSync(join(stateDir, "capability.json"), JSON.stringify({ source: "artificial-analysis", version: "fixed-empty", fetched_at: Date.now() / 1000, thresholds: { S: 62, A: 55, B: 45 }, models: {} }))
 
 import { SwitchmanPlugin } from "../src/index"
 import { CTX_PAUSE_MARKER, CTX_RESUME_MARKER, ctxControlMarkerOf, pausedWindowWarning } from "../src/context-watch"
+import { renderNotice } from "../src/i18n"
 
 function readStatusLog(): string {
   const p = join(stateDir, "status-log.json")
-  return existsSync(p) ? readFileSync(p, "utf8") : ""
+  if (!existsSync(p)) return ""
+  // [2026-09-19]-[i18n cleanup: entries are structured {key, params} — render English for the prose assertions]
+  try {
+    const data = JSON.parse(readFileSync(p, "utf8"))
+    if (Array.isArray(data)) return data.map((e: { key?: string; params?: Record<string, string | number>; text?: string }) => renderNotice(e, "en")).join("\n")
+  } catch { /* fail-open: fall through to raw text */ }
+  return readFileSync(p, "utf8")
 }
 
 const fakeClient = {

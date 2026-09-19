@@ -3,6 +3,8 @@
 // Pure functions: all state injected via GateSnapshot; deny = return a reason (index.ts layer turns it into a thrown Error to block).
 import { META_LEGAL } from "./types"
 import type { GateSnapshot, Meta, ShellRegEntry } from "./types"
+import type { MsgKey } from "./i18n"
+import { t } from "./i18n"
 import { metaErrorHint, parseRouteMeta } from "./meta"
 import { computeLane, firstCandidate, laneOfShell } from "./lane"
 import { baseScoreDynamic, normalizeModelKey } from "./capability"
@@ -12,7 +14,16 @@ import { isFallbackCandidate, isPrimaryCandidate } from "./lane-policy"
 //  zero-retry silent redirection); non-redirectable classes (same-name conflict / chain exhausted with no candidate / gate-6 meta) stay null]
 // [2026-09-04]-[English localization: deny copy is now English — the earlier "deny copy frozen verbatim (locked by
 //  legacy fixtures)" constraint is lifted as of 2026-09-04; test fixtures updated in sync]
-export interface GateResult { deny: string | null; note: string | null; redirect: string | null }
+// [2026-09-19]-[P3c status-log i18n: gate observe notes are structured GateNote {key, params} (index.ts emits
+//  notes[] via appendStatusLog(key, params); keys/params mirror src/locales/en.ts placeholders). The legacy English
+//  `note` string stays byte-identical for copy-pinning consumers: it is still built from the original literals
+//  side-by-side with each GateNote (not via t("en", ...) — gates.ts must stay importable while the i18n module graph
+//  is still being assembled by the parallel lane; switching the legacy render to t is a one-line follow-up).
+//  Deny/redirect stay prose; English only; no dispatch-decision change]
+// [2026-09-19]-[i18n cleanup: observe-note legacy strings now render via t("en", key, params) (single source with
+//  the notes[] keys); deny literals stay prose. Byte-identical output — copy-pinning tests in dispatch-gates/routing prove it]
+export interface GateNote { key: MsgKey; params?: Record<string, string | number> }
+export interface GateResult { deny: string | null; note: string | null; notes: GateNote[] | null; redirect: string | null }
 
 function matrixStatus(shell: ShellRegEntry, mcombos: GateSnapshot["matrix"]): [string, string] {
   if (!shell.matrixKey) return ["unprobed", ""]
@@ -60,7 +71,7 @@ function synthesizeMeta(agent: string, lanes: Record<string, string[]>): Meta {
   }
 }
 
-const ROUTE_META_SYNTH_NOTE = "[opencode-switchman] ROUTE_META missing/malformed — synthesized from lane; declare it to enable review cross-family / source=user semantics"
+const ROUTE_META_SYNTH_KEY = "notice.dispatch.routeMetaSynthNote" as MsgKey
 
 export function checkShell(
   agent: string,
@@ -77,7 +88,8 @@ export function checkShell(
   //  required field on a parseable line) keeps the gate-6 deny below — a producer error the delegator must fix]-
   if (metaErr === "missing" || metaErr === "malformed") {
     meta = synthesizeMeta(agent, snap.lanes)
-    metaSynthNote = ROUTE_META_SYNTH_NOTE
+    // [2026-09-19]-[i18n cleanup: legacy note renders from the catalog (byte-identical to the removed literal)]
+    metaSynthNote = t("en", ROUTE_META_SYNTH_KEY)
   }
   const lane = laneForCheck(agent, meta, snap.lanes)
   const base = snap.lanes[lane] ?? []
@@ -132,7 +144,7 @@ export function checkShell(
   if (act && act.enabled) {
     if (act.conflicts && act.conflicts.has(agent)) {
       // Non-redirectable class: same-name conflict requires user action
-      return { deny: `${agent} conflicts with a user-defined agent of the same name, not dispatchable (rename or delete the custom agent)${hint()}`, note: null, redirect: null }
+      return { deny: `${agent} conflicts with a user-defined agent of the same name, not dispatchable (rename or delete the custom agent)${hint()}`, note: null, notes: null, redirect: null }
     }
     if (act.activeShells && !act.activeShells.has(agent)) {
       const restart = act.restartRequired.length > 0
@@ -142,7 +154,7 @@ export function checkShell(
       return {
         // [2026-08-29]-[re-review P2 wording fix: "realtime" → "takes effect on the next request" (activation-face changes reach the dispatch gate on the next tool delegation)]
         deny: `${agent} not activated (model not in the current activation matrix: set it visible in model management / add it to favorites / switch the main session to this model to activate; takes effect on the next request${restart})${hint()}`,
-        note: null,
+        note: null, notes: null,
         redirect: cand,
       }
     }
@@ -151,16 +163,21 @@ export function checkShell(
   if (status !== "enabled") {
     const [mstat, mreason] = snap.matrix !== null ? matrixStatus(shell, snap.matrix) : ["unknown", ""]
     if (status === "disabled" && snap.matrix !== null && mstat !== "down") {
-      return {
-        deny: null,
-        note: `[opencode-switchman] ${agent} registry=disabled but matrix status=${mstat || "missing"} (not down): fail-open, auto-corrected after the next probe refresh`,
-        redirect: null,
+      {
+        const registryNote: GateNote = { key: "notice.dispatch.registryDisabledNote", params: { agent, matrixStatus: mstat || "missing" } }
+        return {
+          deny: null,
+          // [2026-09-19]-[i18n cleanup: legacy note renders from the catalog (byte-identical)]
+          note: t("en", registryNote.key, registryNote.params),
+          notes: [registryNote],
+          redirect: null,
+        }
       }
     }
     const cand = candidateOf()
     return {
       deny: `${agent} not dispatchable (registry status=${status}${snap.matrix !== null && mstat === "down" ? `, matrix ${mstat}: ${mreason}` : ""})${hint()}`,
-      note: null,
+      note: null, notes: null,
       redirect: cand,
     }
   }
@@ -169,28 +186,32 @@ export function checkShell(
   if (snap.matrix !== null) {
     const [mstat, mreason] = matrixStatus(shell, snap.matrix)
     if (mstat === "down") {
-      return { deny: `${agent} unavailable (matrix down, ${mreason})${hint()}`, note: null, redirect: candidateOf() }
+      return { deny: `${agent} unavailable (matrix down, ${mreason})${hint()}`, note: null, notes: null, redirect: candidateOf() }
     }
     if (mstat === "unknown" || mstat === "missing" || mstat === "unprobed") {
-      return { deny: null, note: `[opencode-switchman] ${agent} matrix status=${mstat} (not down): not blocked, probe refreshes next round`, redirect: null }
+      {
+        const matrixNote: GateNote = { key: "notice.dispatch.matrixStatusNote", params: { agent, matrixStatus: mstat } }
+        // [2026-09-19]-[i18n cleanup: legacy note renders from the catalog (byte-identical)]
+        return { deny: null, note: t("en", matrixNote.key, matrixNote.params), notes: [matrixNote], redirect: null }
+      }
     }
   }
 
   // Gate 2.5: model retired (consecutive 404s remove it from candidates permanently; cleared on restart; only the dynamic matrix injects retiredModels)
   // [2026-08-29]-[failure classification: vendor-agnostic; deny on provider/modelId hit, no pool hardcoding]
   if (snap.retiredModels?.has(`${shell.provider}/${shell.modelId}`)) {
-    return { deny: `${agent} unavailable (model retired: consecutive 404s, redirect to another candidate)${hint()}`, note: null, redirect: candidateOf() }
+    return { deny: `${agent} unavailable (model retired: consecutive 404s, redirect to another candidate)${hint()}`, note: null, notes: null, redirect: candidateOf() }
   }
 
-  // Gate 3: in-process isolation for probe-ok but real-call failures (not persisted; recovers after 30 minutes or on restart)
+  // Gate 3: in-process isolation for probe-ok but real-call failures (not persisted; recovers after 5 minutes or on restart)
   if (shell.comboKey && snap.realFailedCombos?.has(shell.comboKey)) {
-    return { deny: `${agent} temporarily unavailable (probe ok but actual delegation failed; auto-unlocks after 30 minutes or restart opencode)${hint()}`, note: null, redirect: candidateOf() }
+    return { deny: `${agent} temporarily unavailable (probe ok but actual delegation failed; auto-unlocks after 5 minutes or restart opencode)${hint()}`, note: null, notes: null, redirect: candidateOf() }
   }
 
   // Gate 4 breaker: down_agents hit by shell name or comboKey (600s window × 2 failures)
   const down = snap.routing?.down_agents
   if (down && ((agent in down) || (shell.comboKey && shell.comboKey in down))) {
-    return { deny: `${agent} temporarily unavailable (breaker tripped after consecutive failures; auto-recovers in about 10 minutes)${hint()}`, note: null, redirect: candidateOf() }
+    return { deny: `${agent} temporarily unavailable (breaker tripped after consecutive failures; auto-recovers in about 10 minutes)${hint()}`, note: null, notes: null, redirect: candidateOf() }
   }
 
   // Gate 5 pool exhaustion (only blocks when calls are certain to fail; unknown/high watermark does not block)
@@ -199,7 +220,7 @@ export function checkShell(
     const why = pool === "glm"
       ? "GLM plan exhausted"
       : pool === "copilot" ? "Copilot credits exhausted" : "DeepSeek balance exhausted"
-    return { deny: `${agent} temporarily unavailable (${why})${hint()}`, note: null, redirect: candidateOf() }
+    return { deny: `${agent} temporarily unavailable (${why})${hint()}`, note: null, notes: null, redirect: candidateOf() }
   }
 
   // Gate 5.5 task-pool selection (manual pool-config.json): lane → participating-model list; a non-empty list overrides
@@ -207,7 +228,7 @@ export function checkShell(
   {
     const allow = snap.poolConfig?.[lane]
     if (allow && allow.size > 0 && !allow.has(normalizeModelKey(shell.modelId))) {
-      return { deny: `${agent} not in the ${lane} task-pool selection list (use /poolConfig to adjust participating models per task pool, or redirect to another candidate)${hint()}`, note: null, redirect: candidateOf() }
+      return { deny: `${agent} not in the ${lane} task-pool selection list (use /poolConfig to adjust participating models per task pool, or redirect to another candidate)${hint()}`, note: null, notes: null, redirect: candidateOf() }
     }
   }
 
@@ -225,7 +246,7 @@ export function checkShell(
     }
     return {
       deny: `${agent} dispatched to a shell name, invalid ROUTE_META: ${metaErrorHint(metaErr)}${fallback}`,
-      note: null,
+      note: null, notes: null,
       // a present-but-wrong META must be corrected by the delegator (rewriting it plugin-side would mask the error); stays null here
       redirect: null,
     }
@@ -237,7 +258,7 @@ export function checkShell(
   //  self-review seat (DOWNGRADED) instead of an unconditional deny that dead-ends the review lane ("review: none
   //  available"). The exemption note is attached at the final return so the structural rw/ro + vision gates and the
   //  fallback-chain checks below still apply to an exempted dispatch; a deny always supersedes the note.]
-  const REVIEW_SELF_REVIEW_NOTE = "[opencode-switchman] DOWNGRADED: no cross-family reviewer available — same-family self-review allowed; declare DOWNGRADED in the review conclusion"
+  const REVIEW_SELF_REVIEW_KEY = "notice.dispatch.reviewSelfNote" as MsgKey
   let reviewSelfReviewNote: string | null = null
   // Lazily computed once, only when the review-lane chain is actually needed (same try/catch pattern as the fallback block below)
   let reviewChain: import("./types").LaneResult | null = null
@@ -265,22 +286,30 @@ export function checkShell(
       // same-family shell to the chain tail (scoring famClass), so cross-family is still served first.
       const hasCrossFamily = reviewChainOf()?.chain.some((c) => String(c.family ?? "") !== String(pf).toLowerCase()) ?? false
       if (hasCrossFamily) {
-        return { deny: `${agent} same family as producer (${pf}); re-review requires a cross-family perspective${hint("review")}`, note: null, redirect: candidateOf("review") }
+        return { deny: `${agent} same family as producer (${pf}); re-review requires a cross-family perspective${hint("review")}`, note: null, notes: null, redirect: candidateOf("review") }
       }
-      reviewSelfReviewNote = REVIEW_SELF_REVIEW_NOTE
+      reviewSelfReviewNote = t("en", REVIEW_SELF_REVIEW_KEY)
     }
   }
   if (meta!.capability === "rw" && String(shell.capability) === "ro") {
-    return { deny: `${agent} is a read-only shell (ro) and cannot take rw write tasks${hint()}`, note: null, redirect: candidateOf() }
+    return { deny: `${agent} is a read-only shell (ro) and cannot take rw write tasks${hint()}`, note: null, notes: null, redirect: candidateOf() }
   }
   if ((meta!.modality === "image" || meta!.modality === "vision") && !shell.vision) {
-    return { deny: `${agent} is not a vision shell and cannot take modality=${meta!.modality} tasks${hint("vision")}`, note: null, redirect: candidateOf("vision") }
+    return { deny: `${agent} is not a vision shell and cannot take modality=${meta!.modality} tasks${hint("vision")}`, note: null, notes: null, redirect: candidateOf("vision") }
   }
   if (lane === "vision" && meta!.modality === "text") {
-    return { deny: `${agent} lane=vision requires declaring an image/vision modality${hint("vision")}`, note: null, redirect: candidateOf("vision") }
+    return { deny: `${agent} lane=vision requires declaring an image/vision modality${hint("vision")}`, note: null, notes: null, redirect: candidateOf("vision") }
   }
   const capability = baseScoreDynamic(shell.modelId)
-  if (!isPrimaryCandidate(lane as import("./types").Lane, capability) && !isFallbackCandidate(lane as import("./types").Lane, capability)) {
+  // [2026-09-18]-[pool-config membership = qualification: a model explicitly selected into this lane's task pool is
+  //  exempt from the capability level floor and the cross-level fallback top-2 checks — explicit user config wins over
+  //  score judgment; the allow note records the override for the decision log]
+  const poolMember = snap.poolConfig?.[lane]?.has(normalizeModelKey(shell.modelId)) === true
+  // [2026-09-19]-[i18n cleanup: legacy note renders from the catalog (byte-identical to the removed literal)]
+  const poolOverrideNote = poolMember
+    ? t("en", "notice.dispatch.poolOverrideNote")
+    : null
+  if (!poolMember && !isPrimaryCandidate(lane as import("./types").Lane, capability) && !isFallbackCandidate(lane as import("./types").Lane, capability)) {
     // [2026-09-05]-[review last-resort seat exemption: a below-fallback shell (e.g. B-tier/L3) holding a last-resort
     //  review seat — on the chain while the chain carries no L5 primary candidate — is allowed with the DOWNGRADED
     //  note instead of denying "capability level too low", keeping the review lane dispatchable when only B-tier
@@ -290,22 +319,29 @@ export function checkShell(
       const onChain = Boolean(rc?.chain.some((c) => c.shell === agent))
       const noPrimary = Boolean(rc && !rc.chain.some((c) => isPrimaryCandidate("review" as import("./types").Lane, baseScoreDynamic(snap.registry?.[c.shell]?.modelId ?? ""))))
       // [2026-09-14]-[D5: the gate-6 synth note rides along when the META was synthesized for this dispatch]
-      if (onChain && noPrimary) return { deny: null, note: [metaSynthNote, REVIEW_SELF_REVIEW_NOTE].filter(Boolean).join(" ") || null, redirect: null }
+      if (onChain && noPrimary) {
+        const both: GateNote[] = [
+          ...(metaSynthNote ? [{ key: ROUTE_META_SYNTH_KEY } as GateNote] : []),
+          { key: REVIEW_SELF_REVIEW_KEY },
+        ]
+        // [2026-09-19]-[i18n cleanup: legacy note renders from the catalog (byte-identical)]
+        return { deny: null, note: [metaSynthNote, t("en", REVIEW_SELF_REVIEW_KEY)].filter(Boolean).join(" ") || null, notes: both, redirect: null }
+      }
     }
-    return { deny: `${agent} capability level too low to take ${lane} tasks${hint()}`, note: null, redirect: candidateOf() }
+    return { deny: `${agent} capability level too low to take ${lane} tasks${hint()}`, note: null, notes: null, redirect: candidateOf() }
   }
-  if (isFallbackCandidate(lane as import("./types").Lane, capability) && meta!.source !== "user") {
+  if (!poolMember && isFallbackCandidate(lane as import("./types").Lane, capability) && meta!.source !== "user") {
     let current
     try {
       current = computeLane(lane as import("./types").Lane, snap.lanes[lane] ?? base, buildParams() as any)
     } catch {
-      return { deny: `${agent} cannot confirm cross-level fallback eligibility for ${lane}; dispatch denied to avoid an unintended downgrade${hint()}`, note: null, redirect: candidateOf() }
+      return { deny: `${agent} cannot confirm cross-level fallback eligibility for ${lane}; dispatch denied to avoid an unintended downgrade${hint()}`, note: null, notes: null, redirect: candidateOf() }
     }
     if (!current.chain.some((candidate) => candidate.shell === agent)) {
-      return { deny: `${agent} not among the top-2 cross-level fallback candidates for ${lane}${hint()}`, note: null, redirect: candidateOf() }
+      return { deny: `${agent} not among the top-2 cross-level fallback candidates for ${lane}${hint()}`, note: null, notes: null, redirect: candidateOf() }
     }
     if (current.chain.some((candidate) => isPrimaryCandidate(lane as import("./types").Lane, baseScoreDynamic(snap.registry?.[candidate.shell]?.modelId ?? "")))) {
-      return { deny: `${agent} is a cross-level fallback candidate for ${lane}; same-level models are still available${hint()}`, note: null, redirect: candidateOf() }
+      return { deny: `${agent} is a cross-level fallback candidate for ${lane}; same-level models are still available${hint()}`, note: null, notes: null, redirect: candidateOf() }
     }
   }
   // [2026-08-31]-[de-vendorization: removed the hard deny for source=auto mis-picking pay-as-you-go pools — api billing is
@@ -315,12 +351,20 @@ export function checkShell(
   // [2026-09-05]-[review same-family self-review: the last-resort exemption note (no cross-family reviewer on the chain)
   //  is emitted here after every structural gate passed]
   // [2026-09-14]-[D5: a synthesized META rides as an observe note (a deny always supersedes it); both notes joined when they co-occur]
-  return { deny: null, note: [metaSynthNote, reviewSelfReviewNote].filter(Boolean).join(" ") || null, redirect: null }
+  // [2026-09-18]-[pool-config override note rides along on the allow path (deny branches above already carried the exemption)]
+  {
+    const allowNotes: GateNote[] = [
+      ...(metaSynthNote ? [{ key: ROUTE_META_SYNTH_KEY } as GateNote] : []),
+      ...(reviewSelfReviewNote ? [{ key: REVIEW_SELF_REVIEW_KEY } as GateNote] : []),
+      ...(poolOverrideNote ? [{ key: "notice.dispatch.poolOverrideNote" } as GateNote] : []),
+    ]
+    return { deny: null, note: [metaSynthNote, reviewSelfReviewNote, poolOverrideNote].filter(Boolean).join(" ") || null, notes: allowNotes.length > 0 ? allowNotes : null, redirect: null }
+  }
 }
 
 /** Unregistered / non-shell name → fail-open (unknown built-in agents are not governed by routing) */
-export function noteUnknownAgent(agent: string): string {
-  return `[opencode-switchman] unknown subagent_type='${agent}': allowed (not in the shell list; built-in agents are not governed by routing)`
+export function noteUnknownAgent(agent: string): GateNote {
+  return { key: "notice.dispatch.unknownAgentAllowed", params: { agent } }
 }
 
 /** [2026-09-04]-[built-in subagent block: explore/general competed with shell routing while being fail-open by default,

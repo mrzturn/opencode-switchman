@@ -292,7 +292,7 @@ export interface ContextOptions {
   /** [2026-09-04]-[After exceeding the force-compaction watermark, tool.execute.after auto-triggers /handover (fork backup + compact the current session;
    *  the task continues automatically with summary context); default true; false = banner hint only, relying on manual /handover] */
   autoHandover?: boolean
-  /** Per-call self-read budget R* in tokens: reads estimated above this are auto-bounded or denied with bounded-retry params; default 1500 (clamped 200..20000) */
+  /** Per-call self-read budget R* in tokens: reads within R*+tolerance or the remaining turn headroom (2×R* fresh) are granted one-shot; above that auto-bounded or denied with bounded-retry params; default 1500 (clamped 200..20000) */
   readBudgetTokens?: number
   /** [2026-09-06]-[subagent hard cap (tokens): when a shell subagent's measured context reaches it, every further tool
    *  call in that session is denied with a wrap-up order (the next text-only answer = detailed progress summary = task

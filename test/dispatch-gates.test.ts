@@ -6,6 +6,7 @@ import {
   READ_CLASS_TOOLS, estimateContextTokens, thresholdsOf, watermarkLevel,
   isVerificationBash, budgetGateDecision, readBudgetOf, turnBudgetOf,
   estimateReadRange, estimateOutputTokens, capThresholdsByWindow,
+  matchContinuation, DENY_RETRY_OVERHEAD_TOKENS,
 } from "../src/context-watch"
 import { builtinAgentDeny, checkShell } from "../src/gates"
 import { firstCandidate } from "../src/lane"
@@ -46,10 +47,11 @@ describe("context-watch: token estimation and watermark levels", () => {
 // [2026-09-05]-[v1 read budget: budgetGateDecision matrix replaces the readGateDecision nudge tests — the gate is
 //  deterministic per call (the alreadyNudged coupon is gone) and always-on from turn 1; watermarks keep only
 //  lifecycle duties (hard/force = wrap-up deny)]
+// [2026-09-18]-[v1.1 anti-fragmentation: tolerance band + need-aware grant ceiling + continuation completion cases]
 describe("context-watch: read-budget gate decisions", () => {
   const RB = 1500
-  const estOf = (totalTokens: number, hasLimit: boolean, suggestedLimit = 200, offset = 1) => ({
-    totalTokens, tokensPerLine: 7.5, suggestedLimit, hasLimit, requestedLimit: hasLimit ? 300 : undefined, offset,
+  const estOf = (totalTokens: number, hasLimit: boolean, suggestedLimit = 200, offset = 1, grantTokens = 1500, requestedEndLine = offset + 300 - 1) => ({
+    totalTokens, tokensPerLine: 7.5, suggestedLimit, hasLimit, requestedLimit: hasLimit ? 300 : undefined, offset, grantTokens, requestedEndLine,
   })
   test("ok level: reads under budget pass; over-budget reads are capped (no limit) or denied (limit set); un-estimable read-class fails open; non-read-class passes", () => {
     expect(budgetGateDecision({ tool: "read", level: "ok", readBudget: RB, turnUsed: 0, est: estOf(400, false) })).toBe("allow")
@@ -98,6 +100,52 @@ describe("context-watch: read-budget gate decisions", () => {
     expect(budgetGateDecision({ tool: "read", level: "ok", readBudget: RB, turnUsed: 3000, est: estOf(400, false) })).toBe("deny-turn")
     expect(budgetGateDecision({ tool: "glob", level: "ok", readBudget: RB, turnUsed: 3000 })).toBe("deny-turn")
   })
+  // [2026-09-18]-[v1.1 tolerance band: a deny round trip (error text + re-issued call + re-reasoning) costs ≈ the
+  //  overshoot it saves, and the model reads the rest anyway in fragments — barely-over-budget reads pass outright]
+  test("v1.1 tolerance band: reads within R* + deny-retry overhead pass outright (band edge inclusive)", () => {
+    const band = RB + DENY_RETRY_OVERHEAD_TOKENS
+    expect(budgetGateDecision({ tool: "read", level: "ok", readBudget: RB, turnUsed: 0, est: estOf(band, true) })).toBe("allow")
+    expect(budgetGateDecision({ tool: "read", level: "ok", readBudget: RB, turnUsed: 0, est: estOf(band, false) })).toBe("allow")
+    expect(budgetGateDecision({ tool: "read", level: "ok", readBudget: RB, turnUsed: 0, est: estOf(band + 1, true) })).toBe("deny-budget")
+    expect(budgetGateDecision({ tool: "read", level: "ok", readBudget: RB, turnUsed: 0, est: estOf(band + 1, false) })).toBe("cap")
+  })
+  // [2026-09-18]-[v1.1 need-aware sizing: the grant ceiling rides the remaining turn headroom — a demonstrated-range
+  //  read lands one-shot instead of deny → partial read → continuation fragments]
+  test("v1.1 need-aware sizing: reads up to the grant ceiling land one-shot; above it cap/deny-budget as before", () => {
+    expect(budgetGateDecision({ tool: "read", level: "ok", readBudget: RB, turnUsed: 0, est: estOf(2500, true, 200, 1, 3000) })).toBe("allow")
+    expect(budgetGateDecision({ tool: "read", level: "ok", readBudget: RB, turnUsed: 0, est: estOf(3000, false, 200, 1, 3000) })).toBe("allow")
+    expect(budgetGateDecision({ tool: "read", level: "ok", readBudget: RB, turnUsed: 0, est: estOf(3001, true, 200, 1, 3000) })).toBe("deny-budget")
+    expect(budgetGateDecision({ tool: "read", level: "ok", readBudget: RB, turnUsed: 0, est: estOf(3001, false, 200, 1, 3000) })).toBe("cap")
+    // a partially spent turn shrinks the ceiling (max(R*, headroom)) — 200 left still grants R*-shaped reads
+    expect(budgetGateDecision({ tool: "read", level: "ok", readBudget: RB, turnUsed: 2800, est: estOf(1500, true, 200, 1, 1500) })).toBe("allow")
+    expect(budgetGateDecision({ tool: "read", level: "ok", readBudget: RB, turnUsed: 2800, est: estOf(2000, true, 200, 1, 1500) })).toBe("deny-budget")
+  })
+  // [2026-09-18]-[v1.1 continuation merge: an in-band remainder of the last granted window completes the demonstrated
+  //  want in one shot even past the spent turn budget (delegating a ≤band fragment costs more than the fragment);
+  //  out-of-band remainders and wrap-up tiers keep the old verdicts; the completion path is read-tool only]
+  test("v1.1 continuation completion: in-band remainder allowed past the turn wall; out-of-band denied; hard/force wins; read-tool only", () => {
+    const contIn = { offset: 301, wantRemainderLines: 100, wantRemainderTokens: 900 }
+    const contOut = { offset: 301, wantRemainderLines: 400, wantRemainderTokens: 3000 }
+    expect(budgetGateDecision({ tool: "read", level: "ok", readBudget: RB, turnUsed: 3000, est: estOf(900, true), cont: contIn })).toBe("allow")
+    expect(budgetGateDecision({ tool: "read", level: "ok", readBudget: RB, turnUsed: 0, est: estOf(900, true), cont: contIn })).toBe("allow")
+    expect(budgetGateDecision({ tool: "read", level: "ok", readBudget: RB, turnUsed: 3000, est: estOf(3000, true), cont: contOut })).toBe("deny-turn")
+    expect(budgetGateDecision({ tool: "read", level: "hard", readBudget: RB, turnUsed: 3000, est: estOf(900, true), cont: contIn })).toBe("deny-hard")
+    expect(budgetGateDecision({ tool: "read", level: "ok", readBudget: RB, turnUsed: 3000, est: estOf(RB + DENY_RETRY_OVERHEAD_TOKENS, true), cont: { offset: 301, wantRemainderLines: 253, wantRemainderTokens: RB + DENY_RETRY_OVERHEAD_TOKENS } })).toBe("allow")
+    expect(budgetGateDecision({ tool: "glob", level: "ok", readBudget: RB, turnUsed: 3000, cont: contIn })).toBe("deny-turn")
+  })
+  // [2026-09-18]-[v1.1 continuation matcher: same file + offset resuming within slack of the granted window's end]
+  test("matchContinuation: near-end same-file resumes match with the want remainder; far offsets, other files, exhausted wants, and offset-less calls do not", () => {
+    const prev = { filePath: "a.ts", grantedEndLine: 300, wantEndLine: 400 }
+    expect(matchContinuation(prev, { filePath: "a.ts", offset: 301 }, 7.5)).toEqual({ offset: 301, wantRemainderLines: 100, wantRemainderTokens: 750 })
+    expect(matchContinuation(prev, { filePath: "a.ts", offset: 295 }, 7.5)?.wantRemainderLines).toBe(106) // overlap re-read
+    expect(matchContinuation(prev, { filePath: "a.ts", offset: 310 }, 7.5)?.wantRemainderLines).toBe(91) // slack upper edge
+    expect(matchContinuation(prev, { filePath: "a.ts", offset: 311 }, 7.5)).toBeNull()
+    expect(matchContinuation(prev, { filePath: "a.ts", offset: 289 }, 7.5)).toBeNull()
+    expect(matchContinuation(prev, { filePath: "b.ts", offset: 301 }, 7.5)).toBeNull()
+    expect(matchContinuation(prev, { filePath: "a.ts", offset: 500 }, 7.5)).toBeNull() // past both slack and want
+    expect(matchContinuation(undefined, { filePath: "a.ts", offset: 301 }, 7.5)).toBeNull()
+    expect(matchContinuation(prev, { filePath: "a.ts" }, 7.5)).toBeNull() // no offset → a fresh head read, not a continuation
+  })
   test("readBudgetOf: default 1500, clamped to [200, 20000]", () => {
     expect(readBudgetOf(undefined)).toBe(1500)
     expect(readBudgetOf({})).toBe(1500)
@@ -134,6 +182,20 @@ describe("context-watch: read-budget gate decisions", () => {
     expect(estimateOutputTokens(0)).toBe(0)
     expect(estimateOutputTokens(350)).toBe(100)
     expect(estimateOutputTokens(351)).toBe(101)
+  })
+  // [2026-09-18]-[v1.1: grantTokens (turn headroom) sizes the suggested limit; requestedEndLine records the demonstrated want]
+  test("estimateReadRange v1.1: grantTokens sizes suggestedLimit; requestedEndLine tracks the effective requested range", () => {
+    const sample = { path: "a.ts", bytes: 65536, sampleBytes: 65536, newlines: 1023 } // 64 B/line → 18.2857 tok/line
+    const headroom = estimateReadRange(sample, undefined, 1500, 3000)
+    expect(headroom.suggestedLimit).toBe(164) // floor(3000/18.2857)
+    expect(headroom.grantTokens).toBe(3000)
+    expect(headroom.requestedEndLine).toBe(1024) // unbounded → whole file
+    const bounded = estimateReadRange(sample, { limit: 400, offset: 100 }, 1500, 3000)
+    expect(bounded.requestedEndLine).toBe(499) // offset + effective lines - 1
+    expect(bounded.totalTokens).toBe(Math.ceil((64 / 3.5) * 400))
+    const tail = estimateReadRange(sample, { limit: 400, offset: 1000 }, 1500, 3000)
+    expect(tail.requestedEndLine).toBe(1024) // clamped to file end
+    expect(tail.totalTokens).toBe(Math.ceil((64 / 3.5) * 25))
   })
   test("READ_CLASS_TOOLS covers read/glob/grep/list", () => {
     for (const t of ["read", "glob", "grep", "list"]) expect(READ_CLASS_TOOLS.has(t)).toBe(true)
@@ -283,6 +345,42 @@ describe("gates: GateResult.redirect (autoRedirect)", () => {
     const r = checkShell(copilotShell.name, copilotShell, META, snap())
     expect(r.deny).toBeNull()
     expect(r.redirect).toBeNull()
+  })
+})
+
+// [2026-09-18]-[pool-config membership = qualification at the dispatch gate: a model explicitly selected into the
+//  lane's task pool passes the capability-level floor gate (deny null; the allow note records the "pool-config
+//  override"), while the same below-floor model with no pool selection is still denied "capability level too low".
+//  Fixture uses a C-tier (L2) model on the hard lane (minimum L4): C/L2 is neither primary nor fallback there, so the
+//  plain capability gate (not the cross-level top-2 check) carries both verdicts. Synthetic registry, matrix=null —
+//  zero state dependencies, same pattern as the redirect fixtures above]-[impact: pins gates.ts poolMember exemption]
+describe("gates: capability-level floor vs pool-config override (hard lane)", () => {
+  const airShell: ShellRegEntry = {
+    name: "glm-mx-air-high", pool: "glm", provider: "zhipuai-coding-plan", modelId: "glm-4.5-air",
+    effort: "high", family: "glm", capability: "rw", vision: false,
+    matrixKey: "zhipuai-coding-plan|glm-4.5-air|high", comboKey: "zhipuai-coding-plan|glm-4.5-air|high",
+    status: "enabled",
+  }
+  const HARD_META = 'ROUTE_META {"lane":"hard","role":"planner","producer_family":"claude","capability":"rw","modality":"text","source":"auto"}'
+  const snap = (over: Partial<GateSnapshot> = {}): GateSnapshot & { lanes: Record<string, string[]> } => ({
+    registry: { [airShell.name]: airShell },
+    matrix: null,
+    routing: { down_agents: {}, down_expiry: {} },
+    quotaExhausted: {},
+    lanes: { hard: [airShell.name] },
+    ...over,
+  })
+
+  test("a below-floor model selected into the lane's task pool passes the capability gate (note records the override)", () => {
+    const r = checkShell(airShell.name, airShell, HARD_META, snap({ poolConfig: { hard: new Set(["glm-4.5-air"]) } }))
+    expect(r.deny).toBeNull()
+    expect(r.note).toContain("pool-config override")
+  })
+
+  test("the same below-floor model without a pool selection is still denied (capability level too low)", () => {
+    const r = checkShell(airShell.name, airShell, HARD_META, snap({ poolConfig: {} }))
+    expect(r.deny).toContain("capability level too low")
+    expect(r.note).toBeNull()
   })
 })
 

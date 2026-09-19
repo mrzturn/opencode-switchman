@@ -155,10 +155,19 @@ export function poolAllowlist(lane: string): ReadonlySet<string> | null {
   return loadPoolConfig()[lane] ?? null
 }
 
-/** Manual override summary (banner/doctor display: rank entry count + number of task pools with selection lists configured) */
-export function overrideSummary(): { rankModels: number; poolLanes: number } {
+/** [2026-09-18]-[rank universe = pool selection: union of the models selected into ANY task-pool lane. The /modelRank
+ *  surfaces (TUI dialog, rank CLI) list only this universe (+ existing manual entries as removable dead keys), so users
+ *  never rank models they cannot dispatch; empty set = no pool configured yet (surfaces guide to /poolConfig first)] */
+export function poolUniverse(): ReadonlySet<string> {
+  const out = new Set<string>()
+  for (const ids of Object.values(loadPoolConfig())) for (const id of ids) out.add(id)
+  return out
+}
+
+/** Manual override summary (banner/doctor display: rank entry count + task pools with selection lists + rank-universe size) */
+export function overrideSummary(): { rankModels: number; poolLanes: number; universeModels: number } {
   const rank = loadCapabilityRank()
-  return { rankModels: rank?.models.length ?? 0, poolLanes: Object.keys(loadPoolConfig()).length }
+  return { rankModels: rank?.models.length ?? 0, poolLanes: Object.keys(loadPoolConfig()).length, universeModels: poolUniverse().size }
 }
 
 // ---- Pure manual-ranking move (shared semantics for the TUI /modelRank dialog: enter actions and ctrl+up/ctrl+down hotkeys) ----
@@ -264,7 +273,13 @@ export function applyRankMove(
 // ---- Writes (shared by CLI/TUI; atomic replacement + cache invalidation; empty list = delete key/file back to default) ----
 
 export function writeCapabilityRank(models: string[], scores?: Record<string, RankScoreOverride>): CapabilityRankFile {
-  const file = validateCapabilityRank({ models, scores })!
+  // [2026-09-18]-[auto-prune on write: dead manual keys converge away — with a non-empty pool universe, entries outside
+  //  it (and their anchored scores, dropped by validateCapabilityRank keeping only model-listed keys) are removed on
+  //  every rank write (CLI set/add/remove, TUI move/remove — all persist through here). Empty-universe writes stay
+  //  untouched so the no-pool cleanup path (rank remove/clear of legacy entries) still works]
+  const universe = poolUniverse()
+  const kept = universe.size > 0 ? models.filter((k) => universe.has(k)) : models
+  const file = validateCapabilityRank({ models: kept, scores })!
   writeJsonAtomic(paths().capabilityRank, { ...file, updated_at: nowIso() })
   mtimeCache.delete(paths().capabilityRank)
   return file

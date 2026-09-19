@@ -119,7 +119,8 @@ export async function refreshSelfUpdate(): Promise<SelfUpdateState | null> {
       writeJsonAtomic(path, state)
       return state
     } catch (exc) {
-      appendStatusLog(`self-update check fail-open: ${exc}`)
+      // [2026-09-19]-[i18n: status-log notices now keyed (en.ts catalog renders at sidebar display time)]
+      appendStatusLog("notice.selfupdate.checkFailOpen", { exc: String(exc) })
       return null
     }
   })
@@ -252,7 +253,7 @@ export function ensureUpdateCommands(mode: LoadMode, baseDir = resolveOpencodeCo
     }
     write("switchman-doctor.md", doctorCommandMd(cliPath ?? join(moduleDir(), "switchman-doctor.js")))
   } catch (exc) {
-    appendStatusLog(`upgrade command assets fail-open: ${exc}`)
+    appendStatusLog("notice.selfupdate.upgradeAssetsFailOpen", { exc: String(exc) })
   }
 }
 

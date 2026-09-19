@@ -1,4 +1,4 @@
-# 快速上手 — 五步从零到矩阵路由
+# 快速上手 — 六步从零到矩阵路由
 
 **[English](./quick-start.md)** | 中文
 
@@ -6,13 +6,14 @@
 
 > **在哪里配置**：**先用 CLI/TUI**——弹窗、侧边栏面板与实时横幅等操作面在 TUI 里最完整。之后可选换用**桌面 app**；两端共享同一份配置与状态，下述所有手动覆盖在任一端都能操作。
 
-五个步骤：
+六个步骤：
 
 1. [连接 provider](#step-1)——给 opencode 凭证，让模型可用
 2. [挑选参与编排的模型](#step-2)——TUI 收藏、app 开关
-3. [自己排能力名次（可选）](#step-3)——`/modelRank` / `/modelRank-chat`
-4. [定制任务池（可选）](#step-4)——`/poolConfig` / `/poolConfig-chat`
-5. [重启、验证、观察路由](#step-5)——横幅、侧栏、`/switchman-doctor`
+3. [引导式配置（必做）](#step-3)——`/switchman-setup` / `/switchman-setup-chat`
+4. [调整能力排名（可选）](#step-4)——`/modelRank` / `/modelRank-chat`
+5. [定制任务池（可选）](#step-5)——`/poolConfig` / `/poolConfig-chat`
+6. [重启、验证、观察路由](#step-6)——横幅、侧栏、`/switchman-doctor`
 
 ---
 
@@ -72,9 +73,30 @@
 > - 收藏还带路由语义：同一能力档内，收藏的模型在链中优先。
 > - 启用面变化（收藏增删、开关切换）会立即触发重算与探针刷新——这一步无需重启。
 
-## <a id="step-3"></a>Step 3 —（可选）自己排能力名次：/modelRank 与 /modelRank-chat
+## <a id="step-3"></a>Step 3 —（必做）引导式配置：/switchman-setup 与 /switchman-setup-chat
 
-默认模型能力来自自动级联（实时第三方指数 → 内置快照 → 策展表）。不同意？你的工作负载你说了算。
+未配置的任务池不再回落到「全部模型参与」。在配置完成之前——六个任务池（`economy` / `mechanical` / `main` / `hard` / `vision` / `review`）**每池至少选了一个模型**，且能力排名**至少有一条**——**任务派发会被硬性拦截**。配置向导一次引导帮你跑完全程。
+
+**TUI**：运行 `/switchman-setup`。
+
+1. **首页**——显示当前状态（已配置池数 n/6、排名缺失与否）；「开始」直接跳到第一个未完成的步骤，向导随时可续。
+2. **六个任务池弹窗**（economy → mechanical → main → hard → vision → review）——逐池多选模型：Enter 在内存中切换 `[x]`/`[ ]` 标记，每行展示能力档，内置全选 / 全部取消与返回上一池；每池「确认」即刻落盘（每池至少一个模型），每次保存都热加载运行中的插件，向导逐池可续。
+3. **排名**——按能力强到弱逐个点选排名模型（至少一个）；候选恰好是你在各池选入模型的并集。「完成」落盘排名。
+4. **完成页**——各池汇总与排名次序。配置即刻生效（热加载）；页面同时点名仍需重启的 provider（仅限 opencode 尚未注册的全新 provider）。
+
+**会话式**（TUI 与桌面 app）：运行 `/switchman-setup-chat`——对话里走同样的引导流程：agent 展示当前池/排名状态，逐池询问哪些模型入选（多选提问），再询问能力强到弱的排名，通过内置 CLI 逐条落盘，最后校验六池加排名全部就绪才收尾。
+
+配置未完成期间，主会话每轮携带 `[SETUP]` 提示、引导模型指引用户打开向导，每次任务派发也会以同样指引被拒绝。该门槛叠加在首跑语言询问之上：语言未配置前，语言闸是拦截任务调用的唯一声音。最后一个配置文件写入的瞬间门槛即开——mtime 热加载，无需重启。
+
+> **生效范围与条件**
+> - 门槛范围：仅主会话——被派发的壳子代理与内部会话永不被拦。没有豁免开关：唯一通路就是完成配置（或直接手改下列文件）。
+> - 文件：向导写入的与 Step 4–5 相同的 `~/.config/opencode/opencode-switchman/pool-config.json` + `capability-rank.json`——可安全手改，保存即热加载（横幅 `[LIMITS]` 行标注 `task-pool selection: M pools` / `manual capability rank: N models`）。
+> - 不知道怎么选？合理默认：economy = 便宜快速的模型，mechanical = 中坚主力，main = 最强通才，hard = 最强推理，vision = 支持图像的模型，review = 与 main 池链首不同家族的模型（跨家族评审优先）。
+> - CLI 直操作：`node <包目录>/dist/switchman-config.js pool list|set …` + `rank list|set …`（同文件、同热加载）。
+
+## <a id="step-4"></a>Step 4 —（可选）调整能力排名：/modelRank 与 /modelRank-chat
+
+Step 3 已根据向导选择落盘了基础排名；这一步用于之后的调整。默认模型能力来自自动级联（实时第三方指数 → 内置快照 → 策展表）。不同意？你的工作负载你说了算。
 
 **TUI**：运行 `/modelRank`——弹窗按有效能力列出所有模型，手动条目与基础分模型交错；上移/下移会给模型锚定一个介于新上下邻居之间的手动分（一次挪一格），另有置顶/移出排名。
 
@@ -93,9 +115,9 @@
 > - 落盘于 `~/.config/opencode/opencode-switchman/capability-rank.json`（数组顺序 = 能力降序）；文件改动 mtime 热加载、即时生效，侧栏同步刷新。横幅 `[LIMITS]` 行标注 `manual capability rank: N models`。
 > - CLI 直操作：`node <包目录>/dist/switchman-config.js rank list|set|add|remove|clear`。
 
-## <a id="step-4"></a>Step 4 —（可选）定制任务池：/poolConfig 与 /poolConfig-chat
+## <a id="step-5"></a>Step 5 —（可选）定制任务池：/poolConfig 与 /poolConfig-chat
 
-派发会落入六个任务池之一——`economy` / `mechanical` / `main` / `hard` / `vision` / `review`。默认每池考虑全部启用模型并按能力排序；定制能让各池**体现差异化**（economy 只配轻量模型、hard 只配重思考模型）。
+派发会落入六个任务池之一——`economy` / `mechanical` / `main` / `hard` / `vision` / `review`。Step 3 已完成配置；这一步用于之后的重新定制——provider 变化后替换候选，或让各池**体现差异化**（economy 只配轻量模型、hard 只配重思考模型）。
 
 **TUI**：运行 `/poolConfig`——先选任务池，再逐个勾选/取消模型。
 
@@ -114,7 +136,7 @@
 > - 落盘于 `~/.config/opencode/opencode-switchman/pool-config.json`（键 = 池名，值 = 模型数组）；改动热加载、即时生效。横幅 `[LIMITS]` 行标注 `task-pool selection: M pools`。
 > - CLI 直操作：`node <包目录>/dist/switchman-config.js pool list|add|remove|set|clear`（池名 = economy/mechanical/main/hard/vision/review）。
 
-## <a id="step-5"></a>Step 5 — 重启、验证、观察路由
+## <a id="step-6"></a>Step 6 — 重启、验证、观察路由
 
 1. **重启 opencode**（Step 1 改过配置文件后必须；其余情况重启也无害）。
 2. **看横幅**——主模型每轮系统提示现在携带实时 `[ROUTES]` / `[WATERMARK]` / `[LIMITS]` 块。`[ROUTES]` 展示六档链；`[LIMITS]` 报告你的手动覆盖（`manual capability rank: N models, task-pool selection: M pools`）。
@@ -136,6 +158,8 @@
 | `/connect` | TUI & app | provider 凭证 | 有凭证 provider 的模型进入可选面（改 `opencode.json` 后需重启） | opencode auth 层（插件只读） |
 | 模型选择器内 `ctrl+f`（`/models`） | TUI | 收藏 = CLI/TUI 启用面；同档内优先 | 即时（重算 + 探针刷新） | opencode 状态（`model.json`），与 app 双向同步 |
 | 「管理模型」开关 | 桌面 app | 可见集 = app 启用面；与 TUI 收藏同步 | 即时（重算 + 探针刷新） | opencode 状态（`opencode.global.dat`），与 TUI 双向同步 |
+| `/switchman-setup` | TUI | 引导式一次配齐：6 个任务池 + 能力排名（必做——完成前派发被拦截） | 即时（热加载） | `~/.config/opencode/opencode-switchman/pool-config.json` + `capability-rank.json` |
+| `/switchman-setup-chat` | TUI & app | 同 `/switchman-setup`，会话式 | 即时（热加载） | 与 `/switchman-setup` 同文件 |
 | `/modelRank` | TUI | 手动能力排名，压过基础分 | 即时（热加载） | `~/.config/opencode/opencode-switchman/capability-rank.json` |
 | `/modelRank-chat` | TUI & app | 同 `/modelRank`，会话式 | 即时（热加载） | 与 `/modelRank` 同文件 |
 | `/poolConfig` | TUI | 各任务池候选清单，替换池默认 | 即时（热加载） | `~/.config/opencode/opencode-switchman/pool-config.json` |

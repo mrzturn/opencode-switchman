@@ -12,16 +12,26 @@ const stateDir = mkdtempSync(join(tmpdir(), "switchman-srch-state-"))
 const projectDir = mkdtempSync(join(tmpdir(), "switchman-srch-project-"))
 process.env.OPENCODE_CONFIG_DIR = configDir
 process.env.SWITCHMAN_STATE = stateDir
+// [2026-09-19]-[hermetic capability seed: see test/index-options.test.ts — prevents the startup refresh's async write-back
+//  from landing in a later file's sandbox after SWITCHMAN_STATE switches mid-flight (CI-only flake on fast networks)]
+writeFileSync(join(stateDir, "capability.json"), JSON.stringify({ source: "artificial-analysis", version: "fixed-empty", fetched_at: Date.now() / 1000, thresholds: { S: 62, A: 55, B: 45 }, models: {} }))
 // project language preference pre-configured so the lang hard gate never masks the search gate in bash cases
 mkdirSync(join(projectDir, ".switchman"), { recursive: true })
 writeFileSync(join(projectDir, ".switchman", "settings.json"), JSON.stringify({ v: 1, lang: { conversation: "en", comments: "en", docs: "en" } }))
 
 import { SwitchmanPlugin } from "../src/index"
 import { SEARCH_ASK_MARKER, describeSearchCall, hasSearchMarkerQuestion, isBroadSearchCall, searchClarifyDenyMessage } from "../src/search-clarify"
+import { renderNotice } from "../src/i18n"
 
 function readStatusLog(): string {
   const p = join(stateDir, "status-log.json")
-  return existsSync(p) ? readFileSync(p, "utf8") : ""
+  if (!existsSync(p)) return ""
+  // [2026-09-19]-[i18n cleanup: entries are structured {key, params} — render English for the prose assertions]
+  try {
+    const data = JSON.parse(readFileSync(p, "utf8"))
+    if (Array.isArray(data)) return data.map((e: { key?: string; params?: Record<string, string | number>; text?: string }) => renderNotice(e, "en")).join("\n")
+  } catch { /* fail-open: fall through to raw text */ }
+  return readFileSync(p, "utf8")
 }
 
 const fakeClient = {

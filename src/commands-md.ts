@@ -43,22 +43,61 @@ export function modelRankCommandMd(cliPath: string): string {
   const run = (args: string): string => `!\`node ${cli} ${args} 2>/dev/null || bun ${cli} ${args}\``
   return [
     "---",
-    "description: interactively configure the model capability ranking (manual ranking takes precedence over base capability scores; the higher, the stronger)",
+    "description: interactively configure the model capability ranking (manual ranking takes precedence over base capability scores; the higher, the stronger; scoped to the task-pool selection)",
     "---",
     "",
     run("rank list"),
     "",
-    "The first section above is the manual capability ranking (#1 strongest; hit models take their capability score/lane from it), the second is a reference ordering of the currently available models. Please:",
+    "The above listing ranks ONLY the models selected into task pools via /poolConfig (one merged ordering, #1 strongest; models not in any task pool are never listed, so unused models need no ranking; hit models take their capability score/lane from it). If it prints the no-task-pool guidance instead, walk the user through /poolConfig (or the pool set command) first — the flow is always poolConfig → modelRank. Please:",
     "1. Ask the user to state the adjustment intent (e.g. \"move glm-5.3 to the very front\", \"swap kimi-k3 and glm-5.2\", \"remove deepseek-v4-pro\", \"clear the ranking\").",
-    "2. Translate that into the corresponding commands (numbers reference the global indices across both sections):",
+    "2. Translate that into the corresponding commands (numbers reference the current listing's indices):",
     `   - Full reorder (in the given order): ${run("rank set <number-or-modelId...>")}`,
     `   - Append to the end of the ranking (weakest end): ${run("rank add <number-or-modelId...>")}`,
     `   - Remove from the ranking: ${run("rank remove <number-or-modelId...>")}`,
     `   - Clear (all fall back to base capability scores): ${run("rank clear")}`,
     "3. After executing, run `rank list` once more to verify, and report the new ranking and when it takes effect (immediate) in one sentence.",
-    "Note: `#number` is only valid against the most recent list output; if the ranking may have changed between two operations, re-run list before converting numbers.",
+    "Note: `#number` is only valid against the most recent list output; if the ranking or task-pool selection may have changed between two operations, re-run list before converting numbers.",
     "",
     `Config file: ${paths().capabilityRank} (safe to hand-edit; models array order = capability descending, hot-reloaded on save).`,
+    "",
+  ].join("\n")
+}
+
+// [2026-09-19]-[/switchman-setup-chat: chat fallback for the TUI /switchman-setup wizard (which lives in src/tui.tsx).
+//  The setup hard gate (src/setup-gate.ts, wired in src/index.ts) denies task dispatch until all 6 task pools have
+//  >=1 selected model AND the capability ranking has >=1 entry — this template guides the user through exactly that
+//  in conversation: show state → ask multi-select per lane (question tool) → pool set per lane → rank the union
+//  strongest-first → verify. Real CLI syntax per src/config-cli.ts (pool list/set, rank list/set); config hot-reloads,
+//  a restart is only needed for brand-new providers]-
+export function switchmanSetupCommandMd(cliPath: string): string {
+  const cli = q(cliPath)
+  const run = (args: string): string => `!\`node ${cli} ${args} 2>/dev/null || bun ${cli} ${args}\``
+  return [
+    "---",
+    "description: guided switchman setup — pick at least one model for each of the 6 task pools (economy/mechanical/main/hard/vision/review) and rank the union strongest-first; task dispatch is blocked until setup completes (chat fallback when the TUI /switchman-setup is unavailable)",
+    "---",
+    "",
+    "The user invoked the switchman setup wizard in chat form. Task dispatch is hard-blocked until EVERY one of the six task pools has at least one selected model AND the capability ranking has at least one entry — unconfigured pools no longer default to \"all models\". Walk through all steps below; relay every question, option list and answer in the user's conversation language.",
+    "",
+    "Current state (task-pool selection overview and capability ranking):",
+    "",
+    run("pool list"),
+    "",
+    run("rank list"),
+    "",
+    "Step 1 — select models for EACH of the six pools, one at a time: economy, mechanical, main, hard, vision, review. For each pool: run `pool list <task-pool>` to show its numbered candidate list, then use the question tool to ask the user which of those models should join the pool (multi-select; AT LEAST ONE per pool — required, not optional; one model may join several pools), and persist the answer with:",
+    "",
+    run("pool set <task-pool> <number-or-modelId...>"),
+    "",
+    "Repeat the ask→set loop until all six pools report a selection. `#number` is only valid against the most recent list output; re-run `pool list <task-pool>` first if the candidate set may have changed. When the user is unsure, suggest sensible defaults: economy = cheap/fast models, mechanical = mid-tier workhorse, main = strongest generalist, hard = strongest reasoner, vision = image-capable models, review = a model family different from the main pool's head (cross-family review is preferred).",
+    "",
+    "Step 2 — capability ranking. After all six pools are saved, run `rank list` again: it now shows exactly the union of the selected models (the rankable universe), sorted by effective capability. Ask the user to order them strongest-first (at least 1 model must be ranked; models left out of the ranking simply use their base capability score), then persist with:",
+    "",
+    run("rank set <number-or-modelId...>"),
+    "",
+    "Step 3 — verify and close. Run `pool list` and `rank list` once more: all six pools must report a manual selection and the ranking must be non-empty. Then tell the user (in their conversation language): the setup takes effect immediately (config hot-reloads on save, no restart needed); a restart is only required if brand-new providers/models were selected that opencode has not registered yet.",
+    "",
+    `Config files: ${paths().poolConfig} + ${paths().capabilityRank} (safe to hand-edit, hot-reloaded on save).`,
     "",
   ].join("\n")
 }

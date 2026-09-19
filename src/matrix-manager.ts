@@ -193,7 +193,8 @@ export class MatrixManager {
       // sources are internal scheduling and stay silent]
       if (source === "config" && Date.now() - this.lastConfigNoopNoticeMs > 10_000) {
         this.lastConfigNoopNoticeMs = Date.now()
-        appendStatusLog(`favorites/visible set scanned: activation unchanged (gen=${this.current_.generation}; no recompute, no re-probe)`)
+        // [2026-09-19]-[i18n: status-log notices now keyed (en.ts catalog renders at sidebar display time)]
+        appendStatusLog("notice.matrix.favoritesScanNoChange", { generation: this.current_.generation })
       }
       return this.current_
     }
@@ -201,7 +202,7 @@ export class MatrixManager {
       // [2026-09-01]-[hardening: dirty data in favorites/visible set where the provider is known but no shell exists for the
       // modelId (e.g. accidentally favoriting "provider/not-a-model") was silently dropped with no diagnosis; sameActivation
       // already short-circuits dedup, so log once only on a real change, no spam]
-      appendStatusLog(`visible set/favorites contain invalid models (provider known but no such modelId, no shell generated): ${next.invalidConfigured.join(", ")}`)
+      appendStatusLog("notice.matrix.invalidModels", { modelList: next.invalidConfigured.join(", ") })
     }
     const prevKeys = new Set(this.lastActiveKeys)
     const activeKeys = new Set(this.activeMatrixKeysOf(next))
@@ -214,12 +215,12 @@ export class MatrixManager {
       const m = readJson<Record<string, unknown>>(paths().matrix)
       writeJsonAtomic(paths().matrix, { ...(m ?? {}), active_keys: [...activeKeys], target_generation: next.generation })
     } catch (exc) {
-      appendStatusLog(`activation matrix persist fail-open: ${exc}`)
+      appendStatusLog("notice.matrix.persistFailOpen", { exc: String(exc) })
     }
     try {
       this.opts.onRecompute?.(next, newTargets, source)
     } catch (exc) {
-      appendStatusLog(`activation matrix callback fail-open: ${exc}`)
+      appendStatusLog("notice.matrix.callbackFailOpen", { exc: String(exc) })
     }
     return next
   }
@@ -247,7 +248,7 @@ export class MatrixManager {
     try {
       return readConfigured(this.opts.stateRoot, this.opts.mode)
     } catch (exc) {
-      appendStatusLog(`config surface read fail-open (treated as empty): ${exc}`)
+      appendStatusLog("notice.matrix.configReadFailOpen", { exc: String(exc) })
       return { configStatus: "empty", models: [] }
     }
   }
@@ -269,12 +270,12 @@ export class MatrixManager {
           if (WATCH_FILENAMES.has(String(filename))) this.scheduleRecompute()
         })
         // [2026-09-02]-[log runtime errors: previously swallowed in pure silence, undiagnosable when fs.watch does not deliver inside the host]-[observability]
-        w.on("error", (exc) => appendStatusLog(`fs.watch(${dir}) errored, falling back to mtime polling: ${exc}`))
+        w.on("error", (exc) => appendStatusLog("notice.matrix.watchError", { dir, exc: String(exc) }))
         this.watchers.push(w)
       } catch (exc) {
         // Dir missing (the other host form naturally lacks this file) -> silently skip with the polling fallback; dir exists but watch failed to start (e.g. fd exhaustion) -> log
         try {
-          if (statSync(dir).isDirectory()) appendStatusLog(`fs.watch(${dir}) failed to start, falling back to mtime polling: ${exc}`)
+          if (statSync(dir).isDirectory()) appendStatusLog("notice.matrix.watchStartFailed", { dir, exc: String(exc) })
         } catch { /* dir missing: expected, silent */ }
       }
     }
@@ -305,7 +306,7 @@ export class MatrixManager {
     if (this.debounceTimer) clearTimeout(this.debounceTimer)
     this.debounceTimer = setTimeout(() => {
       this.debounceTimer = null
-      this.recomputeWithRetry().catch((exc) => appendStatusLog(`recompute fail-open: ${exc}`))
+      this.recomputeWithRetry().catch((exc) => appendStatusLog("notice.matrix.recomputeFailOpen", { exc: String(exc) }))
       this.refreshMtimes()
     }, delay ?? this.opts.debounceMs)
     unref(this.debounceTimer)

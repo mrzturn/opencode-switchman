@@ -193,6 +193,15 @@ export interface RankContext {
    *  a lane whose seated candidates all died at runtime. Structural gates (modality / capability) and the policy-gated
    *  quota-exhaustion / retirement gates stay active — illegitimate candidates are never resurrected.]-[impact: isGated only] */
   relaxHealthGates?: boolean
+  /** [2026-09-18]-[pool lane manual ordering: true when the lane has an explicit task-pool selection — explicit
+   *  membership is the user's qualification verdict, so the capability level floor (selectGroup primary/fallback
+   *  filtering) yields for every survivor; health/structural hard gates stay unchanged] */
+  poolOrdered?: boolean
+  /** [2026-09-18]-[pool lane manual ordering: shell key → manual rank index (0 = strongest, from capability-rank.json
+   *  models order, prefix-matched like manualRankResult). When present on a poolOrdered lane the rank index becomes the
+   *  ABSOLUTE first comparator key (ahead of family/off-partition/tier/level grouping; unranked pool members sort after
+   *  ranked ones by the existing comparator) — the manual /modelRank order is the dispatch priority, not a score] */
+  manualOrder?: ReadonlyMap<string, number> | null
 }
 
 /** Hard gates: matrix down (strained is not down) / breaker / exhaustion / retirement / real-call isolation / semantic gates (same source as computeLane) */
@@ -275,8 +284,26 @@ export function rankCandidates<T extends Rankable>(
     if (targetLevel === null) return null
     return Math.abs(CAPABILITY_LEVEL_RANK[capabilityLevelOf(baseScoreDynamic(s.modelId).tier, baseScoreDynamic(s.modelId).source)] - CAPABILITY_LEVEL_RANK[targetLevel])
   }
+  // [2026-09-18]-[pool lane manual ordering: rankOrdered = the lane has a pool selection AND at least one member holds
+  //  a manual rank — the manual order then rules absolutely (partitions, level floors, family preference and the score
+  //  product only tiebreak). poolOrdered without manualOrder keeps the level-floor exemption (explicit membership =
+  //  qualification) but preserves the system ordering otherwise (fail-open for unranked pool lanes)]
+  const rankOrdered = Boolean(ctx.poolOrdered && ctx.manualOrder && ctx.manualOrder.size > 0)
+  const manualRankOf = (s: T): number => (rankOrdered ? (ctx.manualOrder!.get(s.key) ?? Number.POSITIVE_INFINITY) : 0)
+  // Infinity-safe comparator: two unranked members tie (NaN from Infinity−Infinity would corrupt the sort)
+  const rankCompare = (a: T, b: T): number => {
+    const ra = manualRankOf(a)
+    const rb = manualRankOf(b)
+    if (ra === rb) return 0
+    if (ra === Number.POSITIVE_INFINITY) return 1
+    if (rb === Number.POSITIVE_INFINITY) return -1
+    return ra - rb
+  }
   // Within-partition same-level first: same-level survivors win; only when the level is wiped out take the top-2 fallbacks from the nearest level.
   const selectGroup = (pool: T[]): T[] => {
+    // [2026-09-18]-[pool-config membership = qualification: an explicitly pool-selected model is its own level verdict —
+    //  no primary/fallback filtering, no top-2 slicing (the full member set forms the chain)]
+    if (ctx.poolOrdered) return pool
     const primary = pool.filter((s) => isPrimaryCandidate(ctx.lane, baseScoreDynamic(s.modelId)))
     if (primary.length > 0) return primary
     const fallbackPool = pool.filter((s) => isFallbackCandidate(ctx.lane, baseScoreDynamic(s.modelId)))
@@ -292,11 +319,17 @@ export function rankCandidates<T extends Rankable>(
     if (ctx.lane === "review" && fallbackPool.length === 0) return pool.slice(0, 2)
     return fallbackPool.slice(0, 2)
   }
-  survivors.length = 0
-  survivors.push(...selectGroup(thinking), ...selectGroup(offPool))
+  // [2026-09-18]-[rank-ordered pool lanes skip the thinking/off partition too: the manual order is absolute across
+  //  partitions (a ranked off-effort shell may lead), so survivors stay unpartitioned and the sorts below carry the
+  //  rank key first; unranked pool lanes (poolOrdered without manualOrder) keep the partition baseline]
+  if (!rankOrdered) {
+    survivors.length = 0
+    survivors.push(...selectGroup(thinking), ...selectGroup(offPool))
+  }
   const inputOrder = new Map(survivors.map((s, i) => [s.key, i]))
   if (ctx.immediate) {
     survivors.sort((a, b) =>
+      rankCompare(a, b) ||
       famClassOf(a) - famClassOf(b) ||
       offClassOf(a) - offClassOf(b) ||
       (a.latencyMs ?? Number.POSITIVE_INFINITY) - (b.latencyMs ?? Number.POSITIVE_INFINITY) ||
@@ -309,6 +342,10 @@ export function rankCandidates<T extends Rankable>(
       return typeof v === "number" ? v : Number.POSITIVE_INFINITY
     }
     survivors.sort((a, b) => {
+        // [2026-09-18]-[pool lane manual ordering: the manual rank index is the ABSOLUTE first key — explicit
+        //  /modelRank order beats family preference, off-partitions, tier grouping and the product score]
+        const rankDiff = rankCompare(a, b)
+        if (rankDiff !== 0) return rankDiff
         // [2026-09-05]-[review family deprioritization: cross-family first, same-family sinks to the chain tail (no effect without producerFamily)]
         const famDiff = famClassOf(a) - famClassOf(b)
         if (famDiff !== 0) return famDiff
@@ -359,7 +396,8 @@ export function logDecision(records: DecisionRecord[]): Promise<void> {
       const kept = prev.slice(-MAX_DECISION_LINES)
       writeFileSync(p, `${kept.join("\n")}\n`)
     } catch (exc) {
-      appendStatusLog(`decision log fail-open: ${exc}`)
+      // [2026-09-19]-[i18n: status-log notices now keyed (en.ts catalog renders at sidebar display time)]
+      appendStatusLog("notice.scoring.decisionLogFailOpen", { exc: String(exc) })
     }
   })
 }

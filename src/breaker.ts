@@ -13,10 +13,13 @@ const TAIL_BYTES = 262144
 // NOTE: the Chinese hints below match inbound error text emitted by external systems (providers/opencode core),
 // not copy produced by this plugin; they are kept as-is on purpose during localization.
 const NOT_FOUND_HINTS = ["not found", "not_found", "未找到", "无法找到"]
-export const REAL_FAIL_TTL_MS = 1_800_000
-// [2026-08-29]-[failure classification: transient 429 gets a short TTL vs the long TTL for real failures -- avoids rate-limit false positives lasting 30 minutes]
+// [2026-09-19]-[real-fail isolation window 30m -> 5m: probe-ok-but-real-call-failed states are usually transient vendor
+//  blips and 30 minutes of head-of-chain lockout starved lanes far too long]-[isolation now lifts after 5 minutes;
+//  note RATE_LIMIT_TTL_MS stays 10m (longer than the default now) — 429 self-heal has its own explicit TTL path]
+export const REAL_FAIL_TTL_MS = 300_000
+// [2026-08-29]-[failure classification: transient 429 gets a dedicated short-TTL path vs the default TTL for real failures -- avoids rate-limit false positives polluting the default isolation]
 export const RATE_LIMIT_TTL_MS = 600_000
-// [2026-09-01]-[endpoint-class permanent config-layer errors: retrying after 30 minutes is pointless, isolate with a 6h long TTL]
+// [2026-09-01]-[endpoint-class permanent config-layer errors: retrying soon is pointless, isolate with a 6h long TTL]
 export const ENDPOINT_TTL_MS = 21_600_000
 const realFailedCombos = new Map<string, number>()
 
@@ -34,7 +37,8 @@ export function recordIsolation(agent: string, comboKey: string, category: strin
     const reason = `real-call isolation(${mins}m·${category}): ${reasonRaw.split(/\s+/).join(" ")}`.slice(0, 200)
     ensureStateDir()
     appendFileSync(paths().failures, `${JSON.stringify({ agent, key: comboKey, shell: agent, combo: comboKey, reason, ts: now, kind: "isolated" })}\n`)
-    appendStatusLog(`${agent} real-call isolated for ${mins}m (${category}): ${reasonRaw.slice(0, 60)}`)
+    // [2026-09-19]-[i18n: status-log notices now keyed (en.ts catalog renders at sidebar display time)]
+    appendStatusLog("notice.breaker.realCallIsolated", { agent, mins, category, reason: reasonRaw.slice(0, 60) })
   } catch { /* fail-open */ }
 }
 
@@ -45,7 +49,7 @@ export function recordInjection(agent: string, reasonRaw: string): void {
     const reason = `shell not injected into opencode (no isolation): ${reasonRaw.split(/\s+/).join(" ")}`.slice(0, 200)
     ensureStateDir()
     appendFileSync(paths().failures, `${JSON.stringify({ agent, key: agent, shell: null, combo: null, reason, ts: now, kind: "injection" })}\n`)
-    appendStatusLog(`shell not injected into opencode (no isolation): ${agent} ${reasonRaw.slice(0, 60)}`)
+    appendStatusLog("notice.breaker.shellNotInjected", { agent, reason: reasonRaw.slice(0, 60) })
   } catch { /* fail-open */ }
 }
 
@@ -197,7 +201,7 @@ export function recordFailure(
     }
     return { key, tripped: false }
   } catch (exc) {
-    appendStatusLog(`breaker fail-open: ${exc}`)
+    appendStatusLog("notice.breaker.failOpen", { exc: String(exc) })
     return { key: agent, tripped: false }
   }
 }

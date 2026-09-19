@@ -28,8 +28,11 @@ export interface BannerInput {
   doctorSummary?: string | null
   /** [2026-08-29]-[dynamic matrix: [LIMITS] line appends mode/watch/configStatus, restartRequired, models.dev downgrade marks; absent = legacy as-is] */
   matrixInfo?: { mode: string; configStatus: string; watch: boolean; restartRequired?: string[]; invalidConfigured?: string[]; degradedModels?: number; retiredModels?: number } | null
-  /** [2026-09-03]-[user manual override annotations (effective entries in capability-rank.json/pool-config.json; 0 = unconfigured, not shown)] */
-  overrides?: { rankModels: number; poolLanes: number } | null
+  /** [2026-09-03]-[user manual override annotations (effective entries in capability-rank.json/pool-config.json; 0 = unconfigured, not shown)]
+   *  [2026-09-19]-[setup: live setup completion (all 6 task pools + capability rank); while incomplete the [LIMITS]
+   *  line carries a setup-required segment (dispatch is denied until /switchman-setup completes); null/absent or
+   *  complete → nothing shown] */
+  overrides?: { rankModels: number; poolLanes: number; setup?: { configuredLanes: number; missingRank: boolean; complete: boolean } | null } | null
 }
 
 function routeLine(lanes: Record<string, LaneResult> | null): string {
@@ -125,11 +128,30 @@ export interface ProviderStatusRow {
   usedPct: number | null
   /** weakened tail supplement (reset/refresh time, warning) */
   tail?: string
+  /** [2026-09-19]-[P4 render-time i18n: key+params is the future quota-brief render source (t(locale, key, params)
+   *  against the quota.* catalog in src/locales/en.ts; label/text/tail keep emitting the same English as now
+   *  (debug/legacy until the TUI migration renders via key). No import of src/i18n.ts here on purpose —
+   *  banner stays decoupled from the locale catalogs; key is a plain string like StatusLogEntry.key] */
+  key?: string
+  /** render params; names match the catalog template placeholders exactly ({bar8},{pct},{usedSuffix},{usage},…) */
+  params?: Record<string, string | number>
+  /** [2026-09-19]-[quota i18n labels/tails: labelKey renders the row label via quota.row5h/rowWeek/rowMcp/rowCredits/
+   *  rowBalance (no params; rowRefresh stays as the main key since the refresh text is raw data); tailKey renders
+   *  the tail via quota.resetLater/resetTime/resetDate/resetDateTime/balanceWarn with exact catalog params
+   *  ({hhmm}/{mmdd}/{thr}); legacy label/tail strings unchanged] */
+  labelKey?: string
+  labelParams?: Record<string, string | number>
+  tailKey?: string
+  tailParams?: Record<string, string | number>
 }
 
 export interface ProviderStatusEntry {
   pool: "glm" | "copilot" | "deepseek"
   label: string
+  /** [2026-09-19]-[quota i18n pool labels: key renders the block label via quota.poolGlm/poolCopilot/poolDeepSeek
+   *  (params empty); legacy label string unchanged] */
+  key?: string
+  params?: Record<string, string | number>
   rows: ProviderStatusRow[]
   /** observe only (routing=false, not part of dispatch ranking) */
   observeOnly: boolean
@@ -163,54 +185,80 @@ function resetParts(reset: number | null | undefined): { md: string; hm: string 
 
 // ---- sidebar rows output ([WATERMARK] banner glmBrief/copilotBrief/dsBrief compact single-line format unchanged)----
 
-const NO_DATA_ROW: ProviderStatusRow[] = [{ label: "", text: "querying/no data", usedPct: null }]
+const NO_DATA_ROW: ProviderStatusRow[] = [{ label: "", text: "querying/no data", usedPct: null, key: "quota.queryingNoData" }]
 
 function glmRows(data: GlmQuota | null): ProviderStatusRow[] {
   if (!data || data.status !== "ok") return NO_DATA_ROW
   const rows: ProviderStatusRow[] = []
+  // [2026-09-19]-[P4 render-time i18n: bar rows carry quota.barPct + exact {bar8},{pct} params (t() reproduces text
+  //  verbatim in English); label ("5h"/"week"/"MCP") and tail ("→…") keep English legacy — one key slot holds the
+  //  primary body, label/tail catalog keys (quota.row*, quota.reset*) are consumed by the TUI phase]
+  // [2026-09-19]-[quota i18n labels/tails: push now also fills labelKey (quota.row5h/rowWeek/rowMcp) and tailKey+
+  //  tailParams (quota.resetLater with no params, quota.resetTime {hhmm}, quota.resetDate {mmdd},
+  //  quota.resetDateTime {mmdd,hhmm}); legacy label/tail strings byte-identical]
+  const ROW_LABEL_KEY: Record<string, string> = { "5h": "quota.row5h", week: "quota.rowWeek", MCP: "quota.rowMcp" }
   const push = (label: string, pct: number, reset: number | null | undefined, mode: "hm" | "mdhm" | "md") => {
     const parts = resetParts(reset)
     const tail = !parts ? "→later" : mode === "hm" ? `→${parts.hm}` : mode === "md" ? `→${parts.md}` : `→${parts.md} ${parts.hm}`
-    rows.push({ label, text: `${bar8(pct)} ${pct}%`, usedPct: pct, tail })
+    const tailKey = !parts ? "quota.resetLater" : mode === "hm" ? "quota.resetTime" : mode === "md" ? "quota.resetDate" : "quota.resetDateTime"
+    const tailParams: Record<string, string | number> | undefined = !parts ? undefined
+      : mode === "hm" ? { hhmm: parts.hm }
+      : mode === "md" ? { mmdd: parts.md }
+      : { mmdd: parts.md, hhmm: parts.hm }
+    const bar = bar8(pct)
+    rows.push({ label, text: `${bar} ${pct}%`, usedPct: pct, tail, key: "quota.barPct", params: { bar8: bar, pct }, labelKey: ROW_LABEL_KEY[label], ...(tailParams ? { tailKey, tailParams } : { tailKey }) })
   }
   // 5h window always resets within 5 hours → HH:mm only; weekly window spans days → MM-DD HH:mm; MCP monthly → MM-DD
   if (typeof data.five_hour?.used_pct === "number") push("5h", data.five_hour.used_pct, data.five_hour.reset_at, "hm")
   if (typeof data.weekly?.used_pct === "number") push("week", data.weekly.used_pct, data.weekly.reset_at, "mdhm")
   const mcp = data.mcp_monthly
   if (mcp && typeof mcp.used_pct === "number") push("MCP", mcp.used_pct, mcp.reset_at, "md")
-  if (rows.length === 0) return [{ label: "", text: "no quota data", usedPct: null }]
+  if (rows.length === 0) return [{ label: "", text: "no quota data", usedPct: null, key: "quota.noData" }]
   return rows
 }
 
 function copilotRows(data: CopilotQuota | null): ProviderStatusRow[] {
   if (!data || data.status !== "ok") return NO_DATA_ROW
-  const refresh: ProviderStatusRow = { label: "refresh", text: data.reset_date ?? "?", usedPct: null }
-  if (data.gateway_exhausted) return [{ label: "credits", text: "monthly pool exhausted", usedPct: 100 }, refresh]
+  // [2026-09-19]-[P4 render-time i18n: the refresh row's text is raw data (a date, no catalog key), so it carries the
+  //  label key quota.rowRefresh (no params); the date itself stays data in the legacy text field, never translated]
+  // [2026-09-19]-[quota i18n labels: credits rows gain labelKey quota.rowCredits (no params); the refresh row keeps
+  //  quota.rowRefresh as its main key with no labelKey slot; legacy label/text byte-identical]
+  const refresh: ProviderStatusRow = { label: "refresh", text: data.reset_date ?? "?", usedPct: null, key: "quota.rowRefresh" }
+  if (data.gateway_exhausted) return [{ label: "credits", text: "monthly pool exhausted", usedPct: 100, key: "quota.monthlyExhausted", labelKey: "quota.rowCredits" }, refresh]
   const p = data.premium
-  if (!p) return [{ label: "", text: "no quota data", usedPct: null }]
+  if (!p) return [{ label: "", text: "no quota data", usedPct: null, key: "quota.noData" }]
   if (p.unlimited) {
     const used = typeof p.used === "number" ? `, used ${p.used}` : ""
-    return [{ label: "credits", text: `unlimited${used}`, usedPct: null }, refresh]
+    return [{ label: "credits", text: `unlimited${used}`, usedPct: null, key: "quota.unlimited", params: { usedSuffix: used }, labelKey: "quota.rowCredits" }, refresh]
   }
   const pct = p.percent_remaining
   const usedPct = typeof pct === "number" ? Math.max(0, Math.min(100, 100 - pct)) : null
   const quotaTxt = typeof p.used === "number" && typeof p.entitlement === "number" ? ` ${p.used}/${p.entitlement}` : ""
   if (typeof pct === "number" && pct <= 0 && p.overage_permitted) {
-    return [{ label: "credits", text: `exhausted·overage billing${quotaTxt}`, usedPct: 100 }, refresh]
+    return [{ label: "credits", text: `exhausted·overage billing${quotaTxt}`, usedPct: 100, key: "quota.exhaustedOverage", params: { usage: quotaTxt }, labelKey: "quota.rowCredits" }, refresh]
   }
   const pctTxt = typeof pct === "number" ? (Number.isInteger(pct) ? pct : pct.toFixed(1)) : "?"
-  return [{ label: "credits", text: `${bar8(usedPct)} ${pctTxt}% left${quotaTxt}`, usedPct }, refresh]
+  const bar = bar8(usedPct)
+  return [{ label: "credits", text: `${bar} ${pctTxt}% left${quotaTxt}`, usedPct, key: "quota.barPctLeft", params: { bar8: bar, pctTxt, usage: quotaTxt }, labelKey: "quota.rowCredits" }, refresh]
 }
 
 function dsRows(data: DeepseekQuota | null, lowWarnCny?: number): ProviderStatusRow[] {
   if (!data || data.status !== "ok") return NO_DATA_ROW
-  if (data.exhausted) return [{ label: "balance", text: "exhausted", usedPct: 100 }]
+  if (data.exhausted) return [{ label: "balance", text: "exhausted", usedPct: 100, key: "quota.exhausted", labelKey: "quota.rowBalance" }]
   const cny = dsBalanceCny(data)
-  if (cny === null) return [{ label: "balance", text: "unknown (pay-as-you-go)", usedPct: null }]
+  if (cny === null) return [{ label: "balance", text: "unknown (pay-as-you-go)", usedPct: null, key: "quota.unknownPayg", labelKey: "quota.rowBalance" }]
   const thr = typeof lowWarnCny === "number" && lowWarnCny >= 0 ? lowWarnCny : 10
   // pay-as-you-go has no "total" concept: use 3× the warning threshold as the "ample balance" anchor for a relative gradient, coloring only, not a precise metric
+  // [2026-09-19]-[P4 render-time i18n: balance row carries quota.barBalance + exact {bar8},{balance} params; the low-
+  //  balance tail keeps English legacy (quota.balanceWarn + {thr} is consumed by the TUI phase — one key slot holds
+  //  the primary body)]
+  // [2026-09-19]-[quota i18n labels/tails: balance rows gain labelKey quota.rowBalance (no params); the low-balance
+  //  warn tail gains tailKey quota.balanceWarn + tailParams {thr}; legacy label/text/tail byte-identical]
   const usedPct = Math.max(0, Math.min(100, 100 - (cny / (thr * 3)) * 100))
-  return [{ label: "balance", text: `${bar8(usedPct)} ¥${cny.toFixed(2)}`, usedPct, tail: cny < thr ? ` (<¥${thr} warn)` : undefined }]
+  const bar = bar8(usedPct)
+  const balance = cny.toFixed(2)
+  const warn = cny < thr
+  return [{ label: "balance", text: `${bar} ¥${balance}`, usedPct, tail: warn ? ` (<¥${thr} warn)` : undefined, key: "quota.barBalance", params: { bar8: bar, balance }, labelKey: "quota.rowBalance", ...(warn ? { tailKey: "quota.balanceWarn", tailParams: { thr } } : {}) }]
 }
 
 export interface ProviderStatusInput {
@@ -223,6 +271,9 @@ export interface ProviderStatusInput {
 
 export function providerStatusEntries(input: ProviderStatusInput): ProviderStatusEntry[] {
   const out: ProviderStatusEntry[] = []
+  // [2026-09-19]-[quota i18n pool labels: block entries carry key quota.poolGlm/poolCopilot/poolDeepSeek (params empty);
+  //  legacy label strings byte-identical; model-facing banner lines untouched]
+  const POOL_KEY: Record<"glm" | "copilot" | "deepseek", string> = { glm: "quota.poolGlm", copilot: "quota.poolCopilot", deepseek: "quota.poolDeepSeek" }
   for (const pool of ["glm", "copilot", "deepseek"] as const) {
     const policy = input.providerPolicy?.[pool]
     if (policy?.observe === false) continue // observe:false → skip this block
@@ -241,6 +292,8 @@ export function providerStatusEntries(input: ProviderStatusInput): ProviderStatu
     out.push({
       pool,
       label: POOL_LABEL[pool],
+      key: POOL_KEY[pool],
+      params: {},
       rows,
       observeOnly: policy ? policy.routing === false : false,
       peakActive: input.peakOf ? Boolean(input.peakOf(POOL_PROVIDER_ID[pool])) : false,
@@ -305,7 +358,15 @@ function limitLine(down: Set<string> | string[] | Map<string, string>, unknownCo
     const parts: string[] = []
     if (overrides.rankModels > 0) parts.push(`manual capability rank: ${overrides.rankModels} models`)
     if (overrides.poolLanes > 0) parts.push(`task-pool selection: ${overrides.poolLanes} pools`)
+    // [2026-09-18]-[rank universe = pool selection: surface the scoping so users see /modelRank only ranks pool-selected models
+    const universe = (overrides as { universeModels?: number }).universeModels
+    if (universe !== undefined && universe > 0) parts.push(`rankable universe: ${universe} models`)
     line += ` | ${parts.join(", ")} active (/modelRank /poolConfig to adjust)`
+  }
+  // [2026-09-19]-[setup hard gate: appended after the overrides block so the actionable remedy reads last — dispatch is
+  //  hard-blocked until /switchman-setup completes; silent once complete or when the input is absent]-
+  if (overrides?.setup && !overrides.setup.complete) {
+    line += ` | setup required: pools ${overrides.setup.configuredLanes}/${LANE_ORDER.length}${overrides.setup.missingRank ? ", rank missing" : ""} (/switchman-setup)`
   }
   return line
 }

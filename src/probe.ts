@@ -141,7 +141,8 @@ export async function refreshMatrix(eps: ProbeEndpoints): Promise<number | null>
     }
     return await probeTargets([...targets.keys()], eps, targets)
   } catch (exc) {
-    appendStatusLog(`probe fail-open: ${exc}`)
+    // [2026-09-19]-[i18n: status-log notices now keyed (en.ts catalog renders at sidebar display time)]
+    appendStatusLog("notice.probe.failOpen", { exc: String(exc) })
     return null
   }
 }
@@ -159,7 +160,7 @@ export async function probeKeys(keys: string[], eps: ProbeEndpoints): Promise<nu
     }
     return await probeTargets([...targets.keys()], eps, targets)
   } catch (exc) {
-    appendStatusLog(`incremental probe fail-open: ${exc}`)
+    appendStatusLog("notice.probe.incrementalFailOpen", { exc: String(exc) })
     return null
   }
 }
@@ -198,24 +199,24 @@ async function probeTargets(
     // [2026-08-28]-[402 is the monthly-pool-exhausted truth (429 is concurrency noise); threshold lowered from 50% to >=3 combos to mark exhaustion]
     if (cpKeys.length > 0 && cp402.length >= 3) {
       markCopilotGatewayExhausted(`probe ${cp402.length}/${cpKeys.length} combos 402 monthly pool exhausted`)
-      appendStatusLog(`Copilot monthly pool exhausted (gateway second source of truth), trusted until reset_date`)
+      appendStatusLog("notice.probe.copilotPoolExhausted")
     }
     return await withPathLock(paths().matrix, () => {
       const cur = loadMatrix() ?? ({} as Matrix)
       if ((cur.target_generation ?? undefined) !== (gen0 ?? undefined)) {
         // [2026-08-31]-[switched to persisting via the status-log for tui.tsx sidebar rendering, no longer spamming stderr over the input box]
-        appendStatusLog(`probe results discarded (matrix generation changed ${gen0 ?? "n/a"}->${cur.target_generation ?? "n/a"}; rescheduled by the new generation recompute)`)
+        appendStatusLog("notice.probe.resultsDiscarded", { oldGen: gen0 ?? "n/a", newGen: cur.target_generation ?? "n/a" })
         return null
       }
       // Merge on top of the latest disk state at write time (keeps concurrently written combos and active_keys/target_generation, no lost updates)
       const matrix: Matrix = { ...cur, combos: { ...(cur.combos ?? {}), ...results }, generated_at: new Date().toISOString() }
       writeJsonAtomic(paths().matrix, matrix)
       const ok = Object.values(matrix.combos).filter((c) => c.status === "ok").length
-      appendStatusLog(`matrix refreshed: ${sorted.length} combos ${ok} ok (total ${Object.keys(matrix.combos).length})`)
+      appendStatusLog("notice.probe.matrixRefreshed", { comboCount: sorted.length, okCount: ok, totalCount: Object.keys(matrix.combos).length })
       return ok
     })
   } catch (exc) {
-    appendStatusLog(`probe fail-open: ${exc}`)
+    appendStatusLog("notice.probe.failOpen", { exc: String(exc) })
     return null
   }
 }
@@ -230,7 +231,7 @@ export async function refreshMatrixIfStale(eps: ProbeEndpoints): Promise<void> {
     }
     await refreshMatrix(eps)
   } catch (exc) {
-    appendStatusLog(`probe scheduling fail-open: ${exc}`)
+    appendStatusLog("notice.probe.schedulingFailOpen", { exc: String(exc) })
   }
 }
 
@@ -245,6 +246,6 @@ export async function refreshActiveMatrixIfStale(eps: ProbeEndpoints, activeKeys
     }
     await probeKeys(activeKeys, eps)
   } catch (exc) {
-    appendStatusLog(`probe scheduling fail-open: ${exc}`)
+    appendStatusLog("notice.probe.schedulingFailOpen", { exc: String(exc) })
   }
 }

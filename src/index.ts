@@ -19,6 +19,8 @@ import {
   appendStatusLog,
   writeRouteSnapshot,
   writeQuotaBrief,
+  writeUiLocale,
+  writeWorkspaceMeta,
   loadProviderCache, saveProviderCache, nowIso,
   providerCacheStale, providerModelsDelta,
   loadSubagentCapRegistry, saveSubagentCapRegistry, withPathLock,
@@ -34,8 +36,9 @@ import {
   capThresholdsByWindow, subagentCapOf, capByWindow,
   subagentCapDenyMessage, subagentResumeDenyMessage, ctxControlMarkerOf, pausedWindowWarning,
   subagentSoftTiersOf, shellSoftTierDecision,
+  matchContinuation, DENY_RETRY_OVERHEAD_TOKENS,
 } from "./context-watch"
-import type { CtxControlAction, ReadEstimate, FileSample, ContextThresholds } from "./context-watch"
+import type { CtxControlAction, ReadEstimate, FileSample, ContextThresholds, ReadContinuation } from "./context-watch"
 import { backupSession, compactSession, v1HandoverPort, type HandoverResult } from "./handover-core"
 import { logDecision, BILLING_API_BOOST } from "./scoring"
 import type { WaterFactor, DecisionRecord } from "./scoring"
@@ -47,7 +50,8 @@ import { injectShells, injectShellDefs, selectInjectableDefs } from "./shells"
 import { buildBanner, shortName, providerStatusEntries } from "./banner"
 import { refreshSelfUpdate, updateBannerText, ensureUpdateCommands, detectLoadMode, pluginCliPath } from "./selfupdate"
 import { loadPoolConfig, overrideSummary } from "./user-overrides"
-import { poolConfigCommandMd, modelRankCommandMd, expertCommandMd, langCommandMd, ctxPauseCommandMd, ctxResumeCommandMd } from "./commands-md"
+import { poolConfigCommandMd, modelRankCommandMd, expertCommandMd, langCommandMd, ctxPauseCommandMd, ctxResumeCommandMd, switchmanSetupCommandMd } from "./commands-md"
+import { setupCompletionNow, setupDenyMessage, setupDirective, setupMissingBrief } from "./setup-gate"
 import { billingOfProvider, loadUserConfig, resolveEffectiveOptions, routingPeakActive, routePolicy, DEFAULT_DELEGATION_FLOOR } from "./config"
 import { poolForProviderId } from "./provider-config"
 import { runDoctor } from "./doctor"
@@ -61,7 +65,7 @@ import { LANE_ORDER, DEFAULT_LANG_CANDIDATES } from "./types"
 import type { SwitchmanOptions, Lane, LaneResult, Pool, ShellRegEntry, ModelKey } from "./types"
 import { WorkspaceTracker, DEFAULT_WORKSPACE_DIRNAME, type EnsuredWorkspace } from "./workspace"
 import { TmuxPaneManager, serverOriginOf } from "./tmux"
-import { loadLangConfig, renderLangLine, renderAskDirective, saveLangFromQuestion, langGateDecision, LANG_GATE_TOOLS, hasLangMarkerQuestions, detectUiLocale } from "./lang-config"
+import { loadLangConfig, renderLangLine, renderAskDirective, saveLangFromQuestion, langGateDecision, LANG_GATE_TOOLS, hasLangMarkerQuestions, detectUiLocale, normalizeUiLocale } from "./lang-config"
 import { SEARCH_CLARIFY_TOOLS, SEARCH_CLARIFY_MAX_DENIES, isBroadSearchCall, describeSearchCall, searchClarifyDenyMessage, hasSearchMarkerQuestion } from "./search-clarify"
 import { renderRouteLine, routeLineEnabled } from "./route-line"
 import { loadDispatchMode } from "./dispatch-mode"
@@ -174,6 +178,10 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   // [2026-09-05]-[v1 read budget: per-turn self-read spend (resets each user turn), watermark sample history for
   //  pace estimation, and last-seen user message id for turn-boundary detection (assistant parentID comparison)]
   const turnReadUsage = new Map<string, { used: number; at: number }>()
+  // [2026-09-18]-[v1.1 continuation merge: last granted-but-not-completed read window per main session (same logical
+  //  read = same file + follow-up offset resuming near the granted end); a bounded continuation completes the original
+  //  want in one shot. Reset with the turn (turnReadUsage spots) and on session.deleted]
+  const readContinuation = new Map<string, ReadContinuation>()
   const wmHistory = new Map<string, number[]>()
   const lastUserMsg = new Map<string, string>()
   // [2026-09-11]-[/ctx-pause //ctx-resume: per-session context-control suspension — the commands inject a fixed marker
@@ -228,7 +236,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     options: () => options.tmux,
     serverOrigin: serverOriginOf((input as any).serverUrl, process.env.OPENCODE_PORT) ?? "",
     dir: pluginDirectory,
-    log: (m) => appendStatusLog(m),
+    // [2026-09-19]-[P3c status-log i18n: tmux/dispatch-mode log callbacks carry structured (key, params)]
+    log: (k, p) => appendStatusLog(k, p),
   })
   void tmuxPanes.init()
   const pendingTask = new Map<string, Array<{ agent: string; at: number }>>()
@@ -254,9 +263,12 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
   function applyCtxControlAction(sid: string, act: CtxControlAction | null): void {
     if (act === "pause" && !ctxPaused.has(sid)) {
       ctxPaused.add(sid)
-      appendStatusLog(`ctx control paused for session ${sid} (/ctx-pause): read gates + self-read budget + auto-handover suspended; measurement continues`)
+      // [2026-09-19]-[i18n sweep: all appendStatusLog prose in this file migrated to message keys (src/locales/en.ts)
+      //  via the new key+params writer signature; gates.ts/tmux.ts note forwarders stay as-is (their templates live
+      //  in those files)]-[no behavior change, log entries are now structured {key, params}]
+      appendStatusLog("notice.ctx.paused", { sid })
     } else if (act === "resume" && ctxPaused.delete(sid)) {
-      appendStatusLog(`ctx control resumed for session ${sid} (/ctx-resume): read gates + auto-handover live again`)
+      appendStatusLog("notice.ctx.resumed", { sid })
     }
   }
 
@@ -459,8 +471,8 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       if (!id || isShellOrInternalSession(id)) return
       workspace.record(info as any)
       const ensured = workspace.ensure(id)
-      if (ensured?.created) appendStatusLog(`artifact workspace created: ${ensured.rel}`)
-      else if (ensured?.renamed) appendStatusLog(`artifact workspace renamed: ${ensured.renamed} → ${ensured.rel}`)
+      if (ensured?.created) appendStatusLog("notice.workspace.created", { rel: ensured.rel })
+      else if (ensured?.renamed) appendStatusLog("notice.workspace.renamed", { oldRel: ensured.renamed, rel: ensured.rel })
     } catch { /* fail-open */ }
   }
 
@@ -534,11 +546,11 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           // verified missing → opencode will create a fresh session; the session.created path covers that pane
           if (res && !(res as any)?.data?.id) return
           void tmuxPanes.noteChild(sessionID, tid, shellName)
-          appendStatusLog(`tmux pane mirroring: resume dispatch ses_${tid.slice(-6)} (${shellName}) — task_id reuse, pane opened directly (no session.created will fire)`)
+          appendStatusLog("notice.dispatch.mirrorResumeReuse", { taskId: tid.slice(-6), shellName })
         })
         .catch(() => {
           void tmuxPanes.noteChild(sessionID, tid, shellName)
-          appendStatusLog(`tmux pane mirroring: resume dispatch ses_${tid.slice(-6)} (${shellName}) — session lookup failed, fail-open pane`)
+          appendStatusLog("notice.dispatch.mirrorResumeLookupFailed", { taskId: tid.slice(-6), shellName })
         })
     } catch { /* fail-open */ }
   }
@@ -566,7 +578,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     if (overrideWatchTimer) clearTimeout(overrideWatchTimer)
     overrideWatchTimer = setTimeout(() => {
       overrideWatchTimer = null
-      try { appendStatusLog("capability rank/task-pool selection changed: banner and sidebar refresh immediately") } catch { /* fail-open */ }
+      try { appendStatusLog("notice.capability.selectionChanged") } catch { /* fail-open */ }
       refreshSidebarState()
     }, 200)
     if (typeof overrideWatchTimer === "object" && overrideWatchTimer !== null && "unref" in overrideWatchTimer) (overrideWatchTimer as any).unref()
@@ -581,7 +593,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       const w = watch(dir, { recursive: false }, (_event, filename) => {
         if (filename && OVERRIDE_WATCH_FILES.has(String(filename))) onOverrideConfigChanged()
       })
-      w.on("error", (exc) => { try { appendStatusLog(`fs.watch(${dir}) override-config watch error (mtime polling fallback): ${exc}`) } catch { /* fail-open */ } })
+      w.on("error", (exc) => { try { appendStatusLog("notice.capability.overrideWatchError", { dir, exc: String(exc) }) } catch { /* fail-open */ } })
     } catch { /* fail-open: missing directory/startup failure is covered by polling */ }
     // mtime polling fallback: first run records a baseline without triggering
     const poll = () => {
@@ -603,7 +615,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     // [2026-08-29]-[re-review P2-5: legacy in-memory marks are always empty yet still guarded, matching the new gate's write point against future non-dynamic write paths]-
     if (!dynamic) return routing
     const down = { ...routing.down_agents }
-    for (const combo of realFailedComboKeys()) down[combo] = "probe ok but real delegation failed (30-min in-memory isolation)"
+    for (const combo of realFailedComboKeys()) down[combo] = "probe ok but real delegation failed (5-min in-memory isolation)"
     return { ...routing, down_agents: down }
   }
 
@@ -639,7 +651,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     try {
       return readConfigured(stateRoot, mode)
     } catch (exc) {
-      appendStatusLog(`config surface read fail-open: ${exc}`)
+      appendStatusLog("notice.matrix.configSurfaceFailOpen", { exc: String(exc) })
       return { configStatus: "empty" as const, models: [] as ModelKey[] }
     }
   }
@@ -667,12 +679,12 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     const floorModels = freeFloor.length > 0
       ? freeFloor
       : [...new Set(loadManifest().shells.map((s) => `${s.provider}/${s.modelId}`))]
-    if (freeFloor.length > 0) appendStatusLog(`floor = ${freeFloor.length} OpenCode Zen free models (catalog ${catalog.status})`)
-    else appendStatusLog(`floor fell back to the static manifest (catalog ${catalog.status}, 0 free models)`)
+    if (freeFloor.length > 0) appendStatusLog("notice.matrix.floorFreeModels", { floorCount: freeFloor.length, catalogStatus: catalog.status })
+    else appendStatusLog("notice.matrix.floorFallback", { catalogStatus: catalog.status })
     const realKnownProviders = new Set(providerModels.providers)
     const invalidFavoriteModels = configured.models.filter((m) => !realKnownProviders.has(m.slice(0, m.indexOf("/"))))
     if (invalidFavoriteModels.length > 0) {
-      appendStatusLog(`visible set/favorites contain invalid models with unknown provider (provider not connected; ignored, no shells built): ${invalidFavoriteModels.join(", ")}`)
+      appendStatusLog("notice.matrix.invalidModelsUnknownProvider", { modelList: invalidFavoriteModels.join(", ") })
     }
     const validConfiguredModels = configured.models.filter((m) => realKnownProviders.has(m.slice(0, m.indexOf("/"))))
     const supersetModels = [...new Set([...validConfiguredModels, ...providerModels.models, ...floorModels])]
@@ -770,18 +782,18 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       if (PROVIDER_LIST_BACKOFF_MS[i] > 0) await new Promise((r) => setTimeout(r, PROVIDER_LIST_BACKOFF_MS[i]))
       try {
         const result = await attemptProviderList(input, PROVIDER_LIST_ATTEMPT_TIMEOUT_MS)
-        if (i > 0) appendStatusLog(`provider.list attempt ${i + 1} succeeded (previous ${i} not ready)`)
+        if (i > 0) appendStatusLog("notice.provider.probeAttemptSucceeded", { attempt: i + 1, prevAttempts: i })
         return { ...result, fellBack: false }
       } catch (exc) {
         lastExc = exc
         if (i < PROVIDER_LIST_BACKOFF_MS.length - 1) {
-          appendStatusLog(`provider.list attempt ${i + 1} not ready, backing off: ${exc}`)
+          appendStatusLog("notice.provider.probeAttemptBackoff", { attempt: i + 1, exc: String(exc) })
         }
       }
     }
     // all attempts failed: fall back to the cfg.provider key set (providerIDs only, as restartRequired baseline; model surface covered by config surface/built-in chains)
     const keys = Object.keys(cfg.provider ?? {})
-    appendStatusLog(`provider.list unavailable (fell back to ${keys.length} cfg.provider keys after ${PROVIDER_LIST_BACKOFF_MS.length} attempts): ${lastExc}`)
+    appendStatusLog("notice.provider.unavailableCfgFallback", { keyCount: keys.length, attemptCount: PROVIDER_LIST_BACKOFF_MS.length, exc: String(lastExc) })
     return { models: [], providers: keys, fellBack: true }
   }
 
@@ -806,7 +818,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           saveProviderCache({ at: nowIso(), models: result.models, providers: result.providers })
           const fresh = result.providers.filter((p) => !knownProviders.has(p))
           if (fresh.length > 0) {
-            appendStatusLog(`provider.list background probe: new provider(s) connected (${fresh.join(", ")}) — restart opencode to complete shell registration`)
+            appendStatusLog("notice.provider.probeNewProvider", { providers: fresh.join(", ") }, true)
             clearBannerCache()
           }
           // [2026-09-06]-[model-drift heal: when the fresh list differs from the one the current superset was built from
@@ -824,9 +836,16 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
                 delta.added.length > 0 ? `added: ${delta.added.join(", ")}` : null,
                 delta.removed.length > 0 ? `removed: ${delta.removed.join(", ")}` : null,
               ].filter(Boolean).join("; ")
-              appendStatusLog(`provider.list background probe: model list drifted (${drift}) — superset manifest rebuilt, /modelRank //poolConfig lists updated${delta.added.length > 0 ? "; new shells dispatch after the next opencode restart" : ""}`)
+              appendStatusLog(
+                "notice.provider.probeModelDrift",
+                {
+                  drift,
+                  restartHint: delta.added.length > 0 ? "; new shells dispatch after the next opencode restart" : "",
+                },
+                true,
+              )
             } catch (exc) {
-              appendStatusLog(`provider.list background probe: superset rebuild failed (kept previous manifest): ${exc}`)
+              appendStatusLog("notice.provider.probeRebuildFailed", { exc: String(exc) })
             }
           }
           return
@@ -878,7 +897,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       }, 600_000)
       if (typeof timer === "object" && timer !== null && "unref" in timer) (timer as any).unref()
     } catch (exc) {
-      appendStatusLog(`warmup fail-open: ${exc}`)
+      appendStatusLog("notice.probe.warmupFailOpen", { exc: String(exc) })
     }
   }
 
@@ -892,10 +911,15 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
     try {
       const s = syncBundledSkills()
       if (s.installed.length + s.updated.length + s.removed.length > 0) {
-        appendStatusLog(`skills synced: ${s.installed.length} installed, ${s.updated.length} updated, ${s.removed.length} removed (${[...s.installed, ...s.updated, ...s.removed].join(", ")})`)
+        appendStatusLog("notice.skills.synced", {
+          installedCount: s.installed.length,
+          updatedCount: s.updated.length,
+          removedCount: s.removed.length,
+          skillNames: [...s.installed, ...s.updated, ...s.removed].join(", "),
+        })
       }
     } catch (exc) {
-      appendStatusLog(`skill sync fail-open: ${exc}`)
+      appendStatusLog("notice.skills.syncFailOpen", { exc: String(exc) })
     }
   }
 
@@ -1085,7 +1109,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
          doctorSummary,
          matrixInfo,
          update: updateBannerText(),
-         overrides: overrideSummary(),
+         overrides: { ...overrideSummary(), setup: setupCompletionNow() },
       })
       // [WATERMARK] line needs raw quota data → second assembly (the banner pure function takes a snapshot; real quota added here)
       const lines2 = buildBanner({
@@ -1100,7 +1124,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         dsLowWarnCny: options.quota!.deepseek!.lowBalanceWarnCny,
         matrixInfo,
         update: updateBannerText(),
-        overrides: overrideSummary(),
+        overrides: { ...overrideSummary(), setup: setupCompletionNow() },
       })
       // [2026-08-29]-[scoring engine decision log: every banner rebuild (15s cache expiry) appends per-lane score details; fail-open, never blocks]
       try {
@@ -1137,7 +1161,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       bannerCache = { at: Date.now(), lines: lines2 }
       return lines2
     } catch (exc) {
-      appendStatusLog(`banner fail-open: ${exc}`)
+      appendStatusLog("notice.banner.failOpen", { exc: String(exc) })
       return []
     }
   }
@@ -1213,13 +1237,49 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         const filePath = typeof output.args?.filePath === "string" ? output.args.filePath : ""
         if (filePath && BINARY_EXT.test(filePath)) return
         const sample = await fileSample(filePath)
-        est = sample ? estimateReadRange(sample, output.args, readBudget) : null
+        // [2026-09-18]-[v1.1 need-aware sizing: the per-call grant ceiling rides the remaining turn headroom (max R*
+        //  on a spent turn, up to 2×R* fresh) — a demonstrated-range read lands one-shot instead of deny → partial →
+        //  continuation fragments; post-hoc charging keeps the per-turn top intact]
+        const grantTokens = Math.max(readBudget, Math.max(0, turnBudgetOf(readBudget) - turnUsed))
+        est = sample ? estimateReadRange(sample, output.args, readBudget, grantTokens) : null
       }
-      const action = budgetGateDecision({ tool: input.tool, level, readBudget, turnUsed, bashCommand: cmd, est })
-      if (action === "allow") return
+      // [2026-09-18]-[v1.1 continuation merge: a follow-up read resuming at/near the last granted window's end is the
+      //  same logical read continuing — its bounded remainder completes in one shot (see budgetGateDecision)]
+      const cont = input.tool === "read" && est ? matchContinuation(readContinuation.get(sid), output.args, est.tokensPerLine) : null
+      const action = budgetGateDecision({ tool: input.tool, level, readBudget, turnUsed, bashCommand: cmd, est, cont })
+      if (action === "allow") {
+        // [2026-09-18]-[v1.1: an in-band continuation is bounded to the remaining want (never grows past the ask);
+        //  a smaller explicit ask keeps the un-granted tail pending, otherwise the want is closed]
+        if (cont && cont.wantRemainderTokens <= readBudget + DENY_RETRY_OVERHEAD_TOKENS) {
+          const callLimit = typeof output.args?.limit === "number" && output.args.limit > 0 ? Math.floor(output.args.limit) : Number.POSITIVE_INFINITY
+          const granted = Math.max(1, Math.min(callLimit, cont.wantRemainderLines))
+          output.args.limit = granted
+          const prev = readContinuation.get(sid)
+          if (prev && granted < cont.wantRemainderLines) readContinuation.set(sid, { ...prev, grantedEndLine: cont.offset + granted - 1 })
+          else readContinuation.delete(sid)
+          appendStatusLog("notice.ctx.readBudgetContinuation", {
+            fileName: basename(String(output.args.filePath)),
+            granted,
+            offset: cont.offset,
+            turnUsed,
+            turnBudget: turnBudgetOf(readBudget),
+          })
+        } else if (input.tool === "read") {
+          readContinuation.delete(sid) // the ask is fully served in one shot — the want is closed
+        }
+        return
+      }
       if (action === "cap" && est) {
         output.args.limit = est.suggestedLimit
-        appendStatusLog(`read budget gate cap (tool read, file ${basename(String(output.args.filePath))}, est ~${est.totalTokens} -> limit ${est.suggestedLimit}, turn ${turnUsed}/${turnBudgetOf(readBudget)})`)
+        // [2026-09-18]-[v1.1: remember the granted window + the demonstrated want so the model's own continuation completes in one shot]
+        readContinuation.set(sid, { filePath: String(output.args?.filePath ?? ""), grantedEndLine: (est.offset ?? 1) + est.suggestedLimit - 1, wantEndLine: est.requestedEndLine })
+        appendStatusLog("notice.ctx.readBudgetGateCap", {
+          fileName: basename(String(output.args.filePath)),
+          totalTokens: est.totalTokens,
+          suggestedLimit: est.suggestedLimit,
+          turnUsed,
+          turnBudget: turnBudgetOf(readBudget),
+        })
         return
       }
       const { ctx } = currentContext()
@@ -1227,10 +1287,11 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       const cand = hint ? ` (e.g. ${hint}, ROUTE_META role=scouter)` : ""
       const candPlain = hint ? ` (e.g. ${hint})` : ""
       const pace = watermarkPace(sid)
-      const denyLog = `read budget gate ${action} (tool ${input.tool}, est ~${est ? est.totalTokens : "-"}, C~${kk(wm.tokens)}, T_est≈${pace ? pace.turnsToHard : "-"}, turn ${turnUsed}/${turnBudgetOf(readBudget)})`
       let msg: string
       if (action === "deny-budget" && est) {
-        msg = `[opencode-switchman] read ${output.args.filePath} would inject ~${est.totalTokens} tok (self-read budget ${readBudget}): retry bounded as \`read ${output.args.filePath} limit=${est.suggestedLimit} offset=${est.offset ?? 1}\` or delegate to an economy shell${cand}`
+        // [2026-09-18]-[v1.1: record the grant the retry params promise, so the model's bounded retry and its continuation merge]
+        readContinuation.set(sid, { filePath: String(output.args?.filePath ?? ""), grantedEndLine: (est.offset ?? 1) + est.suggestedLimit - 1, wantEndLine: est.requestedEndLine })
+        msg = `[opencode-switchman] read ${output.args.filePath} would inject ~${est.totalTokens} tok (self-read budget ${readBudget}, turn headroom ${Math.max(0, turnBudgetOf(readBudget) - turnUsed)}): retry bounded as \`read ${output.args.filePath} limit=${est.suggestedLimit} offset=${est.offset ?? 1}\` or delegate to an economy shell${cand}`
       } else if (action === "deny-turn") {
         msg = `[opencode-switchman] per-turn self-read budget spent (${turnUsed}/${turnBudgetOf(readBudget)}; resets on your next user message): delegate this read to an economy shell${cand}`
       } else if (action === "deny-archaeology") {
@@ -1243,11 +1304,20 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         return
       }
       denySkip.add(input.callID)
-      appendStatusLog(denyLog)
+      appendStatusLog("notice.ctx.readBudgetGate", {
+        action,
+        tool: input.tool,
+        totalTokens: est ? est.totalTokens : "-",
+        contRem: cont ? `, cont rem ~${cont.wantRemainderTokens}` : "",
+        wmTokens: kk(wm.tokens),
+        turnsToHard: pace ? pace.turnsToHard : "-",
+        turnUsed,
+        turnBudget: turnBudgetOf(readBudget),
+      })
       throw new Error(msg)
     } catch (exc) {
       if (denySkip.has(input.callID)) throw exc
-      appendStatusLog(`read budget gate fail-open (allowed): ${exc}`)
+      appendStatusLog("notice.ctx.readBudgetGateFailOpen", { exc: String(exc) })
     }
   }
 
@@ -1272,11 +1342,11 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         ? `delegate the vision shell ${head} (ROUTE_META {"lane":"vision","role":"observer","modality":"image","capability":"ro","source":"auto"}) with this path in the prompt`
         : "call an MCP vision tool on this path"
       denySkip.add(input.callID)
-      appendStatusLog(`image read guard: model ${key} has no vision input; denied read ${basename(filePath)} (session ${sid})`)
+      appendStatusLog("notice.image.readGuardDenied", { modelKey: key, fileName: basename(filePath), sid })
       throw new Error(`[opencode-switchman] this session's model (${key}) has no vision input — the host would reject the image content of ${filePath}. Instead: ${redirect}, or skip reading this image.`)
     } catch (exc) {
       if (denySkip.has(input.callID)) throw exc
-      appendStatusLog(`image read guard fail-open (allowed): ${exc}`)
+      appendStatusLog("notice.image.readGuardFailOpen", { exc: String(exc) })
     }
   }
 
@@ -1324,8 +1394,12 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         const errors = doctor.diagnostics.filter((d) => d.level === "error").length
         const warns = doctor.diagnostics.filter((d) => d.level === "warn").length
         doctorSummary = errors || warns ? `doctor: ${errors} error / ${warns} warn` : null
-        if (doctorSummary) appendStatusLog(`doctor found ${errors} error / ${warns} warn; run /switchman-doctor to view`)
+        if (doctorSummary) appendStatusLog("notice.doctor.summary", { errorCount: errors, warnCount: warns })
         try { writeJsonAtomic(paths().doctorSnapshot, { at: new Date().toISOString(), diagnostics: doctor.diagnostics.map((d) => ({ code: d.code, level: d.level, path: d.path })) }) } catch { /* fail-open */ }
+        // [2026-09-19]-[i18n wiring step 1: persist the normalized global UI locale + workspace dirname to state files
+        //  once per startup for the render-time locale chain (src/i18n.ts resolveDisplayLocale reads them back)]-[fail-open]
+        try { writeUiLocale(normalizeUiLocale(userConfig.config.ui.lang) ?? null) } catch { /* fail-open */ }
+        try { writeWorkspaceMeta(userConfig.config.workspace.dirname) } catch { /* fail-open */ }
         collectCreds(cfg)
         creds.copilotToken = creds.copilotToken ?? readAuthStore().githubToken
         // [2026-08-29]-[one-click upgrade command assets: prod registers /switchman-update, local removes leftovers — effective on both legacy/dynamic paths]-
@@ -1335,6 +1409,10 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         cfg.command = {
           "poolConfig-chat": { template: poolConfigCommandMd(pluginCliPath("switchman-config.js")), description: "Configure task-pool participating models conversationally (economy/mechanical/main/hard/vision/review); use /poolConfig for the manual dialog" },
           "modelRank-chat": { template: modelRankCommandMd(pluginCliPath("switchman-config.js")), description: "Configure model capability ranks conversationally (manual ranks override base capability scores); use /modelRank for the manual dialog" },
+          // [2026-09-19]-[/switchman-setup-chat: chat fallback for the TUI /switchman-setup wizard (src/tui.tsx) — the
+          //  setup hard gate (setup-gate.ts) denies task dispatch until all 6 pools + the rank are configured, so the
+          //  guided flow must be reachable from non-TUI clients too]-
+          "switchman-setup-chat": { template: switchmanSetupCommandMd(pluginCliPath("switchman-config.js")), description: "Guided switchman setup: configure all 6 task pools and the capability ranking (chat fallback when the TUI /switchman-setup is unavailable)" },
           // [2026-09-05]-[/expert: expert consultation — review-pool head preferred, hard-pool head's ro face as fallback;
           //  selection is read live from the [ROUTES] banner at execution time (no stale CLI snapshot), dispatch goes
           //  through the standard six gates + auto-redirect]
@@ -1359,7 +1437,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           // legacy: static shells.json path (behavior byte-identical with v1.2)
           const { registry } = currentContext()
           const n = injectShells(cfg, registry)
-          appendStatusLog(`injected ${n} model shells (agents, legacy static matrix)`)
+          appendStatusLog("notice.injection.legacyStaticMatrix", { shellCount: n })
           // [2026-08-29]-[config hook triggers the self-update check]-[async check; failure never blocks startup]
           refreshSelfUpdate().then((state) => { if (state?.outdated) clearBannerCache() }).catch(() => {})
           return
@@ -1378,14 +1456,14 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         if (providerCache && !providerCacheStale(providerCache)) {
           providerModels = { models: providerCache.models, providers: providerCache.providers, fellBack: false }
           usedProviderCache = true
-          appendStatusLog(`provider.list using cross-restart cache (${providerCache.providers.length} providers, cached at ${providerCache.at}); verifying additions in background`)
+          appendStatusLog("notice.provider.cacheUsed", { providerCount: providerCache.providers.length, cachedAt: providerCache.at })
         } else if (providerCache) {
           // [2026-09-06]-[stale cache no longer trusted blindly: provider model lists grow over time (new flagship models), and
           // the old "cache first, heal next restart" flow locked brand-new models out of the injected surface until a second
           // restart. A cache past TTL (or with an unparseable timestamp) now triggers a live probe (full backoff budget) before
           // the superset build; on probe failure the stale cache is still used (fail-open) and the background watchdog keeps
           // retrying]-[new provider models surface in the same restart]
-          appendStatusLog(`provider.list cache stale (cached at ${providerCache.at}), probing live before the superset build`)
+          appendStatusLog("notice.provider.cacheStale", { cachedAt: providerCache.at })
           const live = await collectProviderModels(input, cfg)
           if (!live.fellBack) {
             providerModels = live
@@ -1435,17 +1513,29 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             refreshSidebarState()
             probeP.then(refreshSidebarState).catch(() => {})
             // [2026-08-31]-[switched to persisted status-log rendered by the tui.tsx sidebar, no longer flooding stderr over the input box]-[high-frequency recompute notices]
-            appendStatusLog(`activation matrix recomputed (gen=${state.generation}, active shells ${state.activeShells.length}, probes ${source}×${targets.length})`)
+            appendStatusLog("notice.matrix.recomputed", {
+              generation: state.generation,
+              activeShellCount: state.activeShells.length,
+              source,
+              targetCount: targets.length,
+            })
           },
         })
         manager.recompute(face.configured)
         manager.start()
-        appendStatusLog(`injected ${injected.size} shells (mode=${runMode}, injection surface=${options.injection!.mode}=${fullSupersetCount}→${face.defs.length} after curation, conflicts ${conflicts.size}; activation gating active)`)
+        appendStatusLog("notice.injection.shellCount", {
+          shellCount: injected.size,
+          runMode,
+          injectionMode: String(options.injection!.mode),
+          fullSupersetCount,
+          faceCount: face.defs.length,
+          conflictCount: conflicts.size,
+        })
         // [2026-08-29]-[config hook triggers the self-update check]-[async check; failure never blocks startup]
         refreshSelfUpdate().then((state) => { if (state?.outdated) clearBannerCache() }).catch(() => {})
       } catch (exc) {
         configFailed = true
-        appendStatusLog(`config hook fail-open: ${exc}`)
+        appendStatusLog("notice.injection.configHookFailOpen", { exc: String(exc) })
       }
     },
 
@@ -1498,18 +1588,32 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         //  [2026-09-07]-[moved BELOW the shell/internal early-return: main-session-only injection (shell subagents and
         //  title/compaction sessions must not receive the [LANG] line or the ask directive); for main sessions it is
         //  still the first injected part of the turn]-
+        // [2026-09-19]-[loadLangConfig hoisted out of the lang.enabled branch: the [SETUP] directive below reuses the
+        //  same read (one disk read per turn, cheap) and keys on language-config existence exactly like the tool-level
+        //  lang gate / setup gate, so prompt copy and enforcement can never disagree]-
+        const langLoaded = loadLangConfig(pluginDirectory, options.workspace?.dirname || DEFAULT_WORKSPACE_DIRNAME)
         if (options.lang!.enabled) {
-          const loaded = loadLangConfig(pluginDirectory, options.workspace?.dirname || DEFAULT_WORKSPACE_DIRNAME)
-          if (loaded) output.system.push(renderLangLine(loaded.cfg, loaded.source))
+          if (langLoaded) output.system.push(renderLangLine(langLoaded.cfg, langLoaded.source))
           else if (options.lang!.ask !== false && input.sessionID && !langAsked.has(input.sessionID) && !langGateWaived.has(input.sessionID)) {
             langAsked.add(input.sessionID)
             // [2026-09-14]-[D4 locale-following ask: question texts follow the detected UI locale (env LC_ALL → LANG,
             //  normalized, fail-open "en"); the `switchman-lang n/3: ` marker prefix stays byte-stable so the plugin-side
             //  capture anchor is locale-independent; the directive body/deny copy stay English (model-facing)]
             const ui = detectUiLocale()
-            appendStatusLog(`lang ask locale=${ui.locale} (${ui.via === "default" ? "default" : `env ${ui.via}`})`)
+            appendStatusLog("notice.lang.askLocale", { locale: ui.locale, source: ui.via === "default" ? "default" : `env ${ui.via}` })
             output.system.push(renderAskDirective(options.lang!.candidates ?? DEFAULT_LANG_CANDIDATES, ui.locale))
           }
+        }
+        // [2026-09-19]-[setup hard gate directive: while switchman setup is incomplete (any of the 6 task pools without
+        //  a selected model, or the capability ranking missing) AND the project language config exists, push a [SETUP]
+        //  advisory right after the lang logic (same output.system push mechanism, English body by design — the model
+        //  relays it in the user's conversation language). The transform re-runs per model request, so it renders every
+        //  turn while incomplete — no latch. Silent while the language config is missing: the lang ask must stay the
+        //  single voice until it is answered (the tool-level lang gate blocks task meanwhile); reads are mtime-cached,
+        //  so a /switchman-setup write clears this directive on the next turn]-
+        if (langLoaded) {
+          const setup = setupCompletionNow()
+          if (!setup.complete) output.system.push(setupDirective(setup))
         }
         // [2026-08-29]-[fail-open visibility: explicit warning when injection crashes — don't dispatch; do it yourself or tell the user]-
         if (configFailed) {
@@ -1570,7 +1674,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           }
         }
       } catch (exc) {
-        appendStatusLog(`rules/banner fail-open: ${exc}`)
+        appendStatusLog("notice.banner.rulesFailOpen", { exc: String(exc) })
       }
     },
 
@@ -1643,9 +1747,9 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             written += res.written
           }
         }
-        if (written > 0) appendStatusLog(`image relay: model ${key} has no vision input; persisted ${written} image(s) to disk (${relayed} image part(s) relayed across session history, session ${sid})`)
+        if (written > 0) appendStatusLog("notice.relay.persisted", { modelKey: key, written, relayed, sid })
       } catch (exc) {
-        appendStatusLog(`image relay fail-open (passed through): ${exc}`)
+        appendStatusLog("notice.relay.failOpen", { exc: String(exc) })
       }
     },
 
@@ -1660,14 +1764,14 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         if (capSid && terminatedSessions.has(capSid)) {
           denySkip.add(input.callID)
           const cap = effectiveSubagentCap(capSid) ?? subagentCapOf(options.context) ?? 0
-          appendStatusLog(`subagent context cap: tool '${input.tool}' denied in terminated session ${capSid}`)
+          appendStatusLog("notice.ctx.capToolDenied", { tool: input.tool, sid: capSid })
           throw new Error(subagentCapDenyMessage(shellWatermark.get(capSid)?.tokens ?? cap, cap))
         }
         if (input.tool === "task") {
           const tid = (output.args as any)?.task_id
           if (typeof tid === "string" && tid && terminatedSessions.has(tid)) {
             denySkip.add(input.callID)
-            appendStatusLog(`subagent context cap: resume of terminated session ses_${tid.slice(-6)} denied (permanent)`)
+            appendStatusLog("notice.ctx.capResumeDenied", { taskId: tid.slice(-6) })
             throw new Error(subagentResumeDenyMessage(tid))
           }
         }
@@ -1693,7 +1797,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           })
           if (reason) {
             denySkip.add(input.callID)
-            appendStatusLog(`lang gate: tool '${input.tool}' denied in unconfigured project session ${lgSid}`)
+            appendStatusLog("notice.lang.gateDenied", { tool: input.tool, sid: lgSid })
             throw new Error(reason)
           }
         }
@@ -1717,10 +1821,10 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             searchDenyCount.set(scSid, n)
             if (n > SEARCH_CLARIFY_MAX_DENIES) {
               searchScopeAsked.add(scSid)
-              appendStatusLog(`search clarify gate: fail-open after ${SEARCH_CLARIFY_MAX_DENIES} denies without an ask — gate open for session ${scSid}`)
+              appendStatusLog("notice.search.clarifyFailOpen", { maxDenies: SEARCH_CLARIFY_MAX_DENIES, sid: scSid })
             } else {
               denySkip.add(input.callID)
-              appendStatusLog(`search clarify gate: tool '${input.tool}' denied (broad search, ask-first) in session ${scSid} (${n}/${SEARCH_CLARIFY_MAX_DENIES})`)
+              appendStatusLog("notice.search.clarifyDenied", { tool: input.tool, sid: scSid, denyCount: n, maxDenies: SEARCH_CLARIFY_MAX_DENIES })
               throw new Error(searchClarifyDenyMessage(describeSearchCall(input.tool, output.args)))
             }
           }
@@ -1740,10 +1844,33 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
       if (input.tool === "task") {
         try {
           if (loadDispatchMode(pluginDirectory, options.workspace?.dirname || DEFAULT_WORKSPACE_DIRNAME) === "off") {
-            appendStatusLog(`dispatch off: task call allowed ungoverned (subagent_type='${String(output.args?.subagent_type ?? "")}')`)
+            appendStatusLog("notice.dispatch.offUngoverned", { subagentType: String(output.args?.subagent_type ?? "") })
             return
           }
         } catch { /* fail-open */ }
+      }
+      // [2026-09-19]-[setup hard gate: while switchman setup is incomplete (any of the 6 task pools without a selected
+      //  model, or the capability ranking missing), deny task dispatch — unconfigured no longer defaults to all models.
+      //  Placement is deliberate: AFTER the dispatch:"off" early-return above (a project that opted out of dispatch
+      //  governance is never denied by it), BEFORE the task-governance gates below; only main sessions are gated
+      //  (dispatched shells and internal sessions exempt via isShellOrInternalSession, same as the lang gate), and only
+      //  when the project language config exists — while language is unconfigured the lang gate above already blocks
+      //  task and must stay the single voice. No waiver flag: hard gate by design. Reads are mtime-cached, so a
+      //  /switchman-setup (or CLI) write opens the gate immediately without a restart; fail-open on internal errors]-
+      try {
+        const stSid = (input as any).sessionID as string | undefined
+        if (input.tool === "task" && stSid && !isShellOrInternalSession(stSid)
+          && loadLangConfig(pluginDirectory, options.workspace?.dirname || DEFAULT_WORKSPACE_DIRNAME)) {
+          const setup = setupCompletionNow()
+          if (!setup.complete) {
+            denySkip.add(input.callID)
+            appendStatusLog("notice.setup.gateDenied", { missing: setupMissingBrief(setup), sid: stSid }, true)
+            throw new Error(setupDenyMessage(setup))
+          }
+        }
+      } catch (e) {
+        if (denySkip.has(input.callID)) throw e
+        // internal error on our side (never one of our own denies) → fail-open, do not break the tool path
       }
       // [2026-09-04]-[read watermark gate: read-class/bash tools other than task are intercepted by tier per the measured session watermark]
       if (input.tool !== "task") {
@@ -1819,7 +1946,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             if (autoRedirectOn) {
               const cand = firstCandidateShell(agent, ctx, gateExtras)
               if (cand && tryRedirect(cand, output.args?.prompt)) {
-                appendStatusLog(`auto-redirect ${agent} → ${cand} (uninjected shell; redirected to the chain-head candidate)`)
+                appendStatusLog("notice.dispatch.redirectUninjected", { agent, candidate: cand })
                 traceDispatch(input.sessionID, cand, output.args?.prompt, true, gateSnap.lanes)
                 noteResumedChild(input.sessionID, cand, output.args)
                 return
@@ -1840,7 +1967,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
               const lane = BUILTIN_SUBAGENTS[agent]
               const cand = lane ? laneHeadCandidate(lane, ctx) : null
               if (cand && tryRedirect(cand, output.args?.prompt)) {
-                appendStatusLog(`auto-redirect ${agent} → ${cand} (built-in agent blocked)`)
+                appendStatusLog("notice.dispatch.redirectBuiltinBlocked", { agent, candidate: cand })
                 traceDispatch(input.sessionID, cand, output.args?.prompt, true, gateSnap.lanes)
                 noteResumedChild(input.sessionID, cand, output.args)
                 return
@@ -1849,13 +1976,14 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             denySkip.add(input.callID)
             throw new Error(builtinDeny)
           }
-          appendStatusLog(noteUnknownAgent(agent))
+          const unknownNote = noteUnknownAgent(agent)
+          appendStatusLog(unknownNote.key, unknownNote.params)
           traceDispatch(input.sessionID, agent, output.args?.prompt, false, gateSnap.lanes)
           noteResumedChild(input.sessionID, agent, output.args)
           return
         }
         const r = checkShell(agent, shell, output.args?.prompt, gateSnap)
-        if (r.note) appendStatusLog(r.note)
+        if (r.notes) for (const n of r.notes) appendStatusLog(n.key, n.params)
         if (!r.deny) {
           traceDispatch(input.sessionID, agent, output.args?.prompt, false, gateSnap.lanes)
           noteResumedChild(input.sessionID, agent, output.args)
@@ -1863,7 +1991,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         if (r.deny) {
           // [2026-09-04]-[autoRedirect: denied and a hint candidate is already computed → one-hop silent redirect (guard re-check), zero retries]
           if (tryRedirect(r.redirect, output.args?.prompt)) {
-            appendStatusLog(`auto-redirect ${agent} → ${r.redirect} (${r.deny.slice(0, 60)})`)
+            appendStatusLog("notice.dispatch.redirectDenied", { agent, redirect: String(r.redirect), deny: r.deny.slice(0, 60) })
             traceDispatch(input.sessionID, r.redirect ?? agent, output.args?.prompt, true, gateSnap.lanes)
             noteResumedChild(input.sessionID, r.redirect ?? agent, output.args)
             return
@@ -1876,7 +2004,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         }
       } catch (exc) {
         if (denySkip.has(input.callID)) throw exc // deny rethrown as-is (blocks dispatch)
-        appendStatusLog(`six gates fail-open (allowed): ${exc}`)
+        appendStatusLog("notice.dispatch.gatesFailOpen", { exc: String(exc) })
       }
     },
 
@@ -1900,16 +2028,21 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           const saved = saveLangFromQuestion(hookInput.args, (hookOutput as any)?.output, pluginDirectory, options.workspace?.dirname || DEFAULT_WORKSPACE_DIRNAME)
           if (saved) {
             langAsked.delete(hookInput.sessionID)
-            appendStatusLog(`project language preference saved (${saved.rel}): conversation=${saved.cfg.conversation} comments=${saved.cfg.comments} docs=${saved.cfg.docs}`)
+            appendStatusLog("notice.lang.prefsSaved", {
+              rel: saved.rel,
+              conversation: saved.cfg.conversation,
+              comments: saved.cfg.comments,
+              docs: saved.cfg.docs,
+            })
           } else if (hasLangMarkerQuestions(hookInput.args)) {
             langGateWaived.add(hookInput.sessionID)
-            appendStatusLog(`lang gate: marker question completed without a saved config — gate waived for session ${hookInput.sessionID}`)
+            appendStatusLog("notice.lang.gateWaived", { sid: hookInput.sessionID })
           }
           // [2026-09-17]-[broad-search clarify latch: our marker question completed (answered or declined — either
           //  way the user was asked) → broad searches pass for the rest of the session]
           if (hasSearchMarkerQuestion(hookInput.args)) {
             searchScopeAsked.add(hookInput.sessionID)
-            appendStatusLog(`search clarify: scope ask completed — gate open for session ${hookInput.sessionID}`)
+            appendStatusLog("notice.search.scopeAskDone", { sid: hookInput.sessionID })
           }
         } catch { /* fail-open */ }
       }
@@ -1922,7 +2055,12 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           const len = JSON.stringify((hookOutput as any)?.output ?? "").length
           const charge = estimateOutputTokens(len)
           chargeTurnRead(sid, charge)
-          if (charge >= 100) appendStatusLog(`read budget charge +${charge} (tool ${hookInput.tool}, turn ${turnUsedOf(sid)}/${turnBudgetOf(readBudgetOf(options.context))})`)
+          if (charge >= 100) appendStatusLog("notice.ctx.readBudgetCharge", {
+            charge,
+            tool: hookInput.tool,
+            turnUsed: turnUsedOf(sid),
+            turnBudget: turnBudgetOf(readBudgetOf(options.context)),
+          })
         }
       } catch { /* fail-open */ }
       try {
@@ -1936,7 +2074,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         if (handoverInflight.has(sid)) return
         if (Date.now() - (handoverCooldown.get(sid) ?? 0) < HANDOVER_COOLDOWN_MS) return
         handoverInflight.add(sid)
-        appendStatusLog(`auto-handover triggered (after ${hookInput.tool}, ~${kk(wm.tokens)} exceeds the force-compaction watermark): full backup + queued compaction of the current session`)
+        appendStatusLog("notice.handover.autoTriggered", { tool: hookInput.tool, wmTokens: kk(wm.tokens) })
         // [2026-09-05]-[backup leg bounded: the SDK disables HTTP timeouts (client.js req.timeout = false), so any unbounded
         //  await here could hang the tool path forever; 45s is generous for the DB-local fork+tag leg (fail-open on timeout)]
         const result = await Promise.race([
@@ -1947,10 +2085,11 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           }),
         ])
         handoverCooldown.set(sid, Date.now())
-        appendStatusLog(`auto-handover backup ${result.ok ? "done" : "failed"}: ${result.message}`)
+        appendStatusLog("notice.handover.backupResult", { outcome: result.ok ? "done" : "failed", message: result.message })
         // compaction leg: NEVER awaited here (see the 2026-09-05 header note) — fired detached
         if (result.ok) {
           turnReadUsage.delete(sid)
+          readContinuation.delete(sid)
           wmHistory.delete(sid)
           lastUserMsg.delete(sid)
           sessionMsgModel.delete(sid)
@@ -1962,18 +2101,16 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           const compactionModel = key && slash > 0 ? { providerID: key.slice(0, slash), modelID: key.slice(slash + 1) } : undefined
           void compactSession(v1HandoverPort(pluginClient), sid, pluginDirectory, compactionModel).then((accepted) => {
             appendStatusLog(
-              `auto-handover compaction ${accepted ? "accepted" : "failed"}: ${
-                accepted
-                  ? "session.summarize returned (compaction ran on the session loop)"
-                  : compactionModel
-                    ? "session.summarize rejected (backup stands)"
-                    : "no session model recorded (chat.params never fired); backup stands"
-              }`,
+              accepted
+                ? "notice.handover.compactionAccepted"
+                : compactionModel
+                  ? "notice.handover.compactionRejected"
+                  : "notice.handover.compactionNoModel",
             )
           })
         }
       } catch (exc) {
-        appendStatusLog(`auto-handover fail-open: ${exc}`)
+        appendStatusLog("notice.handover.failOpen", { exc: String(exc) })
       } finally {
         if (sid) handoverInflight.delete(sid)
       }
@@ -2026,9 +2163,10 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           const sid = props?.sessionID
           const info = props?.info
           if (typeof sid === "string" && !isShellOrInternalSession(sid)) {
-             if (info?.role === "user") {
-               lastUserMsg.set(sid, info.id)
-               turnReadUsage.delete(sid)
+              if (info?.role === "user") {
+                lastUserMsg.set(sid, info.id)
+                turnReadUsage.delete(sid)
+                readContinuation.delete(sid) // [2026-09-18]-[v1.1: a pending read want does not survive the user turn]
                 // [2026-09-11]-[opportunistic first-try: if the host ever ships parts on the event's info this fires
                 //  before the transform pass; in the real host info carries no parts so this no-ops and the reliable
                 //  capture lives in experimental.chat.messages.transform (see applyCtxControlAction)]
@@ -2058,6 +2196,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
               if (pid && known !== undefined && pid !== known) {
                 lastUserMsg.set(sid, pid)
                 turnReadUsage.delete(sid)
+                readContinuation.delete(sid) // [2026-09-18]-[v1.1: a pending read want does not survive the user turn]
               }
             }
           } else if (typeof sid === "string" && isShellAgentSession(sid) && info?.role === "assistant") {
@@ -2077,7 +2216,12 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
                 terminatedSessions.add(sid)
                 const agentName = dynamic ? manager?.sessionAgentName(sid) : sessionAgent.get(sid)
                 persistTerminatedSession(sid, est, agentName)
-                appendStatusLog(`subagent context cap: session ${sid}${agentName ? ` (${agentName})` : ""} reached ~${Math.round(est / 1000)}k tokens (cap ${Math.round(cap / 1000)}k) — tools denied, progress summary demanded, session terminated (no task_id resume)`)
+                appendStatusLog("notice.ctx.capTerminated", {
+                  sid,
+                  agentSuffix: agentName ? ` (${agentName})` : "",
+                  estTokens: Math.round(est / 1000),
+                  capTokens: Math.round(cap / 1000),
+                })
               }
             }
           }
@@ -2092,6 +2236,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             shellWatermark.delete(sid) // [2026-09-06]-[subagent cap watermark follows the same cleanup; terminatedSessions is intentionally NOT cleaned — termination is permanent]
             shellSoftTierDelivered.delete(sid) // [2026-09-14]-[subagent soft-tier dedup follows the session out (re-arm on a fresh same-id session is impossible; keeps the map bounded)]
             turnReadUsage.delete(sid)
+            readContinuation.delete(sid) // [2026-09-18]-[v1.1: pending read want follows the session out]
             wmHistory.delete(sid)
             lastUserMsg.delete(sid)
             sessionMsgModel.delete(sid)
@@ -2147,7 +2292,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         // [2026-08-29]-[feature 1 dynamic matrix only: legacy keeps the original recordFailure breaker path (tester regression found the missing gate)]-
         const realFailed = dynamic && Boolean(combo && ctx.matrix?.combos[combo]?.status === "ok")
         if (realFailed) {
-          // rate limit uses a short TTL (10-min self-heal); endpoint uses 6h (retrying a permanent config error is pointless); others default to 30 minutes
+          // rate limit uses a short TTL (10-min self-heal); endpoint uses 6h (retrying a permanent config error is pointless); others default to 5 minutes
           const ttlMs = category === "rate_limit" ? RATE_LIMIT_TTL_MS : category === "endpoint" ? ENDPOINT_TTL_MS : undefined
           markRealFailure(combo!, undefined, ttlMs)
           // [2026-09-01]-[isolation events persisted: previously purely in-memory with zero audit — the banner reported down but no record existed]
@@ -2157,7 +2302,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         const rec = realFailed ? null : recordFailure(agent, reason, registry)
         // Copilot gateway quota-class errors → second truth source marks the pool exhausted (trusted until reset_date)
         // [2026-08-29]-[failure classification: only a real quota marks pool exhaustion, transient 429s never do; quota on non-copilot pools gets no
-        //  pool-level handling — the 10min probe keeps reporting down, the banner degrades naturally, and the 30-min in-memory mark already covers it]
+        //  pool-level handling — the 10min probe keeps reporting down, the banner degrades naturally, and the 5-min in-memory mark already covers it]
         if (category === "quota") {
           const shell = registry[agent]
           if (shell?.pool === "copilot") markCopilotGatewayExhausted(reason)
@@ -2167,12 +2312,12 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
           const shell = registry[agent]
           if (shell && noteModelNotFound(`${shell.provider}/${shell.modelId}`)) {
             clearBannerCache()
-            appendStatusLog(`model retired (consecutive 404s), removed from candidates: ${shell.provider}/${shell.modelId}`)
+            appendStatusLog("notice.provider.modelRetired", { provider: shell.provider, modelId: shell.modelId })
           }
         }
-        if (rec?.tripped) appendStatusLog(`${agent} breaker tripped (600s): ${reason.slice(0, 80)}`)
+        if (rec?.tripped) appendStatusLog("notice.breaker.agentTripped", { agent, reason: reason.slice(0, 80) })
       } catch (exc) {
-        appendStatusLog(`failure accounting fail-open: ${exc}`)
+        appendStatusLog("notice.breaker.accountingFailOpen", { exc: String(exc) })
       }
     },
   }
