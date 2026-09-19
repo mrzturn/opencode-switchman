@@ -34,7 +34,8 @@ export function recordIsolation(agent: string, comboKey: string, category: strin
     const reason = `real-call isolation(${mins}m·${category}): ${reasonRaw.split(/\s+/).join(" ")}`.slice(0, 200)
     ensureStateDir()
     appendFileSync(paths().failures, `${JSON.stringify({ agent, key: comboKey, shell: agent, combo: comboKey, reason, ts: now, kind: "isolated" })}\n`)
-    appendStatusLog(`${agent} real-call isolated for ${mins}m (${category}): ${reasonRaw.slice(0, 60)}`)
+    // [2026-09-19]-[i18n: status-log notices now keyed (en.ts catalog renders at sidebar display time)]
+    appendStatusLog("notice.breaker.realCallIsolated", { agent, mins, category, reason: reasonRaw.slice(0, 60) })
   } catch { /* fail-open */ }
 }
 
@@ -45,7 +46,7 @@ export function recordInjection(agent: string, reasonRaw: string): void {
     const reason = `shell not injected into opencode (no isolation): ${reasonRaw.split(/\s+/).join(" ")}`.slice(0, 200)
     ensureStateDir()
     appendFileSync(paths().failures, `${JSON.stringify({ agent, key: agent, shell: null, combo: null, reason, ts: now, kind: "injection" })}\n`)
-    appendStatusLog(`shell not injected into opencode (no isolation): ${agent} ${reasonRaw.slice(0, 60)}`)
+    appendStatusLog("notice.breaker.shellNotInjected", { agent, reason: reasonRaw.slice(0, 60) })
   } catch { /* fail-open */ }
 }
 
@@ -197,7 +198,7 @@ export function recordFailure(
     }
     return { key, tripped: false }
   } catch (exc) {
-    appendStatusLog(`breaker fail-open: ${exc}`)
+    appendStatusLog("notice.breaker.failOpen", { exc: String(exc) })
     return { key: agent, tripped: false }
   }
 }

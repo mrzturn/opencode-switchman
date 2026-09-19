@@ -5,6 +5,7 @@ import { mkdirSync, readFileSync, writeFileSync, renameSync, statSync, existsSyn
 import { homedir } from "node:os"
 import { join } from "node:path"
 import manifestDefault from "./shells.json"
+import type { MsgKey } from "./i18n"
 import type {
   ShellManifestEntry, ShellRegEntry, Matrix, Routing, MatrixEntry, SwitchmanOptions,
 } from "./types"
@@ -56,17 +57,28 @@ export const paths = () => {
     routeSnapshot: join(dir, "route-snapshot.json"),
     // [2026-09-01]-[TUI sidebar new "provider watermark/peak" panel: same source as the [WATERMARK] banner, always visible, polled by tui.tsx]
     quotaBrief: join(dir, "quota-brief.json"),
+    // [2026-09-19]-[i18n wiring step 1: render-time locale inputs — global UI locale (from plugin config "ui"."lang")
+    //  and workspace dirname (from config "workspace"."dirname"); read by the i18n locale chain, written once per startup]
+    uiLocale: join(dir, "ui-locale.json"),
+    workspaceMeta: join(dir, "workspace-meta.json"),
   }
 }
 
 // [2026-08-31]-[TUI sidebar live status ring log: keeps at most STATUS_LOG_MAX entries, polled by tui.tsx]
+// [2026-09-19]-[i18n: entries are now structured {key, params, alert} — the sidebar translates at render time via
+//  renderNotice(); legacy prose-only rows (text, no key) still render verbatim, and not-yet-migrated callers passing
+//  prose as the key also render verbatim through the unknown-key fallback; `key` is typed string for now and will be
+//  tightened to MsgKey once all emitters are migrated]
+// [2026-09-19]-[i18n cleanup: tighten the status-log writer to MsgKey (all emitters migrated to catalog keys;
+//  legacy prose-only rows still read back via the optional text field; no runtime import — type-only, no cycle)]
 export const STATUS_LOG_MAX = 20
-export type StatusLogEntry = { ts: string; text: string }
-export function appendStatusLog(text: string): void {
+export type StatusLogEntry = { ts: string; key?: MsgKey; params?: Record<string, string | number>; alert?: boolean; text?: string }
+export function appendStatusLog(key: MsgKey, params?: Record<string, string | number>, alert?: boolean): void {
   try {
     const p = paths().statusLog
     const prev = readJson<StatusLogEntry[]>(p) ?? []
-    const next = [...prev, { ts: nowIso(), text }].slice(-STATUS_LOG_MAX)
+    const entry: StatusLogEntry = { ts: nowIso(), key, ...(params ? { params } : {}), ...(alert ? { alert: true } : {}) }
+    const next = [...prev, entry].slice(-STATUS_LOG_MAX)
     writeJsonAtomic(p, next)
   } catch { /* fail-open: status log failure never blocks the main flow */ }
 }
@@ -82,12 +94,53 @@ export function writeRouteSnapshot(entries: RouteSnapshotEntry[]): void {
 // [2026-09-01]-[provider watermark/peak snapshot: whole overwrite, renders the sidebar "watermark" panel; shape shares the same
 //  source as banner.ts providerStatusEntries (providers with observe=false are filtered by the caller and never appear here).
 //  [2026-09-02]-[v2: one entry block per provider + rows sub-rows (progress bar/reset time), replacing the single-line text]]
-export type QuotaBriefRow = { label: string; text: string; usedPct: number | null; tail?: string }
-export type QuotaBriefEntry = { pool: string; label: string; rows: QuotaBriefRow[]; observeOnly: boolean; peakActive: boolean; stale: boolean }
+// [2026-09-19]-[P4 render-time quota i18n: rows carry key+params as the future TUI render source (t(locale, key, params)
+//  against the quota.* catalog); label/text/tail stay as debug/legacy English until the TUI migration renders via key]
+// [2026-09-19]-[quota i18n labels/tails: rows additionally carry labelKey+labelParams (quota.row5h/rowWeek/rowMcp/
+//  rowCredits/rowBalance; rowRefresh stays as the main key since the refresh text is raw data) and tailKey+tailParams
+//  (quota.resetLater/resetTime/resetDate/resetDateTime with {hhmm}/{mmdd}, quota.balanceWarn with {thr}); entries
+//  carry key+params for the pool label (quota.poolGlm/poolCopilot/poolDeepSeek, params empty); legacy label/text/tail
+//  unchanged; fail-open behavior unchanged]
+export type QuotaBriefRow = { key?: string; params?: Record<string, string | number>; labelKey?: string; labelParams?: Record<string, string | number>; tailKey?: string; tailParams?: Record<string, string | number>; usedPct: number | null; label?: string; text?: string; tail?: string }
+export type QuotaBriefEntry = { pool: string; label: string; key?: string; params?: Record<string, string | number>; rows: QuotaBriefRow[]; observeOnly: boolean; peakActive: boolean; stale: boolean }
+// [2026-09-19]-[P4: signature and fail-open behavior unchanged; entries now flow through with row key+params (see QuotaBriefRow)]
 export function writeQuotaBrief(entries: QuotaBriefEntry[]): void {
   try {
     writeJsonAtomic(paths().quotaBrief, { ts: nowIso(), entries })
   } catch { /* fail-open: snapshot write failure never blocks the main flow */ }
+}
+
+// [2026-09-19]-[i18n wiring step 1: global UI locale snapshot (normalized tag or null) for the render-time locale chain
+//  (see src/i18n.ts resolveDisplayLocale); null overwrites any previous value; fail-open everywhere]
+export function writeUiLocale(lang: string | null): void {
+  try {
+    writeJsonAtomic(paths().uiLocale, { v: 1, lang })
+  } catch { /* fail-open: locale snapshot failure never blocks the main flow */ }
+}
+
+/** Read the persisted UI locale back; missing/corrupt/non-string → null (caller falls through the locale chain) */
+export function readUiLocale(): string | null {
+  try {
+    const data = readJson<{ lang?: unknown }>(paths().uiLocale)
+    return typeof data?.lang === "string" ? data.lang : null
+  } catch { return null }
+}
+
+// [2026-09-19]-[i18n wiring step 1: workspace dirname snapshot so render-time readers resolve the project settings path
+//  without the plugin config; fail-open everywhere]
+export function writeWorkspaceMeta(dirname: string): void {
+  try {
+    writeJsonAtomic(paths().workspaceMeta, { v: 1, dirname })
+  } catch { /* fail-open: meta snapshot failure never blocks the main flow */ }
+}
+
+/** Read the persisted workspace dirname back; missing/corrupt/empty → ".switchman" */
+export function readWorkspaceDirname(): string {
+  try {
+    const data = readJson<{ dirname?: unknown }>(paths().workspaceMeta)
+    if (typeof data?.dirname === "string" && data.dirname.trim()) return data.dirname
+    return ".switchman"
+  } catch { return ".switchman" }
 }
 
 

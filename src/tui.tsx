@@ -8,6 +8,10 @@
 // [2026-09-01]-[Notice area narrowed to the last entry only; best-candidate panel added, stacked above the notice area]
 // [2026-09-04]-[English localization: translate panel/dialog copy and comments; RESTART_HINT_RE now matches the English
 //  "restart opencode" notice (emitters were localized in the same sweep); no other behavior change]
+// [2026-09-19]-[render-time TUI localization sweep: sidebar chrome, notices (structured alert flag via renderNotice,
+//  replacing the RESTART_HINT_RE regex highlight), quota rows, /poolConfig //modelRank //handover dialogs and palette
+//  entries all render via t() against the locale catalogs; the display locale resolves per poll tick (session project
+//  lang → global ui.lang → terminal env); marquee title, colors, hotkeys, symbols and layout unchanged]
 import type { TuiPlugin, TuiPluginModule, TuiPluginApi } from "@opencode-ai/plugin/tui"
 // [2026-09-02]-[solid-js must be imported bare: the host runtime-plugin only rewrites exact specifiers
 //  ("solid-js"/"@opentui/solid") at runtime (opentui:runtime-module:* → host instance); the deep path "solid-js/dist/solid.js"
@@ -29,13 +33,17 @@ import { PLUGIN_VERSION } from "./version"
 import { allModelRows, rankViewRows } from "./config-cli"
 import { LANE_ORDER, type Lane } from "./types"
 import { runHandover, type HandoverPort } from "./handover-core"
+import { t, resolveDisplayLocale, renderNotice, type LocaleTag, type MsgKey } from "./i18n"
+import { readUiLocale, readWorkspaceDirname } from "./state"
 
-type StatusLogEntry = { ts: string; text: string }
+type StatusLogEntry = { ts: string; text?: string; key?: string; params?: Record<string, string | number>; alert?: boolean }
 type RouteSnapshotEntry = { lane: string; best: string | null; degraded: boolean }
 type RouteSnapshot = { ts: string; entries: RouteSnapshotEntry[] }
 // [2026-09-02]-[v2: one block per provider plus rows sub-lines (progress bar / reset time), isomorphic to providerStatusEntries in banner.ts]
-type QuotaBriefRow = { label: string; text: string; usedPct: number | null; tail?: string }
-type QuotaBriefEntry = { pool: string; label: string; rows: QuotaBriefRow[]; observeOnly: boolean; peakActive: boolean; stale: boolean }
+// [2026-09-19]-[render-time quota i18n: rows/entry blocks carry key+params as the TUI render source (t(locale, key, params)
+//  against the quota.* catalog); legacy label/text/tail stay as the fallback when a key is absent]
+type QuotaBriefRow = { key?: string; params?: Record<string, string | number>; labelKey?: string; labelParams?: Record<string, string | number>; tailKey?: string; tailParams?: Record<string, string | number>; usedPct: number | null; label?: string; text?: string; tail?: string }
+type QuotaBriefEntry = { pool: string; label: string; key?: string; params?: Record<string, string | number>; rows: QuotaBriefRow[]; observeOnly: boolean; peakActive: boolean; stale: boolean }
 type QuotaBrief = { ts: string; entries: QuotaBriefEntry[] }
 
 function statusLogPath(): string {
@@ -86,7 +94,6 @@ function readRestartRequired(): string[] {
 
 const POLL_MS = 2000
 const SHOW_LAST = 1
-const RESTART_HINT_RE = /restart opencode[^;]*/gi
 const MARQUEE_MS = 150
 const TITLE = "switchman"
 // [2026-09-07]-[version/restart flags are session-scoped: mtime later than this process's start = active, matching
@@ -163,23 +170,44 @@ function hsvToHex(h: number, s: number, v: number): string {
   return `#${hex(to255(r))}${hex(to255(g))}${hex(to255(b))}`
 }
 
-// [2026-09-01]-[When a notice carries a "restart opencode" hint (restartRequired / provider.list background probe),
-//  highlight it in error color to tell "manual restart needed" apart from ordinary status chatter at a glance;
-//  rendered by plain string splitting, no markdown/ansi parsing]
-function noticeSegments(text: string): { text: string; alert: boolean }[] {
-  const matches = [...text.matchAll(RESTART_HINT_RE)]
-  if (matches.length === 0) return [{ text, alert: false }]
-  const segments: { text: string; alert: boolean }[] = []
-  let cursor = 0
-  for (const m of matches) {
-    const idx = m.index ?? 0
-    if (idx > cursor) segments.push({ text: text.slice(cursor, idx), alert: false })
-    segments.push({ text: m[0], alert: true })
-    cursor = idx + m[0].length
+// [2026-09-19]-[render-time locale: resolved per poll tick so language switches apply live; session directory first
+//  with the TUI directory as the sync fallback (same pattern as refreshBranch/location below; a thenable session.get
+//  result degrades to the fallback), then the workspace dirname snapshot, the global ui.lang snapshot, and finally the
+//  terminal env inside resolveDisplayLocale; all reads are cheap sync fs]
+function resolveTuiLocale(api: TuiPluginApi, sessionID?: string): LocaleTag {
+  let sid = sessionID
+  if (!sid) {
+    try {
+      const route = api.route.current
+      if (route.name === "session" && typeof route.params?.sessionID === "string") sid = route.params.sessionID
+    } catch { /* fail-open: fall through without a session project step */ }
   }
-  if (cursor < text.length) segments.push({ text: text.slice(cursor), alert: false })
-  return segments
+  let sessionDir: string | null = null
+  try {
+    if (sid) {
+      const s = api.state.session.get(sid) as unknown as { directory?: unknown; then?: unknown } | null
+      if (s && typeof s.then !== "function" && typeof s.directory === "string" && s.directory) {
+        sessionDir = s.directory
+      }
+    }
+  } catch { /* fail-open: fall through to the directory fallback */ }
+  if (!sessionDir) {
+    try {
+      const fallback = api.state.path.directory
+      sessionDir = typeof fallback === "string" ? fallback : null
+    } catch { sessionDir = null }
+  }
+  return resolveDisplayLocale({
+    sessionDir,
+    workspaceDirname: readWorkspaceDirname(),
+    uiLang: readUiLocale(),
+    env: process.env,
+  })
 }
+
+// [2026-09-19]-[alert-flag notices: entries carry a structured `alert` flag (see src/state.ts) rendered in error color
+//  to tell "manual restart needed" apart from ordinary status chatter at a glance; text renders via renderNotice()
+//  (keyed entries translate, legacy prose passes through verbatim)]
 
 // [2026-09-02]-[Restore the built-in footer content shadowed by this panel's single_winner: project path + git branch
 //  + version line. This plugin's default order 0 < the built-in internal:sidebar-footer's 100, and the sidebar_footer
@@ -233,6 +261,8 @@ function ViewInner(props: { api: TuiPluginApi; sessionID: string }) {
   const [updateFlags, setUpdateFlags] = createSignal(flagSemantics(statusLogPath(), PROCESS_START))
   const [installedVersion, setInstalledVersion] = createSignal<string | null>(installedPluginVersion())
   const [tick, setTick] = createSignal(0)
+  // [2026-09-19]-[display locale signal: refreshed inside the poll tick below so language switches apply live]
+  const [locale, setLocale] = createSignal<LocaleTag>(resolveTuiLocale(props.api, props.sessionID))
   // [2026-09-02]-[Branch signal: re-read .git/HEAD every poll cycle (session directory first, TUI directory as
   //  fallback); also subscribes to vcs.branch.updated for instant refresh when the event chain works, with polling as
   //  the safety net; falls back to api.state.vcs when the direct read fails]
@@ -250,6 +280,7 @@ function ViewInner(props: { api: TuiPluginApi; sessionID: string }) {
     setSelfUpdate(readSelfUpdateState())
     setUpdateFlags(flagSemantics(statusLogPath(), PROCESS_START))
     setInstalledVersion(installedPluginVersion())
+    setLocale(resolveTuiLocale(props.api, props.sessionID))
     refreshBranch()
   }, POLL_MS)
   // [2026-09-02]-[The title rainbow marquee needs its own heartbeat far faster than data polling; separate duties and
@@ -304,22 +335,25 @@ function ViewInner(props: { api: TuiPluginApi; sessionID: string }) {
               <box flexDirection="column" gap={0}>
                 <text>
                   {!q.observeOnly && <span style={{ fg: MODEL_COLOR }}>✓ </span>}
-                  <b><span style={{ fg: theme().text }}>{q.label}</span></b>
-                  {q.peakActive && <span style={{ fg: theme().warning }}> ·peak</span>}
-                  {q.stale && <span style={{ fg: theme().warning }}> ·stale</span>}
-                  {q.observeOnly && !allObserve && <span style={{ fg: theme().textMuted }}> ·observe-only</span>}
+                  <b><span style={{ fg: theme().text }}>{q.key ? t(locale(), q.key as MsgKey, q.params) : q.label}</span></b>
+                  {q.peakActive && <span style={{ fg: theme().warning }}>{t(locale(), "sidebar.peakTag")}</span>}
+                  {q.stale && <span style={{ fg: theme().warning }}>{t(locale(), "sidebar.staleTag")}</span>}
+                  {q.observeOnly && !allObserve && <span style={{ fg: theme().textMuted }}>{t(locale(), "sidebar.observeOnlyTag")}</span>}
                 </text>
                 <For each={q.rows}>
                   {(r) => {
-                    const { fill, track, rest } = splitBarText(r.text)
+                    const rowText = r.key ? t(locale(), r.key as MsgKey, r.params) : (r.text ?? "")
+                    const rowLabel = r.labelKey ? t(locale(), r.labelKey as MsgKey, r.labelParams) : (r.label ?? "")
+                    const rowTail = r.tailKey ? t(locale(), r.tailKey as MsgKey, r.tailParams) : r.tail
+                    const { fill, track, rest } = splitBarText(rowText)
                     const value = waterColor(r.usedPct)
                     return (
                       <text>
-                        <span style={{ fg: theme().textMuted }}>{r.label ? `  ${padEndW(r.label, 8)}` : "  "}</span>
+                        <span style={{ fg: theme().textMuted }}>{rowLabel ? `  ${padEndW(rowLabel, 8)}` : "  "}</span>
                         <span style={{ fg: value ?? theme().textMuted }}>{fill}</span>
                         <span style={{ fg: theme().textMuted }}>{track}</span>
                         <span style={{ fg: value ?? theme().textMuted }}>{rest}</span>
-                        {r.tail && <span style={{ fg: theme().textMuted }}> {r.tail}</span>}
+                        {rowTail && <span style={{ fg: theme().textMuted }}> {rowTail}</span>}
                       </text>
                     )
                   }}
@@ -343,19 +377,23 @@ function ViewInner(props: { api: TuiPluginApi; sessionID: string }) {
                 shell-registration restartRequired with upgrade-pending (upgraded.flag / prod disk-version mismatch);
                 fail-open unchanged: missing state renders just the bare running version]-[impacts the sidebar title row only] */}
             <span style={{ fg: theme().textMuted }}> {version().running}</span>
-            {version().update !== null && <span style={{ fg: MODEL_COLOR }}> → {version().update}</span>}
+            {version().update !== null && <span style={{ fg: MODEL_COLOR }}>{t(locale(), "sidebar.updateAvailable", { updateVersion: version().update! })}</span>}
             {/* [2026-09-06]-[blinking restart tag: ~600ms on/off via the 150ms marquee heartbeat (tick/4 parity), bold
                 red — a pending shell-registration restart used to render as a static tag that was easy to stop seeing;
                 fail-open unchanged: empty restartRequired list renders nothing]-[impacts the sidebar title row only] */}
             {restartPending() && Math.floor(tick() / 4) % 2 === 0 && (
-              <span style={{ fg: theme().error }}><b> [RESTART NEEDED]</b></span>
+              <span style={{ fg: theme().error }}><b>{t(locale(), "sidebar.restartNeeded")}</b></span>
             )}
           </text>
           <For each={routes()}>
             {(r: RouteSnapshotEntry) => (
               <text fg={theme().textMuted}>
-                <span style={{ fg: LANE_COLOR }}>{r.lane.padEnd(10)} </span>
-                <span style={{ fg: MODEL_COLOR }}>{r.best ?? "none available"}</span>
+                {/* [2026-09-19]-[lane labels localized for DISPLAY ONLY: t() falls back to the raw lane identifier
+                    (unknown/custom lanes render verbatim), so runtime LANE_ORDER, pool-config.json keys, [ROUTES] and
+                    the protocol keep the hardcoded English identifiers; padEndW keeps CJK labels column-aligned]}
+                    -[display-layer change, zero runtime impact] */}
+                <span style={{ fg: LANE_COLOR }}>{padEndW(t(locale(), `sidebar.lane.${r.lane}` as MsgKey, undefined, r.lane), 10)} </span>
+                <span style={{ fg: MODEL_COLOR }}>{r.best ?? t(locale(), "sidebar.noneAvailable")}</span>
                 {r.degraded ? <span style={{ fg: theme().warning }}>*</span> : ""}
               </text>
             )}
@@ -365,15 +403,13 @@ function ViewInner(props: { api: TuiPluginApi; sessionID: string }) {
       {recent().length > 0 && (
         <box paddingTop={1} flexDirection="column" gap={0}>
           <text fg={theme().textMuted}>
-            <b>notice</b>
+            <b>{t(locale(), "sidebar.noticeLabel")}</b>
           </text>
           <For each={recent()}>
             {(item: StatusLogEntry) => (
               <text fg={theme().textMuted}>
                 <span style={{ fg: theme().textMuted }}>{item.ts.slice(11, 19)} </span>
-                <For each={noticeSegments(item.text)}>
-                  {(seg: { text: string; alert: boolean }) => <span style={{ fg: seg.alert ? theme().error : theme().text }}><b>{seg.text}</b></span>}
-                </For>
+                <span style={{ fg: item.alert ? theme().error : theme().text }}><b>{renderNotice(item, locale())}</b></span>
               </text>
             )}
           </For>
@@ -410,6 +446,8 @@ function openPoolConfigDialog(api: TuiPluginApi): void {
 }
 
 function PoolPickerDialog(props: { api: TuiPluginApi }) {
+  // [2026-09-19]-[dialogs resolve the display locale once at mount (transient UI; the sidebar signal covers live switches)]
+  const loc = resolveTuiLocale(props.api)
   // [2026-09-03 semantic fix]-[Pool = task lane (economy/mechanical/main/hard/vision/review), not a provider pool:
   //  pick the participating models per lane so the six-lane candidates differ; the same model may join multiple lanes]
   const lanes = createMemo(() => {
@@ -423,13 +461,13 @@ function PoolPickerDialog(props: { api: TuiPluginApi }) {
   })
   return (
     <props.api.ui.DialogSelect
-      title="Task pools (pick a task pool; Esc to exit)"
+      title={t(loc, "dialog.pool.title")}
       options={lanes().map((p) => ({
-        title: `${p.sel ? "✎ " : ""}${p.lane}`,
+        title: t(loc, "dialog.pool.laneRow", { pinMark: p.sel ? "✎ " : "", lane: p.lane }),
         value: p.lane,
         description: p.sel
-          ? `manual selection: ${p.sel.size}/${p.total} models participating`
-          : "not configured: system default (all available models participate)",
+          ? t(loc, "dialog.pool.manualSelection", { selCount: p.sel.size, totalCount: p.total })
+          : t(loc, "dialog.pool.notConfigured"),
         onSelect: () => props.api.ui.dialog.replace(() => <PoolModelsDialog api={props.api} lane={p.lane} />),
       }))}
     />
@@ -437,6 +475,7 @@ function PoolPickerDialog(props: { api: TuiPluginApi }) {
 }
 
 function PoolModelsDialog(props: { api: TuiPluginApi; lane: Lane }) {
+  const loc = resolveTuiLocale(props.api)
   const rows = createMemo(() => allModelRows())
   // Initial checkboxes: manually configured → the configured list; unconfigured → system default full set (the first
   // toggle materializes it as an explicit list)
@@ -450,12 +489,17 @@ function PoolModelsDialog(props: { api: TuiPluginApi; lane: Lane }) {
     } catch (exc) {
       // Defensive: unknown lane/IO errors must not break the dialog (current lanes come from LANE_ORDER so this is
       // unreachable; guards future changes)
-      props.api.ui.toast({ variant: "error", message: `write failed: ${exc instanceof Error ? exc.message : exc}` })
+      props.api.ui.toast({ variant: "error", message: t(loc, "dialog.pool.toggleWriteFailed", { message: exc instanceof Error ? exc.message : String(exc) }) })
       return
     }
     props.api.ui.toast({
       variant: added ? "success" : "info",
-      message: `${added ? "Added" : "Removed"} ${key} ${added ? "to" : "from"} the ${props.lane} pool (effective immediately, sidebar refreshes)`,
+      message: t(loc, "dialog.pool.modelToggled", {
+        verb: added ? "Added" : "Removed",
+        modelKey: key,
+        direction: added ? "to" : "from",
+        lane: props.lane,
+      }),
     })
   }
   const toggle = (key: string) => {
@@ -466,7 +510,7 @@ function PoolModelsDialog(props: { api: TuiPluginApi; lane: Lane }) {
       // Keep at least one participating model; to restore the system default use "Clear config" (empty list =
       // unconfigured = default full set)
       if (cur.size <= 1) {
-        props.api.ui.toast({ variant: "warning", message: 'Keep at least one participating model; use "Clear config" to restore the system default' })
+        props.api.ui.toast({ variant: "warning", message: t(loc, "dialog.pool.keepOneModel") })
         return
       }
       cur.delete(key)
@@ -479,15 +523,15 @@ function PoolModelsDialog(props: { api: TuiPluginApi; lane: Lane }) {
     try {
       writePoolConfig(props.lane, [...cur])
     } catch (exc) {
-      props.api.ui.toast({ variant: "error", message: `write failed: ${exc instanceof Error ? exc.message : exc}` })
+      props.api.ui.toast({ variant: "error", message: t(loc, "dialog.pool.bulkWriteFailed", { message: exc instanceof Error ? exc.message : String(exc) }) })
       return
     }
-    props.api.ui.toast({ variant: "success", message: `${props.lane} pool: all models selected` })
+    props.api.ui.toast({ variant: "success", message: t(loc, "dialog.pool.allSelected", { lane: props.lane }) })
   }
   const reset = () => {
     resetPoolConfig(props.lane)
     setSelected(new Set(rows().map((r) => r.key)))
-    props.api.ui.toast({ variant: "success", message: `${props.lane} pool config cleared (system default candidate set restored)` })
+    props.api.ui.toast({ variant: "success", message: t(loc, "dialog.pool.configCleared", { lane: props.lane }) })
   }
   // [2026-09-06]-[Uncheck-all shortcut: clears the checkbox state in place (no disk write) so a short list can be
   //  built by checking a few models instead of unchecking the rest one by one; while nothing is checked the previous
@@ -496,24 +540,24 @@ function PoolModelsDialog(props: { api: TuiPluginApi; lane: Lane }) {
   const uncheckAll = () => {
     if (selected().size === 0) return
     setSelected(new Set<string>())
-    props.api.ui.toast({ variant: "info", message: `${props.lane} pool: all unchecked — check the models to keep; exiting with none checked keeps the previous selection` })
+    props.api.ui.toast({ variant: "info", message: t(loc, "dialog.pool.allUnchecked", { lane: props.lane }) })
   }
   const nSel = () => selected().size
   const options = createMemo(() => [
-    { title: "← Back to pool list", value: "__back", onSelect: () => props.api.ui.dialog.replace(() => <PoolPickerDialog api={props.api} />) },
-    { title: "☑ Select all", value: "__all", onSelect: () => bulk() },
-    { title: "☐ Uncheck all (then check the few to keep; exit with none checked keeps the old list)", value: "__uncheckAll", onSelect: uncheckAll },
-    { title: "✕ Clear config (system default: all available models participate)", value: "__reset", onSelect: reset },
+    { title: t(loc, "dialog.pool.back"), value: "__back", onSelect: () => props.api.ui.dialog.replace(() => <PoolPickerDialog api={props.api} />) },
+    { title: t(loc, "dialog.pool.selectAll"), value: "__all", onSelect: () => bulk() },
+    { title: t(loc, "dialog.pool.uncheckAll"), value: "__uncheckAll", onSelect: uncheckAll },
+    { title: t(loc, "dialog.pool.clearConfig"), value: "__reset", onSelect: reset },
     ...rows().map((r) => ({
-      title: `${selected().has(r.key) ? "[x]" : "[ ]"} ${r.modelId}`,
+      title: t(loc, "dialog.pool.modelRow", { checkMark: selected().has(r.key) ? "[x]" : "[ ]", modelId: r.modelId }),
       value: r.key,
-      description: `${r.tier}-tier${r.source === "manual" ? " · manual rank" : ""}`,
+      description: t(loc, "dialog.pool.rowMeta", { tier: r.tier, manualSuffix: r.source === "manual" ? " · manual rank" : "" }),
       onSelect: () => toggle(r.key),
     })),
   ])
   return (
     <props.api.ui.DialogSelect
-      title={`${props.lane} pool selection (${nSel()}/${rows().length} participating; select toggles, duplicates across pools allowed)`}
+      title={t(loc, "dialog.pool.selectionTitle", { lane: props.lane, selCount: nSel(), rowCount: rows().length })}
       options={options()}
       flat
     />
@@ -534,13 +578,14 @@ function openModelRankDialog(api: TuiPluginApi): void {
 //  picker so the two-step config flow (poolConfig → modelRank) stays a single round trip]----
 
 function RankUniverseEmptyDialog(props: { api: TuiPluginApi }) {
+  const loc = resolveTuiLocale(props.api)
   const options = createMemo(() => [
-    { title: "→ Open task-pool selection (pick the models each pool may use, then rank them)", value: "__pools", onSelect: () => props.api.ui.dialog.replace(() => <PoolPickerDialog api={props.api} />) },
-    { title: "✕ Close", value: "__close", onSelect: () => props.api.ui.dialog.clear() },
+    { title: t(loc, "dialog.rank.openPoolSelection"), value: "__pools", onSelect: () => props.api.ui.dialog.replace(() => <PoolPickerDialog api={props.api} />) },
+    { title: t(loc, "dialog.rank.close"), value: "__close", onSelect: () => props.api.ui.dialog.clear() },
   ])
   return (
     <props.api.ui.DialogSelect
-      title="Model ranking is disabled until task pools are configured — only models selected into task pools are rankable, so you never rank models you cannot dispatch"
+      title={t(loc, "dialog.rank.universeEmptyTitle")}
       options={options()}
       flat
     />
@@ -551,6 +596,7 @@ function RankUniverseEmptyDialog(props: { api: TuiPluginApi }) {
 //  loads the rank file, applies applyRankMove against the merged view, persists models+scores, toasts the anchored result]----
 
 function rankMoveApply(api: TuiPluginApi, key: string, delta: -1 | 0 | 1): boolean {
+  const loc = resolveTuiLocale(api)
   const rank = loadCapabilityRank()
   const view = rankViewRows()
   const name = view.find((r) => r.key === key)?.modelId ?? key
@@ -558,19 +604,25 @@ function rankMoveApply(api: TuiPluginApi, key: string, delta: -1 | 0 | 1): boole
   if (!res) {
     api.ui.toast({
       variant: "info",
-      message: `${name} is already at the ${delta === 1 ? "bottom" : "top"} of the merged capability list`,
+      message: t(loc, "dialog.rank.alreadyAtEdge", { modelName: name, edge: delta === 1 ? "bottom" : "top" }),
     })
     return false
   }
   try {
     writeCapabilityRank(res.models, res.scores)
   } catch (exc) {
-    api.ui.toast({ variant: "error", message: `write failed: ${exc instanceof Error ? exc.message : exc}` })
+    api.ui.toast({ variant: "error", message: t(loc, "dialog.rank.moveWriteFailed", { message: exc instanceof Error ? exc.message : String(exc) }) })
     return false
   }
   api.ui.toast({
     variant: "success",
-    message: `${delta === 0 ? "Pinned" : "Moved"} ${name} to #${res.position + 1} (manual score ${res.score.tier}/${res.score.raw}, anchored between its neighbors; effective immediately, sidebar refreshes)`,
+    message: t(loc, "dialog.rank.pinnedOrMoved", {
+      verb: delta === 0 ? "Pinned" : "Moved",
+      modelName: name,
+      position: res.position + 1,
+      tier: res.score.tier,
+      raw: res.score.raw,
+    }),
   })
   return true
 }
@@ -584,6 +636,7 @@ type RankHotkeyClaim = { move: (delta: -1 | 1) => void }
 let rankHotkeyClaim: RankHotkeyClaim | null = null
 
 function RankPickerDialog(props: { api: TuiPluginApi }) {
+  const loc = resolveTuiLocale(props.api)
   // rev bumps on every hotkey write so rows() re-reads the rank file and re-sorts the list in place (enter-action
   // flows keep using dialog.replace instead, which rebuilds the component from scratch)
   const [rev, setRev] = createSignal(0)
@@ -624,12 +677,16 @@ function RankPickerDialog(props: { api: TuiPluginApi }) {
   })
   return (
     <props.api.ui.DialogSelect
-      title="Model capability ranking — merged order (#1 strongest; scoped to the task-pool selection; manual entries interleave with base-score models; ctrl+up/ctrl+down move one spot; enter = per-model actions)"
-      placeholder="Search · alt+up/alt+down mirror ctrl+up/ctrl+down (also work)"
+      title={t(loc, "dialog.rank.title")}
+      placeholder={t(loc, "dialog.rank.searchHint")}
       options={rows().map((r, i) => ({
-        title: `#${String(i + 1).padStart(2, "0")} ${r.modelId}`,
+        title: t(loc, "dialog.rank.row", { rankPadded: String(i + 1).padStart(2, "0"), modelId: r.modelId }),
         value: r.key,
-        description: `${r.tier}-tier · ${r.source === "manual" ? `manual${r.raw !== null ? ` ${r.raw}` : ""}` : "base capability score"}${r.poolMember === false ? " · not in any task pool" : ""}`,
+        description: t(loc, "dialog.rank.rowMeta", {
+          tier: r.tier,
+          scoreSource: r.source === "manual" ? `manual${r.raw !== null ? ` ${r.raw}` : ""}` : "base capability score",
+          poolSuffix: r.poolMember === false ? " · not in any task pool" : "",
+        }),
         onSelect: () => props.api.ui.dialog.replace(() => <RankActionsDialog api={props.api} model={r.modelId} modelKey={r.key} />),
       }))}
       current={cursor() ?? undefined}
@@ -640,6 +697,7 @@ function RankPickerDialog(props: { api: TuiPluginApi }) {
 }
 
 function RankActionsDialog(props: { api: TuiPluginApi; model: string; modelKey: string }) {
+  const loc = resolveTuiLocale(props.api)
   // [2026-09-10]-[interleaved semantics: up/down/pin act on the merged view via the shared rankMoveApply path (any
   //  model can move — unranked ones materialize an anchored manual score between their neighbors); the obsolete
   //  "add at the end" action is gone; remove strips both the membership and the anchored score]
@@ -659,25 +717,28 @@ function RankActionsDialog(props: { api: TuiPluginApi; model: string; modelKey: 
     try {
       writeCapabilityRank(nextModels, Object.keys(nextScores).length > 0 ? nextScores : undefined)
     } catch (exc) {
-      props.api.ui.toast({ variant: "error", message: `write failed: ${exc instanceof Error ? exc.message : exc}` })
+      props.api.ui.toast({ variant: "error", message: t(loc, "dialog.rank.removeWriteFailed", { message: exc instanceof Error ? exc.message : String(exc) }) })
       return
     }
-    props.api.ui.toast({ variant: "success", message: `Removed ${props.model} from the manual ranking (falls back to the base capability score, effective immediately, sidebar refreshes)` })
+    props.api.ui.toast({ variant: "success", message: t(loc, "dialog.rank.removed", { model: props.model }) })
     props.api.ui.dialog.replace(() => <RankPickerDialog api={props.api} />)
   }
   const options = createMemo(() => [
-    { title: "▲ Pin to top (above every model)", value: "top", onSelect: () => move(0) },
-    { title: "↑ Move up one (swaps with the model above; anchors a manual score between neighbors)", value: "up", onSelect: () => move(-1) },
-    { title: "↓ Move down one (swaps with the model below)", value: "down", onSelect: () => move(1) },
+    { title: t(loc, "dialog.rank.pinTop"), value: "top", onSelect: () => move(0) },
+    { title: t(loc, "dialog.rank.moveUp"), value: "up", onSelect: () => move(-1) },
+    { title: t(loc, "dialog.rank.moveDown"), value: "down", onSelect: () => move(1) },
     ...(ranked()
-      ? [{ title: "✕ Remove from ranking (fall back to the base score)", value: "out", onSelect: remove }]
+      ? [{ title: t(loc, "dialog.rank.remove"), value: "out", onSelect: remove }]
       : []),
-    { title: "← Back to ranking list", value: "__back", onSelect: () => props.api.ui.dialog.replace(() => <RankPickerDialog api={props.api} />) },
+    { title: t(loc, "dialog.rank.back"), value: "__back", onSelect: () => props.api.ui.dialog.replace(() => <RankPickerDialog api={props.api} />) },
   ])
   const a = anchored()
   return (
     <props.api.ui.DialogSelect
-      title={`${props.model} (${ranked() ? `manually ranked${a ? `, anchored score ${a.tier}/${a.raw}` : " (legacy ladder order)"}` : "not manually ranked"})`}
+      title={t(loc, "dialog.rank.detailTitle", {
+        model: props.model,
+        rankState: ranked() ? `manually ranked${a ? `, anchored score ${a.tier}/${a.raw}` : " (legacy ladder order)"}` : "not manually ranked",
+      })}
       options={options()}
       flat
     />
@@ -730,21 +791,22 @@ function v2HandoverPort(api: TuiPluginApi): HandoverPort {
 async function runHandoverBackup(api: TuiPluginApi): Promise<void> {
   const route = api.route.current
   const sessionID = route.name === "session" && typeof route.params?.sessionID === "string" ? route.params.sessionID : undefined
+  const loc = resolveTuiLocale(api, sessionID)
   if (!sessionID) {
-    api.ui.toast({ variant: "error", message: "/handover: not in a session, nothing to back up" })
+    api.ui.toast({ variant: "error", message: t(loc, "dialog.handover.noSession") })
     return
   }
   const session = api.state.session.get(sessionID)
   const directory = session?.directory || api.state.path.directory
-  api.ui.toast({ variant: "info", message: "/handover: backing up the current session in full and compacting…" })
+  api.ui.toast({ variant: "info", message: t(loc, "dialog.handover.inProgress") })
   const result = await runHandover(v2HandoverPort(api), sessionID, directory)
   if (result.ok) {
     api.ui.toast({
       variant: "success",
-      message: `${result.message}; still in the original session, not switched`,
+      message: t(loc, "dialog.handover.resultStay", { resultMessage: result.message }),
     })
   } else {
-    api.ui.toast({ variant: "error", message: `/handover ${result.message}` })
+    api.ui.toast({ variant: "error", message: t(loc, "dialog.handover.result", { resultMessage: result.message }) })
   }
 }
 
@@ -762,32 +824,34 @@ const tui: TuiPlugin = async (api) => {
   //  registerLayer, fail-open = only the dialog entry goes missing (the chat cfg.command variants are unaffected)
   // [2026-09-04]-[/handover: direct execution (fork backup + compaction of the current session, no session switch),
   //  no AI interaction, no chat variant]
+  // [2026-09-19]-[palette copy resolves the display locale once at registration (static host strings)]
+  const paletteLoc = resolveTuiLocale(api)
   try {
     api.keymap.registerLayer({
       commands: [
         {
           name: "switchman.handover",
-          title: "Back up and compact the current session",
-          desc: "Full fork of the current session as a backup ([backup] title tag) plus compaction of the current session; no session switch (distinct from built-in /fork)",
-          category: "switchman",
+          title: t(paletteLoc, "palette.handover.title"),
+          desc: t(paletteLoc, "palette.handover.desc"),
+          category: t(paletteLoc, "palette.category.label"),
           namespace: "palette",
           slashName: "handover",
           run: () => void runHandoverBackup(api),
         },
         {
           name: "switchman.pool-config",
-          title: "Task pool selection",
-          desc: "Pick the participating models per task pool (economy/mechanical/main/hard/vision/review)",
-          category: "switchman",
+          title: t(paletteLoc, "palette.poolConfig.title"),
+          desc: t(paletteLoc, "palette.poolConfig.desc"),
+          category: t(paletteLoc, "palette.category.label"),
           namespace: "palette",
           slashName: "poolConfig",
           run: () => openPoolConfigDialog(api),
         },
         {
           name: "switchman.model-rank",
-          title: "Model capability ranking",
-          desc: "Manual capability ranking (takes precedence over base scores; earlier = stronger)",
-          category: "switchman",
+          title: t(paletteLoc, "palette.modelRank.title"),
+          desc: t(paletteLoc, "palette.modelRank.desc"),
+          category: t(paletteLoc, "palette.category.label"),
           namespace: "palette",
           slashName: "modelRank",
           run: () => openModelRankDialog(api),

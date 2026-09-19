@@ -46,6 +46,7 @@ afterAll(() => {
 
 import { SwitchmanPlugin } from "../src/index"
 import { loadManifest, stateDir } from "../src/state"
+import { renderNotice } from "../src/i18n"
 import { rmSync } from "node:fs"
 
 type Hooks = Awaited<ReturnType<typeof SwitchmanPlugin>>
@@ -89,7 +90,8 @@ function statusLogText(): string {
   const p = join(stateDir(), "status-log.json")
   if (!existsSync(p)) return ""
   const data = JSON.parse(readFileSync(p, "utf8"))
-  return (Array.isArray(data) ? data : []).map((e: { text?: string }) => String(e?.text ?? "")).join("\n")
+  // [2026-09-19]-[i18n cleanup: entries are structured {key, params} — render English for the prose assertions]
+  return (Array.isArray(data) ? data : []).map((e: { key?: string; params?: Record<string, string | number>; text?: string }) => renderNotice(e, "en")).join("\n")
 }
 
 /** status-log persists across tests in the shared state dir — truncate for per-test isolation */

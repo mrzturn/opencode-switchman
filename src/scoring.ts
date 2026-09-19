@@ -396,7 +396,8 @@ export function logDecision(records: DecisionRecord[]): Promise<void> {
       const kept = prev.slice(-MAX_DECISION_LINES)
       writeFileSync(p, `${kept.join("\n")}\n`)
     } catch (exc) {
-      appendStatusLog(`decision log fail-open: ${exc}`)
+      // [2026-09-19]-[i18n: status-log notices now keyed (en.ts catalog renders at sidebar display time)]
+      appendStatusLog("notice.scoring.decisionLogFailOpen", { exc: String(exc) })
     }
   })
 }

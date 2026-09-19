@@ -6,6 +6,7 @@
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { appendStatusLog } from "./state"
+import type { MsgKey } from "./i18n"
 import { LANG_SETTINGS_FILE } from "./lang-config"
 
 export type DispatchMode = "fleet" | "off"
@@ -44,11 +45,13 @@ const brokenWarned = new Set<string>()
 const invalidNoted = new Set<string>()
 
 /** Read the project dispatch mode (sync, cheap, fail-open, never throws). Logs the broken-settings warning and the
- *  present-but-invalid note once per process per path via the injected log callback (defaults to appendStatusLog). */
+ *  present-but-invalid note once per process per path via the injected log callback (defaults to appendStatusLog).
+ *  [2026-09-19]-[P3c status-log i18n: the log callback carries structured (key, params); English only, no behavior change]
+ *  [2026-09-19]-[i18n cleanup: tighten the log callback key to MsgKey (both sites use catalog keys)] */
 export function loadDispatchMode(
   projectDir: string,
   workspaceDirname: string,
-  log: (text: string) => void = appendStatusLog,
+  log: (key: MsgKey, params?: Record<string, string | number>) => void = appendStatusLog,
 ): DispatchMode {
   const abs = join(projectDir, workspaceDirname, LANG_SETTINGS_FILE)
   try {
@@ -57,13 +60,13 @@ export function loadDispatchMode(
     if (parsed.broken) {
       if (!brokenWarned.has(abs)) {
         brokenWarned.add(abs)
-        log(`[opencode-switchman] ${workspaceDirname}/${LANG_SETTINGS_FILE} is not valid JSON — ignored (lang config falls back to the AGENTS.md marker; "dispatch":"off" not applied)`)
+        log("notice.lang.settingsInvalidJson", { workspaceDirname, langSettingsFile: LANG_SETTINGS_FILE })
       }
       return "fleet"
     }
     if (parsed.invalidValue && !invalidNoted.has(abs)) {
       invalidNoted.add(abs)
-      log(`[opencode-switchman] ${workspaceDirname}/${LANG_SETTINGS_FILE} "dispatch" present but not exactly "off" (got: ${parsed.rawValue}) — ignored, fleet behavior`)
+      log("notice.lang.dispatchNotOff", { workspaceDirname, langSettingsFile: LANG_SETTINGS_FILE, rawValue: parsed.rawValue ?? "" })
     }
     return parsed.mode
   } catch {

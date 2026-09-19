@@ -407,7 +407,8 @@ export function computeLane(lane: Lane, base: string[], p: ComputeLaneParams): L
       if (bd) c.score = bd
     }
   } catch (exc) {
-    appendStatusLog(`scoring failed, fell back to rule-based ordering: ${exc}`)
+    // [2026-09-19]-[i18n: status-log notices now keyed (en.ts catalog renders at sidebar display time)]
+    appendStatusLog("notice.lane.scoringFallback", { exc: String(exc) })
     legacySort(chain, p, glmPeak, immediate)
   }
 
@@ -491,7 +492,7 @@ export function computeLane(lane: Lane, base: string[], p: ComputeLaneParams): L
         if (bd) c.score = bd
       }
     } catch (exc) {
-      appendStatusLog(`backfill ranking failed (lane stays empty): ${exc}`)
+      appendStatusLog("notice.lane.backfillFailed", { exc: String(exc) })
     }
   }
 

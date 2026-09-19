@@ -243,7 +243,8 @@ export function loadBundledCapability(): CapabilityIndex | null {
   if (bundledCache !== undefined) return bundledCache
   const v = bundledDefaultJson as unknown as CapabilityIndex
   bundledCache = validIndex(v) ? { ...v, bundled: true } : null
-  if (bundledCache === null) appendStatusLog("bundled capability rank snapshot corrupted (skipping, falling back to the curated table)")
+  // [2026-09-19]-[i18n: status-log notices now keyed (en.ts catalog renders at sidebar display time)]
+  if (bundledCache === null) appendStatusLog("notice.capability.snapshotCorrupted")
   return bundledCache
 }
 
@@ -296,7 +297,7 @@ export async function refreshCapability(opts: CapabilityOptions): Promise<void> 
         used = "artificial-analysis"
         version = deriveVersion("aa", r.etag, parsed.versionHint)
       } catch (exc) {
-        appendStatusLog(`capability index primary source AA failed (${exc})${wantOr ? " -> switching to backup source OpenRouter" : " -> keeping last-good/bundled default ranks"}`)
+        appendStatusLog("notice.capability.primarySourceFailed", { exc: String(exc), nextStep: wantOr ? " -> switching to backup source OpenRouter" : " -> keeping last-good/bundled default ranks" })
       }
     }
     if (!parsed && wantOr) {
@@ -308,12 +309,12 @@ export async function refreshCapability(opts: CapabilityOptions): Promise<void> 
         used = "openrouter"
         version = deriveVersion("or", r.etag, parsed.versionHint)
       } catch (exc) {
-        appendStatusLog(`capability index backup source OpenRouter failed (${exc}) -> keeping last-good/bundled default ranks`)
+        appendStatusLog("notice.capability.backupSourceFailed", { exc: String(exc) })
       }
     }
     if (!parsed || !used || Object.keys(parsed.models).length === 0) {
       // [2026-08-31]-[log empty parses: a silent return makes upstream believe the refresh succeeded (hit in smoke testing)]
-      appendStatusLog(`capability index parsed empty (${used ?? "no source"}) -> keeping last-good/bundled default ranks`)
+      appendStatusLog("notice.capability.parsedEmpty", { source: used ?? "no source" })
       return
     }
     const scores = Object.values(parsed.models).map((e) => e.score)
@@ -330,10 +331,10 @@ export async function refreshCapability(opts: CapabilityOptions): Promise<void> 
     }
     mem = { dir: paths().dir, idx }
     writeJsonAtomic(paths().capability, idx)
-    appendStatusLog(`capability index refreshed: ${used} ${scores.length} models (version=${version})`)
+    appendStatusLog("notice.capability.refreshed", { source: used, modelCount: scores.length, version: String(version) })
     if (opts.lmarenaCheck) crossCheckLmarena(idx).catch(() => {})
   } catch (exc) {
-    appendStatusLog(`capability index refresh fail-open (keeping last-good/bundled default ranks): ${exc}`)
+    appendStatusLog("notice.capability.refreshFailOpen", { exc: String(exc) })
   }
 }
 
@@ -369,10 +370,10 @@ export async function crossCheckLmarena(idx: CapabilityIndex): Promise<void> {
     }
     const rate = pairs > 0 ? (agree / pairs) * 100 : 0
     if (rate < 70) {
-      appendStatusLog(`capability LMArena cross-check: tier-order vs ELO-order agreement only ${rate.toFixed(0)}% (${both.length} overlapping models) -- data source may be anomalous, manual review advised`)
+      appendStatusLog("notice.capability.lmarenaDisagreement", { rate: rate.toFixed(0), overlapCount: both.length })
     }
   } catch (exc) {
-    appendStatusLog(`capability LMArena cross-check fail-open (skipped): ${exc}`)
+    appendStatusLog("notice.capability.lmarenaFailOpen", { exc: String(exc) })
   }
 }
 

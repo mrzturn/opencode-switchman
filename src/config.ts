@@ -5,6 +5,7 @@ import { canonicalKeyOf, defaultProviderConfig, genericProviderDefaults, PROVIDE
 import type { PeakRange, ProviderKey, ProviderUserConfig } from "./provider-config"
 import type { CapabilityTierThresholds, Lane, Pool, RoutePolicy, SwitchmanOptions } from "./types"
 import { DEFAULT_LANG_CANDIDATES } from "./types"
+import { normalizeUiLocale } from "./lang-config"
 import { DEFAULT_READ_BUDGET_TOKENS, MAX_READ_BUDGET_TOKENS, MAX_SUBAGENT_CAP_TOKENS, MIN_READ_BUDGET_TOKENS, MIN_SUBAGENT_CAP_TOKENS } from "./context-watch"
 
 export interface ConfigDiagnostic { code: string; level: "error" | "warn" | "info"; path?: string; hint?: string }
@@ -39,6 +40,8 @@ export interface UserConfig {
   workspace: { enabled: boolean; dirname: string }
   // [2026-09-05]-[project language preference: conversation/comments/docs language — first-run ask + per-turn [LANG] iron-rule line]
   lang: { enabled: boolean; ask: boolean; candidates: string[] }
+  // [2026-09-19]-[global UI language: raw locale tag for render-time localization of user-visible UI strings ("" = not set, falls through to terminal env)]
+  ui: { lang: string }
   // [2026-09-17]-[broad-search clarify: whole-project searches ask the user for narrower guidance once per session]
   search: { clarify: boolean }
   // [2026-09-06]-[tmux pane mirroring: live subagent attach panes in the home tmux window's right column]
@@ -54,7 +57,7 @@ export const DEFAULT_CONTEXT_TOKENS = { soft: 50_000, hard: 90_000, force: 130_0
 export const DEFAULT_DELEGATION_FLOOR = 3_000
 
 /** Factory defaults for behavior sections (fillMissing baseline; only bad-typed values fall back and report SWM037) */
-export function defaultBehaviorConfig(): Pick<UserConfig, "quota" | "cost" | "capability" | "matrix" | "banner" | "rules" | "context" | "builtinAgents" | "injection" | "dispatch" | "relay" | "workspace" | "lang" | "search" | "tmux" | "lanes"> {
+export function defaultBehaviorConfig(): Pick<UserConfig, "quota" | "cost" | "capability" | "matrix" | "banner" | "rules" | "context" | "builtinAgents" | "injection" | "dispatch" | "relay" | "workspace" | "lang" | "ui" | "search" | "tmux" | "lanes"> {
   return {
     quota: { glmFiveHourReservePct: 90, deepseekLowBalanceWarnCny: 10 },
     cost: { enabled: true },
@@ -70,6 +73,8 @@ export function defaultBehaviorConfig(): Pick<UserConfig, "quota" | "cost" | "ca
     relay: { image: true },
     workspace: { enabled: true, dirname: ".switchman" },
     lang: { enabled: true, ask: true, candidates: [...DEFAULT_LANG_CANDIDATES] },
+    // [2026-09-19]-[global UI language default: "" = not set (locale chain falls through to terminal env)]
+    ui: { lang: "" },
     search: { clarify: true },
     tmux: { enabled: true, rightPct: 60, maxPanes: 3, mini: false },
     lanes: {},
@@ -208,6 +213,10 @@ export function validateUserConfig(value: unknown): { config: UserConfig; diagno
   if (typeof filled.lang.enabled !== "boolean") bad("lang.enabled", () => { filled.lang.enabled = defaults.lang.enabled })
   if (typeof filled.lang.ask !== "boolean") bad("lang.ask", () => { filled.lang.ask = defaults.lang.ask })
   if (!Array.isArray(filled.lang.candidates) || filled.lang.candidates.length === 0 || !filled.lang.candidates.every((c: unknown) => typeof c === "string" && c.trim() === c && !!c.trim() && c.length <= 48)) bad("lang.candidates", () => { filled.lang.candidates = structuredClone(defaults.lang.candidates) })
+  // [2026-09-19]-[global UI language: ui.lang must be a string; "" = not set (no diagnostic); a non-empty value that
+  //  does not normalize via normalizeUiLocale resets to "" with SWM063 (next free code after SWM062)]
+  if (!plain(filled.ui) || typeof (filled.ui as any).lang !== "string") { ds.push({ code: "SWM063", level: "error", path: "ui.lang" }); filled.ui = { lang: "" } }
+  else if ((filled.ui as any).lang !== "" && normalizeUiLocale((filled.ui as any).lang) === null) { ds.push({ code: "SWM063", level: "error", path: "ui.lang" }); (filled.ui as any).lang = "" }
   // [2026-09-17]-[broad-search clarify switch]
   if (typeof filled.search.clarify !== "boolean") bad("search.clarify", () => { filled.search.clarify = defaults.search.clarify })
   // [2026-09-06]-[tmux pane mirroring: enabled/mini booleans; rightPct integer 10..90; maxPanes integer 1..4]

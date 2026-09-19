@@ -68,9 +68,10 @@ export async function refreshThinkingShapesIfStale(ghToken: string | undefined, 
     const cache: ThinkingCache = { fetched_at: Date.now(), shapes }
     writeJsonAtomic(paths().copilotThinking, cache)
     mem = { dir: paths().dir, cache }
-    appendStatusLog(`Copilot thinking-parameter shape cache refreshed: ${Object.keys(shapes).length} models`)
+    // [2026-09-19]-[i18n: status-log notices now keyed (en.ts catalog renders at sidebar display time)]
+    appendStatusLog("notice.copilot.shapeCacheRefreshed", { modelCount: Object.keys(shapes).length })
   } catch (exc) {
-    appendStatusLog(`Copilot thinking-parameter shape refresh fail-open: ${exc}`)
+    appendStatusLog("notice.copilot.shapeRefreshFailOpen", { exc: String(exc) })
   }
 }
 

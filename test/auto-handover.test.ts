@@ -16,10 +16,17 @@ process.env.SWITCHMAN_STATE = stateDir
 writeFileSync(join(stateDir, "model-catalog.json"), JSON.stringify({ fetched_at: Date.now(), etag: null, index: {} }))
 
 import { SwitchmanPlugin } from "../src/index"
+import { renderNotice } from "../src/i18n"
 
 function readStatusLog(): string {
   const p = join(stateDir, "status-log.json")
-  return existsSync(p) ? readFileSync(p, "utf8") : ""
+  if (!existsSync(p)) return ""
+  // [2026-09-19]-[i18n cleanup: entries are structured {key, params} — render English for the prose assertions]
+  try {
+    const data = JSON.parse(readFileSync(p, "utf8"))
+    if (Array.isArray(data)) return data.map((e: { key?: string; params?: Record<string, string | number>; text?: string }) => renderNotice(e, "en")).join("\n")
+  } catch { /* fail-open: fall through to raw text */ }
+  return readFileSync(p, "utf8")
 }
 
 test("auto-handover: backup leg bounded, compaction fired detached, cooldown guards refork", async () => {

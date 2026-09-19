@@ -150,7 +150,8 @@ export function loadCatalog(now = Date.now()): Promise<CatalogResult> {
     },
     (exc) => {
       if (cache?.index) return { index: cache.index, status: "stale" as const, etag: cache.etag ?? null }
-      appendStatusLog(`models.dev catalog unavailable and no cache (fail-open degradation): ${exc}`)
+      // [2026-09-19]-[i18n: status-log notices now keyed (en.ts catalog renders at sidebar display time)]
+      appendStatusLog("notice.catalog.unavailableNoCache", { exc: String(exc) })
       return { index: {}, status: "none" as const, etag: null }
     },
   )

@@ -6,6 +6,7 @@
 //  stay untouched. Everything is fail-open: any tmux/IO error only logs and never blocks dispatch.]
 import { execFile } from "node:child_process"
 import type { TmuxOptions } from "./types"
+import type { MsgKey } from "./i18n"
 
 export interface TmuxResolvedOptions {
   enabled: boolean
@@ -89,7 +90,10 @@ export interface TmuxPaneManagerDeps {
   dir: string
   bin?: string
   exec?: (args: string[]) => Promise<string>
-  log?: (message: string) => void
+  // [2026-09-19]-[P3c status-log i18n: the log callback carries structured (key, params) (index.ts forwards to
+  //  appendStatusLog); English only, no behavior change]
+  // [2026-09-19]-[i18n cleanup: tighten the log callback key to MsgKey (all tmux sites use catalog keys)]
+  log?: (key: MsgKey, params?: Record<string, string | number>) => void
 }
 
 interface Child { id: string; agent: string; main: string }
@@ -106,7 +110,7 @@ export class TmuxPaneManager {
   private dir: string
   private bin?: string
   private exec: (args: string[]) => Promise<string>
-  private log: (message: string) => void
+  private log: (key: MsgKey, params?: Record<string, string | number>) => void
 
   private home = ""
   private win = ""
@@ -146,7 +150,7 @@ export class TmuxPaneManager {
       this.ready = true
     } catch (exc) {
       this.ready = false
-      this.log(`tmux pane mirroring disabled (init failed): ${exc instanceof Error ? exc.message : exc}`)
+      this.log("notice.dispatch.mirrorDisabled", { message: exc instanceof Error ? exc.message : String(exc) })
     }
   }
 
@@ -218,7 +222,7 @@ export class TmuxPaneManager {
   private enqueue(job: () => Promise<void>): void {
     this.chain = this.chain
       .then(job)
-      .catch((exc) => this.log(`tmux pane mirroring op failed (continuing): ${exc instanceof Error ? exc.message : exc}`))
+      .catch((exc) => this.log("notice.dispatch.mirrorOpFailed", { message: exc instanceof Error ? exc.message : String(exc) }))
   }
 
   /** Show a child in a new right-column pane (grow by one) or queue it when the column is full */
@@ -227,7 +231,7 @@ export class TmuxPaneManager {
     const max = this.optionsOf().maxPanes
     if (this.slots.length >= max) {
       this.queue.push(child)
-      this.log(`tmux pane mirroring: column full (${this.slots.length} panes), queued ses_${child.id.slice(-6)} (${child.agent})`)
+      this.log("notice.dispatch.mirrorPaneFull", { slotCount: this.slots.length, sessionId: child.id.slice(-6), agent: child.agent })
       return
     }
     await this.withFocus(async () => {
@@ -277,7 +281,7 @@ export class TmuxPaneManager {
         await this.exec(resizePaneArgs({ target: this.slots[0].pane, height: Math.floor(total / this.slots.length) })).catch(() => {})
       }
     }
-    if (this.slots.length === 0) this.log("tmux pane mirroring: all subagent panes closed, main pane restored")
+    if (this.slots.length === 0) this.log("notice.dispatch.mirrorAllClosed")
     this.syncPoll()
   }
 
@@ -287,7 +291,7 @@ export class TmuxPaneManager {
     const cmd = viewerCommand({ origin: this.origin, sessionId: child.id, dir: this.dir, mini: opts.mini, bin: this.bin })
     await this.exec(respawnPaneArgs({ target: pane, dir: this.dir, command: cmd }))
     await this.exec(setPaneTitleArgs({ target: pane, title: `${TMUX_PANE_MARKER}${child.agent}` })).catch(() => {})
-    this.log(`tmux pane mirroring: ses_${child.id.slice(-6)} (${child.agent}) displayed in pane ${pane}`)
+    this.log("notice.dispatch.mirrorDisplayed", { sessionId: child.id.slice(-6), agent: child.agent, pane })
   }
 
   /** Drop slots whose pane vanished (viewer exited / user killed the pane); queued children then backfill */
@@ -300,12 +304,12 @@ export class TmuxPaneManager {
       }
     }
     if (dropped) {
-      this.log("tmux pane mirroring: detected closed pane(s), reconciling layout")
+      this.log("notice.dispatch.mirrorReconciling")
       while (this.slots.length < this.optionsOf().maxPanes && this.queue.length > 0) {
         const next = this.queue.shift()
         if (next) await this.displayChild(next)
       }
-      if (this.slots.length === 0) this.log("tmux pane mirroring: all subagent panes closed, main pane restored")
+      if (this.slots.length === 0) this.log("notice.dispatch.mirrorAllClosed")
     }
   }
 
