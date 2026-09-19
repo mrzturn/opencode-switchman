@@ -28,8 +28,11 @@ export interface BannerInput {
   doctorSummary?: string | null
   /** [2026-08-29]-[dynamic matrix: [LIMITS] line appends mode/watch/configStatus, restartRequired, models.dev downgrade marks; absent = legacy as-is] */
   matrixInfo?: { mode: string; configStatus: string; watch: boolean; restartRequired?: string[]; invalidConfigured?: string[]; degradedModels?: number; retiredModels?: number } | null
-  /** [2026-09-03]-[user manual override annotations (effective entries in capability-rank.json/pool-config.json; 0 = unconfigured, not shown)] */
-  overrides?: { rankModels: number; poolLanes: number } | null
+  /** [2026-09-03]-[user manual override annotations (effective entries in capability-rank.json/pool-config.json; 0 = unconfigured, not shown)]
+   *  [2026-09-19]-[setup: live setup completion (all 6 task pools + capability rank); while incomplete the [LIMITS]
+   *  line carries a setup-required segment (dispatch is denied until /switchman-setup completes); null/absent or
+   *  complete → nothing shown] */
+  overrides?: { rankModels: number; poolLanes: number; setup?: { configuredLanes: number; missingRank: boolean; complete: boolean } | null } | null
 }
 
 function routeLine(lanes: Record<string, LaneResult> | null): string {
@@ -359,6 +362,11 @@ function limitLine(down: Set<string> | string[] | Map<string, string>, unknownCo
     const universe = (overrides as { universeModels?: number }).universeModels
     if (universe !== undefined && universe > 0) parts.push(`rankable universe: ${universe} models`)
     line += ` | ${parts.join(", ")} active (/modelRank /poolConfig to adjust)`
+  }
+  // [2026-09-19]-[setup hard gate: appended after the overrides block so the actionable remedy reads last — dispatch is
+  //  hard-blocked until /switchman-setup completes; silent once complete or when the input is absent]-
+  if (overrides?.setup && !overrides.setup.complete) {
+    line += ` | setup required: pools ${overrides.setup.configuredLanes}/${LANE_ORDER.length}${overrides.setup.missingRank ? ", rank missing" : ""} (/switchman-setup)`
   }
   return line
 }

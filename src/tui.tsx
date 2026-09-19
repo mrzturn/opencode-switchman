@@ -18,7 +18,7 @@ import type { TuiPlugin, TuiPluginModule, TuiPluginApi } from "@opencode-ai/plug
 //  misses the rewrite rule and loads a second solid instance → two reactive graphs that never subscribe to each other →
 //  the whole panel freezes after mount. Build-time misresolution of server.js is handled by the onLoad redirect in
 //  @opentui/solid/bun-plugin (server.js → solid.js client build)]-[impacts live refresh of the TUI panel]
-import { createSignal, createMemo, onCleanup, For } from "solid-js"
+import { createSignal, createMemo, onCleanup, onMount, For } from "solid-js"
 import { readFileSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { join, relative, isAbsolute, sep, dirname } from "node:path"
@@ -26,6 +26,9 @@ import { join, relative, isAbsolute, sep, dirname } from "node:path"
 //  user override layer (pool-config.json / capability-rank.json) directly, taking effect in sync with the plugin main
 //  process mtime hot reload]
 import { loadPoolConfig, writePoolConfig, resetPoolConfig, loadCapabilityRank, writeCapabilityRank, applyRankMove, poolUniverse } from "./user-overrides"
+// [2026-09-19]-[/switchman-setup wizard reads live setup completion (mtime-cached reads) so the intro state lines and
+//  the Start jump target reflect the config as of dialog open]
+import { setupCompletionNow } from "./setup-gate"
 // [2026-09-07]-[version line next to the marquee: reuse the selfupdate state/flag readers so the sidebar shares the
 //  exact same sources and TTL semantics as the update banner]
 import { readSelfUpdateState, flagSemantics, installedPluginVersion, versionBrief } from "./selfupdate"
@@ -745,6 +748,189 @@ function RankActionsDialog(props: { api: TuiPluginApi; model: string; modelKey: 
   )
 }
 
+// ---- [2026-09-19]-[/switchman-setup guided wizard: replaces the old default-all behavior (unconfigured pools no
+//  longer fall back to every model). Flow: intro (current state + jump to the first unfinished step) → one dialog per
+//  task lane in LANE_ORDER order (deliberate curation: selection starts EMPTY even when the lane is unconfigured;
+//  Enter toggles in memory only, the per-lane confirm persists to pool-config.json so every save hot-reloads the
+//  running plugin and the wizard stays resumable lane-by-lane) → sequential capability-rank pick (min 1 model) →
+//  done screen reporting the hot effect plus any providers still flagged restartRequired. Dialog family mirrors
+//  PoolPickerDialog/PoolModelsDialog/RankPickerDialog: locale resolved once at mount, Set-based toggles with
+//  [x]/[ ] baked into titles, dialog.replace navigation, Esc handled by the host. Locale keys: dialog.setup.* /
+//  palette.setup.*]----
+
+function openSetupWizard(api: TuiPluginApi): void {
+  api.ui.dialog.replace(() => <SetupIntroDialog api={api} />)
+}
+
+function SetupIntroDialog(props: { api: TuiPluginApi }) {
+  const loc = resolveTuiLocale(props.api)
+  // Completion is frozen at open (transient dialog); Start re-evaluates so it always jumps to the first unfinished step
+  const state = setupCompletionNow()
+  // {state} has no localized word pair yet — plain "ok"/"missing" strings
+  const rankState = state.missingRank ? "missing" : "ok"
+  const start = () => {
+    const c = setupCompletionNow()
+    // First lane in LANE_ORDER order whose selection is empty (missingLanes preserves LANE_ORDER order)
+    const laneIdx = LANE_ORDER.findIndex((lane) => c.missingLanes.includes(lane))
+    if (laneIdx >= 0) props.api.ui.dialog.replace(() => <SetupLaneDialog api={props.api} laneIdx={laneIdx} />)
+    else if (c.missingRank) props.api.ui.dialog.replace(() => <SetupRankDialog api={props.api} />)
+    else props.api.ui.dialog.replace(() => <SetupDoneDialog api={props.api} />)
+  }
+  const options = createMemo(() => [
+    { title: t(loc, "dialog.setup.start"), value: "__start", description: t(loc, "dialog.setup.intro"), onSelect: start },
+    { title: t(loc, "dialog.rank.close"), value: "__cancel", onSelect: () => props.api.ui.dialog.clear() },
+    // Footer-ish info rows (disabled): current pools/rank state at open time
+    { title: t(loc, "dialog.setup.statePools", { count: state.configuredLanes }), value: "__statePools", disabled: true },
+    { title: t(loc, "dialog.setup.stateRank", { state: rankState }), value: "__stateRank", disabled: true },
+  ])
+  return (
+    <props.api.ui.DialogSelect
+      title={t(loc, "dialog.setup.title")}
+      options={options()}
+      flat
+    />
+  )
+}
+
+function SetupLaneDialog(props: { api: TuiPluginApi; laneIdx: number }) {
+  const loc = resolveTuiLocale(props.api)
+  const lane = LANE_ORDER[props.laneIdx]
+  const rows = createMemo(() => allModelRows())
+  // Deliberate curation: resume the configured list when present, otherwise start EMPTY (no default-all — that is
+  // exactly the behavior this wizard replaces)
+  const [selected, setSelected] = createSignal<ReadonlySet<string>>(
+    new Set(loadPoolConfig()[lane] ?? []),
+  )
+  // Select-all / clear-all stay in memory: nothing is written until the explicit confirm below
+  const bulkAll = () => setSelected(new Set(rows().map((r) => r.key)))
+  const bulkClear = () => setSelected(new Set<string>())
+  const toggle = (key: string) => {
+    const cur = new Set(selected())
+    if (cur.has(key)) cur.delete(key)
+    else cur.add(key)
+    setSelected(cur)
+  }
+  const back = () => {
+    if (props.laneIdx > 0) props.api.ui.dialog.replace(() => <SetupLaneDialog api={props.api} laneIdx={props.laneIdx - 1} />)
+    else props.api.ui.dialog.replace(() => <SetupIntroDialog api={props.api} />)
+  }
+  const confirm = () => {
+    if (selected().size === 0) {
+      props.api.ui.toast({ variant: "warning", message: t(loc, "dialog.setup.keepOne") })
+      return
+    }
+    try {
+      writePoolConfig(lane, [...selected()])
+    } catch (exc) {
+      // Same fail-open semantics as PoolModelsDialog: an IO error must not break the dialog
+      props.api.ui.toast({ variant: "error", message: t(loc, "dialog.pool.toggleWriteFailed", { message: exc instanceof Error ? exc.message : String(exc) }) })
+      return
+    }
+    // Receipt reuses statePools with the fresh configured count (mtime-cached read sees this write immediately)
+    props.api.ui.toast({ variant: "success", message: t(loc, "dialog.setup.statePools", { count: setupCompletionNow().configuredLanes }) })
+    if (props.laneIdx + 1 < LANE_ORDER.length) props.api.ui.dialog.replace(() => <SetupLaneDialog api={props.api} laneIdx={props.laneIdx + 1} />)
+    else props.api.ui.dialog.replace(() => <SetupRankDialog api={props.api} />)
+  }
+  const options = createMemo(() => [
+    { title: t(loc, "dialog.setup.selectAll"), value: "__all", onSelect: bulkAll },
+    { title: t(loc, "dialog.setup.clearAll"), value: "__clear", onSelect: bulkClear },
+    { title: t(loc, "dialog.setup.back"), value: "__back", onSelect: back },
+    { title: t(loc, "dialog.setup.confirmLane", { lane, count: selected().size }), value: "__confirm", onSelect: confirm },
+    ...rows().map((r) => ({
+      title: t(loc, "dialog.setup.laneRow", { checkMark: selected().has(r.key) ? "[x]" : "[ ]", modelId: r.modelId }),
+      value: r.key,
+      description: t(loc, "dialog.pool.rowMeta", { tier: r.tier, manualSuffix: r.source === "manual" ? " · manual rank" : "" }),
+      onSelect: () => toggle(r.key),
+    })),
+  ])
+  return (
+    <props.api.ui.DialogSelect
+      title={t(loc, "dialog.setup.laneTitle", { index: props.laneIdx + 1, lane, count: selected().size })}
+      options={options()}
+      flat
+    />
+  )
+}
+
+function SetupRankDialog(props: { api: TuiPluginApi }) {
+  const loc = resolveTuiLocale(props.api)
+  // Sequential pick: every selection appends to `picked` and the dialog rebuilds with the next pick number
+  // (rev bumps like RankPickerDialog so the remaining-rows memo re-reads the universe)
+  const [rev, setRev] = createSignal(0)
+  const [picked, setPicked] = createSignal<string[]>([])
+  const remaining = createMemo(() => {
+    rev()
+    const uni = poolUniverse()
+    const done = new Set(picked())
+    return allModelRows().filter((r) => uni.has(r.key) && !done.has(r.key))
+  })
+  // Guard: an empty rank universe should be unreachable (pools were just configured), divert to the intro instead of
+  // stranding the user on an action-less list
+  onMount(() => {
+    if (poolUniverse().size === 0) {
+      props.api.ui.toast({ variant: "warning", message: t(loc, "dialog.setup.keepOne") })
+      props.api.ui.dialog.replace(() => <SetupIntroDialog api={props.api} />)
+    }
+  })
+  const finish = () => {
+    if (picked().length === 0) {
+      props.api.ui.toast({ variant: "warning", message: t(loc, "dialog.setup.rankMinOne") })
+      return
+    }
+    try {
+      writeCapabilityRank(picked(), undefined)
+    } catch (exc) {
+      props.api.ui.toast({ variant: "error", message: t(loc, "dialog.rank.moveWriteFailed", { message: exc instanceof Error ? exc.message : String(exc) }) })
+      return
+    }
+    props.api.ui.toast({ variant: "success", message: t(loc, "dialog.setup.rankFinish", { count: picked().length }) })
+    props.api.ui.dialog.replace(() => <SetupDoneDialog api={props.api} />)
+  }
+  const pick = (key: string) => {
+    setPicked((cur) => (cur.includes(key) ? cur : [...cur, key]))
+    setRev((v) => v + 1)
+  }
+  const options = createMemo(() => [
+    { title: t(loc, "dialog.setup.rankFinish", { count: picked().length }), value: "__finish", onSelect: finish },
+    ...remaining().map((r) => ({
+      title: t(loc, "dialog.setup.laneRow", { checkMark: "→", modelId: r.modelId }),
+      value: r.key,
+      description: t(loc, "dialog.pool.rowMeta", { tier: r.tier, manualSuffix: r.source === "manual" ? " · manual rank" : "" }),
+      onSelect: () => pick(r.key),
+    })),
+  ])
+  return (
+    <props.api.ui.DialogSelect
+      title={t(loc, "dialog.setup.rankTitle", { n: picked().length + 1, remaining: remaining().length })}
+      options={options()}
+      flat
+    />
+  )
+}
+
+function SetupDoneDialog(props: { api: TuiPluginApi }) {
+  const loc = resolveTuiLocale(props.api)
+  const poolCfg = loadPoolConfig()
+  const summary = LANE_ORDER.map((lane) => `${lane} ${poolCfg[lane]?.size ?? 0}`).join(", ")
+  const order = (loadCapabilityRank()?.models ?? []).join(" > ")
+  const restart = readRestartRequired()
+  const options = createMemo(() => [
+    { title: t(loc, "dialog.setup.donePools", { summary }), value: "__pools", disabled: true },
+    { title: t(loc, "dialog.setup.doneRank", { order }), value: "__rank", disabled: true },
+    ...(restart.length > 0
+      ? [{ title: t(loc, "dialog.setup.restartHint", { providers: restart.join(", ") }), value: "__restart", disabled: true }]
+      : []),
+    { title: t(loc, "dialog.rank.close"), value: "__close", onSelect: () => props.api.ui.dialog.clear() },
+  ])
+  return (
+    <props.api.ui.DialogSelect
+      title={t(loc, "dialog.setup.doneTitle")}
+      options={options()}
+      flat
+    />
+  )
+}
+
 // ---- [2026-09-04]-[/handover direct-execution variant (bypasses the AI conversation chain, replacing the old
 //  cfg.command chat-style handover): core orchestration extracted to src/handover-core.ts (shared with the
 //  tool.execute.after auto trigger in the main plugin); this file keeps only the v2 SDK adapter (flat params on
@@ -855,6 +1041,15 @@ const tui: TuiPlugin = async (api) => {
           namespace: "palette",
           slashName: "modelRank",
           run: () => openModelRankDialog(api),
+        },
+        {
+          name: "switchman.setup",
+          title: t(paletteLoc, "palette.setup.title"),
+          desc: t(paletteLoc, "palette.setup.desc"),
+          category: t(paletteLoc, "palette.category.label"),
+          namespace: "palette",
+          slashName: "switchman-setup",
+          run: () => void openSetupWizard(api),
         },
       ],
       bindings: [],

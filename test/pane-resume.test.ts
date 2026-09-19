@@ -37,6 +37,10 @@ for (const [file, body] of Object.entries({
 } as Record<string, unknown>)) {
   writeFileSync(join(process.env.SWITCHMAN_STATE, file), JSON.stringify(body))
 }
+// [2026-09-19]-[setup hard gate fixture: seed a COMPLETE setup before any hook call (all 6 task pools = full
+//  manifest model universe → gate 5.5 membership allow-all; rank = one fixture key matching no real modelId), or
+//  the new setup gate denies every task call before the resume wiring under test can fire]-
+seedCompleteSetup(process.env.SWITCHMAN_STATE!, manifestModelUniverse())
 afterAll(() => {
   if (prevState === undefined) delete process.env.SWITCHMAN_STATE
   else process.env.SWITCHMAN_STATE = prevState
@@ -46,6 +50,7 @@ afterAll(() => {
 
 import { SwitchmanPlugin } from "../src/index"
 import { loadManifest, stateDir } from "../src/state"
+import { seedCompleteSetup, manifestModelUniverse } from "./setup-seed"
 import { renderNotice } from "../src/i18n"
 import { rmSync } from "node:fs"
 

@@ -227,6 +227,8 @@ export const ja: Partial<Record<MsgKey, string>> = {
   "notice.dispatch.mirrorDisplayed": "tmux pane mirroring：ses_{sessionId}（{agent}）をpane {pane}に表示しました",
   // src/tmux.ts:303
   "notice.dispatch.mirrorReconciling": "tmux pane mirroring：閉じられたpaneを検出し、layoutを調整中です",
+  // src/index.ts (setup gate)
+  "notice.setup.gateDenied": "setupが必要です（{missing}）——/switchman-setup（または/switchman-setup-chat）を実行してください；設定されるまでdispatchはブロックされます",
 
   // ---- sidebar (tui.tsx sidebar chrome) ----
 
@@ -326,6 +328,26 @@ export const ja: Partial<Record<MsgKey, string>> = {
   "dialog.rank.back": "← ranking listに戻る",
   // src/tui.tsx:680 (rank actions title)
   "dialog.rank.detailTitle": "{model}（{rankState}）",
+  // src/tui.tsx (setup wizard)
+  "dialog.setup.title": "switchman setup —— task poolとcapability ranking",
+  "dialog.setup.intro": "ガイド付きsetup：6つのtask poolそれぞれのmodelを選び、rankします（最強を先頭に）。Escでいつでも終了できます。確定したpoolは即時保存されます。",
+  "dialog.setup.start": "開始（最初の未完了stepから）",
+  "dialog.setup.statePools": "設定済みpool：{count}/6",
+  "dialog.setup.stateRank": "ranking：{state}",
+  "dialog.setup.laneTitle": "task pool {index}/6 —— {lane}（{count}件選択中；Enterでtoggle、最低1件）",
+  "dialog.setup.laneRow": "{checkMark} {modelId}",
+  "dialog.setup.selectAll": "[*] すべて選択",
+  "dialog.setup.clearAll": "[ ] すべて解除",
+  "dialog.setup.confirmLane": "{lane}を確認（{count}models）して次へ",
+  "dialog.setup.back": "戻る",
+  "dialog.setup.keepOne": "このpoolにはmodelを1件以上残してください",
+  "dialog.setup.rankTitle": "capability ranking —— #{n}を選択（最強を先頭に、残り{remaining}models）",
+  "dialog.setup.rankFinish": "rankingを終了（{count}件選択；残りはsystem base scoreを維持）",
+  "dialog.setup.rankMinOne": "終了前に最低1件はrankしてください",
+  "dialog.setup.doneTitle": "setup完了 —— 即時有効（hot-reload）",
+  "dialog.setup.donePools": "pools：{summary}",
+  "dialog.setup.doneRank": "ranking：{order}",
+  "dialog.setup.restartHint": "新しいproviderを登録するためopencodeを再起動してください：{providers}",
   // src/tui.tsx:734 (handover toast)
   "dialog.handover.noSession": "/handover：session外のため、backup対象がありません",
   // src/tui.tsx:739 (handover toast)
@@ -351,6 +373,9 @@ export const ja: Partial<Record<MsgKey, string>> = {
   "palette.modelRank.title": "Model capability ranking",
   // src/tui.tsx:789
   "palette.modelRank.desc": "Manual capability ranking（base scoreより優先；上位ほど強力）",
+  // src/tui.tsx (setup wizard)
+  "palette.setup.title": "ガイド付きsetup（pool＋ranking）",
+  "palette.setup.desc": "wizard：task poolごとにmodelを複数選択し、rankします——dispatchが機能する前に必須",
 
   // ---- quota (quota-brief.json rows; banner.ts builders) ----
 

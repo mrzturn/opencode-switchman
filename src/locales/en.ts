@@ -230,6 +230,8 @@ export const en = {
   "notice.dispatch.mirrorDisplayed": "tmux pane mirroring: ses_{sessionId} ({agent}) displayed in pane {pane}",
   // src/tmux.ts:303
   "notice.dispatch.mirrorReconciling": "tmux pane mirroring: detected closed pane(s), reconciling layout",
+  // src/index.ts (setup gate)
+  "notice.setup.gateDenied": "Setup required ({missing}) — run /switchman-setup (or /switchman-setup-chat); dispatch blocked until configured",
 
   // ---- sidebar (tui.tsx sidebar chrome) ----
   // [2026-09-19]-[sidebar.restartHintPattern (the old RESTART_HINT_RE regex) deliberately NOT a message key: the
@@ -333,6 +335,26 @@ export const en = {
   "dialog.rank.back": "← Back to ranking list",
   // src/tui.tsx:680 (rank actions title)
   "dialog.rank.detailTitle": "{model} ({rankState})",
+  // src/tui.tsx (setup wizard)
+  "dialog.setup.title": "switchman setup — task pools & capability ranking",
+  "dialog.setup.intro": "Guided setup: pick models for each of the 6 task pools, then rank them (strongest first). Esc exits anytime; confirmed pools are saved immediately.",
+  "dialog.setup.start": "Start (first unfinished step)",
+  "dialog.setup.statePools": "pools configured: {count}/6",
+  "dialog.setup.stateRank": "ranking: {state}",
+  "dialog.setup.laneTitle": "Task pool {index}/6 — {lane} ({count} selected; Enter toggles, min 1)",
+  "dialog.setup.laneRow": "{checkMark} {modelId}",
+  "dialog.setup.selectAll": "[*] Select all",
+  "dialog.setup.clearAll": "[ ] Clear all",
+  "dialog.setup.confirmLane": "Confirm {lane} ({count} models) and continue",
+  "dialog.setup.back": "Back",
+  "dialog.setup.keepOne": "Keep at least one model in this pool",
+  "dialog.setup.rankTitle": "Capability ranking — pick #{n} (strongest first, {remaining} models left)",
+  "dialog.setup.rankFinish": "Finish ranking ({count} picked; the rest keep system base scores)",
+  "dialog.setup.rankMinOne": "Rank at least one model before finishing",
+  "dialog.setup.doneTitle": "Setup complete — active immediately (hot-reload)",
+  "dialog.setup.donePools": "Pools: {summary}",
+  "dialog.setup.doneRank": "Ranking: {order}",
+  "dialog.setup.restartHint": "Restart opencode to register new provider(s): {providers}",
   // src/tui.tsx:734 (handover toast)
   "dialog.handover.noSession": "/handover: not in a session, nothing to back up",
   // src/tui.tsx:739 (handover toast)
@@ -358,6 +380,9 @@ export const en = {
   "palette.modelRank.title": "Model capability ranking",
   // src/tui.tsx:789
   "palette.modelRank.desc": "Manual capability ranking (takes precedence over base scores; earlier = stronger)",
+  // src/tui.tsx (setup wizard)
+  "palette.setup.title": "Guided setup (pools + ranking)",
+  "palette.setup.desc": "Wizard: multi-select models per task pool, then rank them — required before dispatch works",
 
   // ---- quota (quota-brief.json rows; banner.ts builders) ----
 

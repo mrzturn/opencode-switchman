@@ -63,6 +63,45 @@ export function modelRankCommandMd(cliPath: string): string {
   ].join("\n")
 }
 
+// [2026-09-19]-[/switchman-setup-chat: chat fallback for the TUI /switchman-setup wizard (which lives in src/tui.tsx).
+//  The setup hard gate (src/setup-gate.ts, wired in src/index.ts) denies task dispatch until all 6 task pools have
+//  >=1 selected model AND the capability ranking has >=1 entry — this template guides the user through exactly that
+//  in conversation: show state → ask multi-select per lane (question tool) → pool set per lane → rank the union
+//  strongest-first → verify. Real CLI syntax per src/config-cli.ts (pool list/set, rank list/set); config hot-reloads,
+//  a restart is only needed for brand-new providers]-
+export function switchmanSetupCommandMd(cliPath: string): string {
+  const cli = q(cliPath)
+  const run = (args: string): string => `!\`node ${cli} ${args} 2>/dev/null || bun ${cli} ${args}\``
+  return [
+    "---",
+    "description: guided switchman setup — pick at least one model for each of the 6 task pools (economy/mechanical/main/hard/vision/review) and rank the union strongest-first; task dispatch is blocked until setup completes (chat fallback when the TUI /switchman-setup is unavailable)",
+    "---",
+    "",
+    "The user invoked the switchman setup wizard in chat form. Task dispatch is hard-blocked until EVERY one of the six task pools has at least one selected model AND the capability ranking has at least one entry — unconfigured pools no longer default to \"all models\". Walk through all steps below; relay every question, option list and answer in the user's conversation language.",
+    "",
+    "Current state (task-pool selection overview and capability ranking):",
+    "",
+    run("pool list"),
+    "",
+    run("rank list"),
+    "",
+    "Step 1 — select models for EACH of the six pools, one at a time: economy, mechanical, main, hard, vision, review. For each pool: run `pool list <task-pool>` to show its numbered candidate list, then use the question tool to ask the user which of those models should join the pool (multi-select; AT LEAST ONE per pool — required, not optional; one model may join several pools), and persist the answer with:",
+    "",
+    run("pool set <task-pool> <number-or-modelId...>"),
+    "",
+    "Repeat the ask→set loop until all six pools report a selection. `#number` is only valid against the most recent list output; re-run `pool list <task-pool>` first if the candidate set may have changed. When the user is unsure, suggest sensible defaults: economy = cheap/fast models, mechanical = mid-tier workhorse, main = strongest generalist, hard = strongest reasoner, vision = image-capable models, review = a model family different from the main pool's head (cross-family review is preferred).",
+    "",
+    "Step 2 — capability ranking. After all six pools are saved, run `rank list` again: it now shows exactly the union of the selected models (the rankable universe), sorted by effective capability. Ask the user to order them strongest-first (at least 1 model must be ranked; models left out of the ranking simply use their base capability score), then persist with:",
+    "",
+    run("rank set <number-or-modelId...>"),
+    "",
+    "Step 3 — verify and close. Run `pool list` and `rank list` once more: all six pools must report a manual selection and the ranking must be non-empty. Then tell the user (in their conversation language): the setup takes effect immediately (config hot-reloads on save, no restart needed); a restart is only required if brand-new providers/models were selected that opencode has not registered yet.",
+    "",
+    `Config files: ${paths().poolConfig} + ${paths().capabilityRank} (safe to hand-edit, hot-reloaded on save).`,
+    "",
+  ].join("\n")
+}
+
 // [2026-09-05]-[/switchman-lang: show/reconfigure the project language preference — reads the settings file fresh via a
 //  `!` block; re-ask goes through the same marker-question flow (plugin captures and overwrites, the model never edits
 //  the file); reset = delete the file (next session asks again); AGENTS.md marker applies only while the file is absent]

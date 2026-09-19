@@ -227,6 +227,8 @@ export const zhCN: Partial<Record<MsgKey, string>> = {
   "notice.dispatch.mirrorDisplayed": "tmux 面板镜像：ses_{sessionId}（{agent}）显示于面板 {pane}",
   // src/tmux.ts:303
   "notice.dispatch.mirrorReconciling": "tmux 面板镜像：检测到已关闭的面板，正在重新校准布局",
+  // src/index.ts (setup gate)
+  "notice.setup.gateDenied": "需要先完成设置（{missing}）— 请运行 /switchman-setup（或 /switchman-setup-chat）；配置完成前派发被阻止",
 
   // ---- sidebar (tui.tsx sidebar chrome) ----
   // [2026-09-19]-[sidebar.restartHintPattern (the old RESTART_HINT_RE regex) deliberately NOT a message key: the
@@ -328,6 +330,26 @@ export const zhCN: Partial<Record<MsgKey, string>> = {
   "dialog.rank.back": "← 返回排名列表",
   // src/tui.tsx:680 (rank actions title)
   "dialog.rank.detailTitle": "{model}（{rankState}）",
+  // src/tui.tsx (setup wizard)
+  "dialog.setup.title": "switchman 设置 — 任务池与能力排名",
+  "dialog.setup.intro": "引导式设置：为 6 个任务池分别挑选模型，然后进行排名（最强在前）。随时按 Esc 退出；已确认的任务池会立即保存。",
+  "dialog.setup.start": "开始（第一个未完成的步骤）",
+  "dialog.setup.statePools": "已配置任务池：{count}/6",
+  "dialog.setup.stateRank": "排名：{state}",
+  "dialog.setup.laneTitle": "任务池 {index}/6 — {lane}（已选 {count} 个；按 Enter 切换，至少 1 个）",
+  "dialog.setup.laneRow": "{checkMark} {modelId}",
+  "dialog.setup.selectAll": "[*] 全选",
+  "dialog.setup.clearAll": "[ ] 全部取消勾选",
+  "dialog.setup.confirmLane": "确认 {lane}（{count} 个模型）并继续",
+  "dialog.setup.back": "返回",
+  "dialog.setup.keepOne": "此任务池至少保留一个模型",
+  "dialog.setup.rankTitle": "能力排名 — 选择第 {n} 名（最强在前，还剩 {remaining} 个模型）",
+  "dialog.setup.rankFinish": "完成排名（已选 {count} 个；其余模型保留系统基础分数）",
+  "dialog.setup.rankMinOne": "完成前请至少排名一个模型",
+  "dialog.setup.doneTitle": "设置完成 — 立即生效（热重载）",
+  "dialog.setup.donePools": "任务池：{summary}",
+  "dialog.setup.doneRank": "排名：{order}",
+  "dialog.setup.restartHint": "请重启 opencode 以注册新的提供商：{providers}",
   // src/tui.tsx:734 (handover toast)
   "dialog.handover.noSession": "/handover：不在会话中，没有可备份的内容",
   // src/tui.tsx:739 (handover toast)
@@ -353,6 +375,9 @@ export const zhCN: Partial<Record<MsgKey, string>> = {
   "palette.modelRank.title": "模型能力排名",
   // src/tui.tsx:789
   "palette.modelRank.desc": "手动能力排名（优先于基础分数；越靠前 = 越强）",
+  // src/tui.tsx (setup wizard)
+  "palette.setup.title": "引导式设置（任务池 + 排名）",
+  "palette.setup.desc": "向导：为每个任务池多选模型，然后排名 — 派发正常工作前必须完成",
 
   // ---- quota (quota-brief.json rows; banner.ts builders) ----
 

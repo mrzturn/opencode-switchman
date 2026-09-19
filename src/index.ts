@@ -50,7 +50,8 @@ import { injectShells, injectShellDefs, selectInjectableDefs } from "./shells"
 import { buildBanner, shortName, providerStatusEntries } from "./banner"
 import { refreshSelfUpdate, updateBannerText, ensureUpdateCommands, detectLoadMode, pluginCliPath } from "./selfupdate"
 import { loadPoolConfig, overrideSummary } from "./user-overrides"
-import { poolConfigCommandMd, modelRankCommandMd, expertCommandMd, langCommandMd, ctxPauseCommandMd, ctxResumeCommandMd } from "./commands-md"
+import { poolConfigCommandMd, modelRankCommandMd, expertCommandMd, langCommandMd, ctxPauseCommandMd, ctxResumeCommandMd, switchmanSetupCommandMd } from "./commands-md"
+import { setupCompletionNow, setupDenyMessage, setupDirective, setupMissingBrief } from "./setup-gate"
 import { billingOfProvider, loadUserConfig, resolveEffectiveOptions, routingPeakActive, routePolicy, DEFAULT_DELEGATION_FLOOR } from "./config"
 import { poolForProviderId } from "./provider-config"
 import { runDoctor } from "./doctor"
@@ -1108,7 +1109,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
          doctorSummary,
          matrixInfo,
          update: updateBannerText(),
-         overrides: overrideSummary(),
+         overrides: { ...overrideSummary(), setup: setupCompletionNow() },
       })
       // [WATERMARK] line needs raw quota data → second assembly (the banner pure function takes a snapshot; real quota added here)
       const lines2 = buildBanner({
@@ -1123,7 +1124,7 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         dsLowWarnCny: options.quota!.deepseek!.lowBalanceWarnCny,
         matrixInfo,
         update: updateBannerText(),
-        overrides: overrideSummary(),
+        overrides: { ...overrideSummary(), setup: setupCompletionNow() },
       })
       // [2026-08-29]-[scoring engine decision log: every banner rebuild (15s cache expiry) appends per-lane score details; fail-open, never blocks]
       try {
@@ -1408,6 +1409,10 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         cfg.command = {
           "poolConfig-chat": { template: poolConfigCommandMd(pluginCliPath("switchman-config.js")), description: "Configure task-pool participating models conversationally (economy/mechanical/main/hard/vision/review); use /poolConfig for the manual dialog" },
           "modelRank-chat": { template: modelRankCommandMd(pluginCliPath("switchman-config.js")), description: "Configure model capability ranks conversationally (manual ranks override base capability scores); use /modelRank for the manual dialog" },
+          // [2026-09-19]-[/switchman-setup-chat: chat fallback for the TUI /switchman-setup wizard (src/tui.tsx) — the
+          //  setup hard gate (setup-gate.ts) denies task dispatch until all 6 pools + the rank are configured, so the
+          //  guided flow must be reachable from non-TUI clients too]-
+          "switchman-setup-chat": { template: switchmanSetupCommandMd(pluginCliPath("switchman-config.js")), description: "Guided switchman setup: configure all 6 task pools and the capability ranking (chat fallback when the TUI /switchman-setup is unavailable)" },
           // [2026-09-05]-[/expert: expert consultation — review-pool head preferred, hard-pool head's ro face as fallback;
           //  selection is read live from the [ROUTES] banner at execution time (no stale CLI snapshot), dispatch goes
           //  through the standard six gates + auto-redirect]
@@ -1583,9 +1588,12 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
         //  [2026-09-07]-[moved BELOW the shell/internal early-return: main-session-only injection (shell subagents and
         //  title/compaction sessions must not receive the [LANG] line or the ask directive); for main sessions it is
         //  still the first injected part of the turn]-
+        // [2026-09-19]-[loadLangConfig hoisted out of the lang.enabled branch: the [SETUP] directive below reuses the
+        //  same read (one disk read per turn, cheap) and keys on language-config existence exactly like the tool-level
+        //  lang gate / setup gate, so prompt copy and enforcement can never disagree]-
+        const langLoaded = loadLangConfig(pluginDirectory, options.workspace?.dirname || DEFAULT_WORKSPACE_DIRNAME)
         if (options.lang!.enabled) {
-          const loaded = loadLangConfig(pluginDirectory, options.workspace?.dirname || DEFAULT_WORKSPACE_DIRNAME)
-          if (loaded) output.system.push(renderLangLine(loaded.cfg, loaded.source))
+          if (langLoaded) output.system.push(renderLangLine(langLoaded.cfg, langLoaded.source))
           else if (options.lang!.ask !== false && input.sessionID && !langAsked.has(input.sessionID) && !langGateWaived.has(input.sessionID)) {
             langAsked.add(input.sessionID)
             // [2026-09-14]-[D4 locale-following ask: question texts follow the detected UI locale (env LC_ALL → LANG,
@@ -1595,6 +1603,17 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             appendStatusLog("notice.lang.askLocale", { locale: ui.locale, source: ui.via === "default" ? "default" : `env ${ui.via}` })
             output.system.push(renderAskDirective(options.lang!.candidates ?? DEFAULT_LANG_CANDIDATES, ui.locale))
           }
+        }
+        // [2026-09-19]-[setup hard gate directive: while switchman setup is incomplete (any of the 6 task pools without
+        //  a selected model, or the capability ranking missing) AND the project language config exists, push a [SETUP]
+        //  advisory right after the lang logic (same output.system push mechanism, English body by design — the model
+        //  relays it in the user's conversation language). The transform re-runs per model request, so it renders every
+        //  turn while incomplete — no latch. Silent while the language config is missing: the lang ask must stay the
+        //  single voice until it is answered (the tool-level lang gate blocks task meanwhile); reads are mtime-cached,
+        //  so a /switchman-setup write clears this directive on the next turn]-
+        if (langLoaded) {
+          const setup = setupCompletionNow()
+          if (!setup.complete) output.system.push(setupDirective(setup))
         }
         // [2026-08-29]-[fail-open visibility: explicit warning when injection crashes — don't dispatch; do it yourself or tell the user]-
         if (configFailed) {
@@ -1829,6 +1848,29 @@ export const SwitchmanPlugin: Plugin = async (input, rawOptions) => {
             return
           }
         } catch { /* fail-open */ }
+      }
+      // [2026-09-19]-[setup hard gate: while switchman setup is incomplete (any of the 6 task pools without a selected
+      //  model, or the capability ranking missing), deny task dispatch — unconfigured no longer defaults to all models.
+      //  Placement is deliberate: AFTER the dispatch:"off" early-return above (a project that opted out of dispatch
+      //  governance is never denied by it), BEFORE the task-governance gates below; only main sessions are gated
+      //  (dispatched shells and internal sessions exempt via isShellOrInternalSession, same as the lang gate), and only
+      //  when the project language config exists — while language is unconfigured the lang gate above already blocks
+      //  task and must stay the single voice. No waiver flag: hard gate by design. Reads are mtime-cached, so a
+      //  /switchman-setup (or CLI) write opens the gate immediately without a restart; fail-open on internal errors]-
+      try {
+        const stSid = (input as any).sessionID as string | undefined
+        if (input.tool === "task" && stSid && !isShellOrInternalSession(stSid)
+          && loadLangConfig(pluginDirectory, options.workspace?.dirname || DEFAULT_WORKSPACE_DIRNAME)) {
+          const setup = setupCompletionNow()
+          if (!setup.complete) {
+            denySkip.add(input.callID)
+            appendStatusLog("notice.setup.gateDenied", { missing: setupMissingBrief(setup), sid: stSid }, true)
+            throw new Error(setupDenyMessage(setup))
+          }
+        }
+      } catch (e) {
+        if (denySkip.has(input.callID)) throw e
+        // internal error on our side (never one of our own denies) → fail-open, do not break the tool path
       }
       // [2026-09-04]-[read watermark gate: read-class/bash tools other than task are intercepted by tier per the measured session watermark]
       if (input.tool !== "task") {

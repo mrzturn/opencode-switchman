@@ -227,6 +227,8 @@ export const de: Partial<Record<MsgKey, string>> = {
   "notice.dispatch.mirrorDisplayed": "tmux-Pane-Spiegelung: ses_{sessionId} ({agent}) in Pane {pane} angezeigt",
   // src/tmux.ts:303
   "notice.dispatch.mirrorReconciling": "tmux-Pane-Spiegelung: geschlossene Pane(s) erkannt, Layout wird abgeglichen",
+  // src/index.ts (setup gate)
+  "notice.setup.gateDenied": "Einrichtung erforderlich ({missing}) — führen Sie /switchman-setup (oder /switchman-setup-chat) aus; Dispatchen ist bis zur Konfiguration blockiert",
 
   // ---- sidebar (tui.tsx sidebar chrome) ----
 
@@ -326,6 +328,26 @@ export const de: Partial<Record<MsgKey, string>> = {
   "dialog.rank.back": "← Zurück zur Ranking-Liste",
   // src/tui.tsx:680 (rank actions title)
   "dialog.rank.detailTitle": "{model} ({rankState})",
+  // src/tui.tsx (setup wizard)
+  "dialog.setup.title": "switchman-Einrichtung — Task-Pools & Capability-Ranking",
+  "dialog.setup.intro": "Geführte Einrichtung: Wählen Sie Modelle für jeden der 6 Task-Pools und ranken Sie sie (stärkste zuerst). Esc beendet jederzeit; bestätigte Pools werden sofort gespeichert.",
+  "dialog.setup.start": "Starten (erster unvollendeter Schritt)",
+  "dialog.setup.statePools": "Pools konfiguriert: {count}/6",
+  "dialog.setup.stateRank": "Ranking: {state}",
+  "dialog.setup.laneTitle": "Task-Pool {index}/6 — {lane} ({count} ausgewählt; Enter schaltet um, mindestens 1)",
+  "dialog.setup.laneRow": "{checkMark} {modelId}",
+  "dialog.setup.selectAll": "[*] Alle auswählen",
+  "dialog.setup.clearAll": "[ ] Alle abwählen",
+  "dialog.setup.confirmLane": "{lane} bestätigen ({count} Modelle) und fortfahren",
+  "dialog.setup.back": "Zurück",
+  "dialog.setup.keepOne": "Behalten Sie mindestens ein Modell in diesem Pool",
+  "dialog.setup.rankTitle": "Capability-Ranking — wählen Sie Nr. {n} (stärkste zuerst, {remaining} Modelle übrig)",
+  "dialog.setup.rankFinish": "Ranking abschließen ({count} gewählt; der Rest behält die Basis-Scores des Systems)",
+  "dialog.setup.rankMinOne": "Ranken Sie mindestens ein Modell, bevor Sie abschließen",
+  "dialog.setup.doneTitle": "Einrichtung abgeschlossen — sofort aktiv (Hot-Reload)",
+  "dialog.setup.donePools": "Pools: {summary}",
+  "dialog.setup.doneRank": "Ranking: {order}",
+  "dialog.setup.restartHint": "Starten Sie opencode neu, um neue Anbieter zu registrieren: {providers}",
   // src/tui.tsx:734 (handover toast)
   "dialog.handover.noSession": "/handover: nicht in einer Sitzung, nichts zu sichern",
   // src/tui.tsx:739 (handover toast)
@@ -351,6 +373,9 @@ export const de: Partial<Record<MsgKey, string>> = {
   "palette.modelRank.title": "Modell-Capability-Ranking",
   // src/tui.tsx:789
   "palette.modelRank.desc": "Manuelles Capability-Ranking (hat Vorrang vor Basisscores; weiter oben = stärker)",
+  // src/tui.tsx (setup wizard)
+  "palette.setup.title": "Geführte Einrichtung (Pools + Ranking)",
+  "palette.setup.desc": "Assistent: Modelle pro Task-Pool mehrfach auswählen und ranken — erforderlich, bevor das Dispatchen funktioniert",
 
   // ---- quota (quota-brief.json rows; banner.ts builders) ----
 
